@@ -150,6 +150,75 @@ test('promoteCandidates merges aliases into an existing item instead of duplicat
   assert.equal(result.candidates[0].status, 'approved');
 });
 
+test('promoteCandidates merges semantic near-duplicates with shared tags', () => {
+  const base = weaponCandidate();
+  const existing: CatalogFile = {
+    schemaVersion: 3,
+    version: '1',
+    weapons: [
+      {
+        id: 'wpn_pistola_gelo',
+        name: 'Pistola de Gelo',
+        tags: ['weapon', 'pistol', 'ice'],
+        aliases: ['Pistola de Gelo'],
+        assets: [],
+        status: 'approved',
+        provenance: 'procedural',
+        introducedIn: '1',
+        payload: base.payload as WeaponBlueprint,
+      },
+    ],
+    events: [],
+  };
+  const candidate: CatalogCandidate = {
+    ...base,
+    id: 'cand_weapon_semantic_1',
+    prompt: 'Pistola congelante',
+    tags: ['weapon', 'candidate', 'pistol', 'ice'],
+    aliases: ['Pistola congelante'],
+  };
+
+  const result = promoteCandidates(existing, [candidate], [candidate.id], '2');
+  assert.equal(result.promoted.length, 0);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.catalog.weapons.length, 1);
+  assert.ok(result.catalog.weapons[0].aliases.includes('Pistola congelante'));
+});
+
+test('semantic dedup does not merge different archetypes', () => {
+  const base = weaponCandidate();
+  const existing: CatalogFile = {
+    schemaVersion: 3,
+    version: '1',
+    weapons: [
+      {
+        id: 'wpn_pistola_gelo',
+        name: 'Pistola de Gelo',
+        tags: ['weapon', 'pistol', 'ice'],
+        aliases: ['Pistola de Gelo'],
+        assets: [],
+        status: 'approved',
+        provenance: 'procedural',
+        introducedIn: '1',
+        payload: base.payload as WeaponBlueprint,
+      },
+    ],
+    events: [],
+  };
+  const candidate: CatalogCandidate = {
+    ...base,
+    id: 'cand_weapon_rifle_gelo',
+    prompt: 'Rifle de Gelo',
+    tags: ['weapon', 'candidate', 'rifle', 'ice'],
+    aliases: ['Rifle de Gelo'],
+  };
+
+  const result = promoteCandidates(existing, [candidate], [candidate.id], '2');
+  assert.equal(result.promoted.length, 1);
+  assert.equal(result.merged.length, 0);
+  assert.equal(result.catalog.weapons.length, 2);
+});
+
 test('promoteCandidates rejects clamped candidates until they are reviewed', () => {
   const prompt = 'instakill infinito';
   const blueprint = validateAndClampWeapon(

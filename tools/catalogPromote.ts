@@ -11,6 +11,12 @@ import {
 } from '../src/shared/budget.ts';
 import type { WeaponBlueprint } from '../src/shared/types.ts';
 import { buildCanonicalKey, normalizePrompt } from '../src/shared/prompt.ts';
+import { textSetSimilarity } from '../server/semantic.ts';
+
+const GENERIC_TAGS = new Set(['weapon', 'event', 'candidate']);
+const WEAPON_ARCHETYPES = ['pistol', 'rifle', 'smg', 'shotgun', 'sniper', 'launcher'];
+const EVENT_CATEGORIES = ['weather', 'terrain', 'entity', 'supply'];
+const SEMANTIC_DUPLICATE_THRESHOLD = 0.75;
 
 export interface PromoteResult {
   catalog: CatalogFile;
@@ -44,6 +50,41 @@ function findDuplicateIndex(next: CatalogFile, candidate: CatalogCandidate): num
     }
   }
   return -1;
+}
+
+function findSemanticDuplicateIndex(
+  next: CatalogFile,
+  candidate: CatalogCandidate,
+): number {
+  const pool = candidate.kind === 'weapon' ? next.weapons : next.events;
+  const candidateTags = candidate.tags.filter((tag) => !GENERIC_TAGS.has(tag));
+  const candidateArchetype =
+    (candidate.kind === 'weapon' ? WEAPON_ARCHETYPES : EVENT_CATEGORIES).find((tag) =>
+      candidateTags.includes(tag),
+    ) ?? '';
+  const candidateTexts = [candidate.prompt, ...candidate.aliases];
+
+  for (let index = 0; index < pool.length; index++) {
+    const item = pool[index];
+    const itemTags = item.tags.filter((tag) => !GENERIC_TAGS.has(tag));
+    if (!candidateTags.some((tag) => itemTags.includes(tag))) continue;
+    const itemArchetype =
+      (candidate.kind === 'weapon' ? WEAPON_ARCHETYPES : EVENT_CATEGORIES).find((tag) =>
+        itemTags.includes(tag),
+      ) ?? '';
+    if (candidateArchetype && itemArchetype && candidateArchetype !== itemArchetype) {
+      continue;
+    }
+    const similarity = textSetSimilarity(candidateTexts, [item.name, ...item.aliases]);
+    if (similarity >= SEMANTIC_DUPLICATE_THRESHOLD) return index;
+  }
+  return -1;
+}
+
+function findAnyDuplicateIndex(next: CatalogFile, candidate: CatalogCandidate): number {
+  const exact = findDuplicateIndex(next, candidate);
+  if (exact !== -1) return exact;
+  return findSemanticDuplicateIndex(next, candidate);
 }
 
 function mergeAliases<T extends { aliases: string[]; tags: string[] }>(
@@ -144,7 +185,7 @@ export function promoteCandidates(
         skipped.push({ id: candidate.id, reason: 'clamp aplicado — revisar manualmente' });
         continue;
       }
-      const duplicateIndex = findDuplicateIndex(next, candidate);
+      const duplicateIndex = findAnyDuplicateIndex(next, candidate);
       if (duplicateIndex !== -1) {
         next.weapons[duplicateIndex] = mergeAliases(
           next.weapons[duplicateIndex],

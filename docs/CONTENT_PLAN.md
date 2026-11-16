@@ -11,6 +11,7 @@
 > **Operação P2:** hot reload atômico do catálogo (`CATALOG_WATCH`/`SIGHUP`), `/api/metrics` com agregados e token opcional, health check ampliado e agendamento documentado de `loop:report`/`ledger:prune`.
 > **Pool P2:** arsenal determinístico por sala (`server/contentPool.ts`) com núcleo obrigatório, peso inverso ao uso humano, quota de novidade (`introducedIn`/provenance), `pool_hash`/`pool_miss` no ledger e separação entre “fora do pool” e lacuna de catálogo nos relatórios.
 > **Observabilidade P2:** `introducedIn` no schema 3 do catálogo, alertas agregados em `/api/metrics` (baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa e ausência de uso).
+> **Dedup P2:** embeddings lexicais determinísticos (`server/semantic.ts`), quase-duplicatas (`server/semanticDuplicates.ts`), `catalog:dedupe` e merge semântico na promoção com tag/arquétipo compartilhados.
 > **Documentos relacionados:** [ARQUITETURA](ARCHITECTURE.md), [PROTOCOLO](PROTOCOL.md), [DEPLOY](DEPLOY.md).
 
 ## 1. Objetivo

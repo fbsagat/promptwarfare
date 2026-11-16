@@ -12,6 +12,7 @@
     "catalog:build": "tsx tools/build-catalog.ts",
     "catalog:candidates": "tsx tools/catalog-candidates.ts",
     "catalog:promote": "tsx tools/promote-candidates.ts",
+    "catalog:dedupe": "tsx tools/catalog-dedupe.ts",
     "demand:seed": "tsx tools/seed-demand.ts",
     "ledger:report": "tsx tools/ledger-report.ts",
     "loop:report": "tsx tools/loop-report.ts",

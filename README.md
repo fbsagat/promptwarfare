@@ -182,6 +182,9 @@ npm run catalog:candidates -- --report content/seeds/initial-demand-report.json 
 # Revisar content/catalog/candidates.json e publicar uma nova versão
 npm run catalog:promote -- --ids cand_weapon_exemplo_1 --version 2026-11-20.1
 
+# Relatório offline de quase-duplicatas semânticas (aliases/sinônimos)
+npm run catalog:dedupe -- --threshold 0.75
+
 # Telemetria de uso/qualidade (equipes, abates, dano, sobrevivência e feedback por item)
 npm run usage:report -- --days 90
 
@@ -197,7 +200,7 @@ npm run ledger:prune -- --days 90 --redact-prompts
 npm run catalog:build -- 2026-11-20.1
 ```
 
-Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção.
+Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria.
 
 ## Estrutura
 
@@ -208,6 +211,8 @@ server/
   roomManager.ts          Estado autoritativo: salas, loop de 20 Hz, combate, bots, eventos
   catalog.ts              Catálogo read-only + resolvedor determinístico
   contentPool.ts          Arsenal determinístico por sala (uso + novidade)
+  semantic.ts             Embeddings lexicais/sinônimos offline
+  semanticDuplicates.ts   Busca de quase-duplicatas
   loopReport.ts           Demanda x uso x versão do catálogo
   metrics.ts              Snapshot agregado para /api/metrics
   prometheus.ts           Exposition /metrics para Prometheus
@@ -230,6 +235,7 @@ tools/
   ledger-prune.ts         Retenção/redação do ledger
   usage-report.ts         Exporta uso/qualidade por item
   catalog-candidates.ts   Gera candidatos a partir das lacunas
+  catalog-dedupe.ts       Relatório de quase-duplicatas semânticas
   promote-candidates.ts   Valida e publica candidatos aprovados
   aiGenerator.ts          Ferramenta offline de geração com Gemini
   blueprintDb.ts          Cache SQLite da ferramenta offline

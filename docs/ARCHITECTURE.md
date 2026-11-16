@@ -91,6 +91,15 @@ Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalog
 
 O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. Se o item ideal existe no catálogo mas não no pool, o ledger grava `pool_miss = 1` e `pool_hash`; isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
 
+### `server/semantic.ts` e dedup offline
+
+`server/semantic.ts` gera embeddings lexicais determinísticos (sinônimos do domínio + unigramas/bigramas + trigramas) e similaridade de cosseno. Não há chamada de rede nem modelo externo no runtime.
+
+- `server/semanticDuplicates.ts` encontra quase-duplicatas do mesmo tipo, exigindo tag compartilhada e arquétipo/categoria compatível.
+- `tools/catalog-dedupe.ts` gera `content/reports/dedupe-*.json/.md` para curadoria.
+- `promoteCandidates` usa a similaridade semântica como segundo degrau, depois de alias/canonical exato, antes de criar item novo.
+- O threshold padrão é `0.75` e é ajustável via `--threshold`.
+
 ### `server/ledger.ts`
 
 Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend Postgres opcional para múltiplas instâncias (`PROMPT_LEDGER_BACKEND=postgres`, driver `pg` carregado dinamicamente):
@@ -132,6 +141,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 - `tools/loop-report.ts` cruza demanda, uso e versões para verificar se a publicação fechou a lacuna.
 - `tools/catalog-candidates.ts` transforma lacunas em candidatos usando a ferramenta Gemini offline e expande aliases (`tools/aliasExpansion.ts`).
 - `tools/promote-candidates.ts` valida candidatos aprovados, mescla aliases em itens existentes e publica uma nova versão do catálogo.
+- `tools/catalog-dedupe.ts` lista quase-duplicatas semânticas para revisão humana.
 - `tools/aiGenerator.ts` é a ferramenta Gemini para produzir candidatos; não é importada pelo servidor.
 - `tools/blueprintDb.ts` é o cache SQLite (`node:sqlite`) da ferramenta offline, em `data/voxelforge-blueprints.db` (`VOXELFORGE_DB_PATH`).
 - Todo candidato passa por `src/shared/budget.ts` e por curadoria humana antes de entrar no catálogo.
