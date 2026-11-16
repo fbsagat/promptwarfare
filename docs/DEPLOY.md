@@ -11,6 +11,37 @@ Navegador
 
 A Vercel **não** faz proxy do WebSocket. O navegador conecta direto na VPS, por isso a API precisa de TLS válido e a origem da Vercel precisa estar liberada.
 
+## 0. Container Docker (recomendado com a stack de monitoramento)
+
+O repositório inclui `Dockerfile`, `docker-entrypoint.sh` e `docker-compose.prod.yml`. O container `pw_api` entra na rede Docker da stack de monitoramento, sem publicar portas no host:
+
+```bash
+cd /opt/prompt-warfare
+cp .env.example .env
+# edite CORS_ORIGINS, PROMPT_LEDGER_BACKEND e PROMPT_LEDGER_POSTGRES_URL
+docker network ls | grep memetrigger      # confirme o nome da rede
+docker compose -f docker-compose.prod.yml up -d --build
+docker logs -f pw_api
+```
+
+- `SERVE_CLIENT=false` (padrão do compose) mantém a VPS em modo API-only; o frontend fica na Vercel.
+- O proxy reverso publica `api.promptwarfare.com` e o WebSocket `/ws`; **não** publique `/metrics`.
+- `content/catalog` e `content/assets` são montados read-only para hot reload/atualização sem rebuild.
+- O ledger SQLite fica no volume `promptwarfare_data` (`/app/data`).
+- Para Postgres, crie banco/usuário próprios (não reutilize o banco `memetrigger`):
+
+```sql
+CREATE USER promptwarfare WITH PASSWORD '<senha-forte>';
+CREATE DATABASE promptwarfare OWNER promptwarfare;
+```
+
+```dotenv
+PROMPT_LEDGER_BACKEND=postgres
+PROMPT_LEDGER_POSTGRES_URL=postgresql://promptwarfare:<senha>@postgres:5432/promptwarfare
+```
+
+A stack `memetrigger` já contém Prometheus, Grafana e Uptime Kuma. O scrape `pw_api:3000/metrics`, o dashboard `Prompt Warfare` e as regras do grupo `promptwarfare` estão em `monitoring/` do projeto principal. No Uptime Kuma, crie um monitor HTTP de 60s para `http://pw_api:3000/api/health` (interno) ou para a URL pública `/api/health`.
+
 ## 1. VPS (API + WebSocket)
 
 ### Requisitos
@@ -83,6 +114,8 @@ O backend padrão continua SQLite. Para compartilhar o ledger entre instâncias:
 ```bash
 npm install pg
 ```
+
+> Na imagem Docker deste repositório o `pg` já é instalado no runtime; o comando acima vale para execução sem container.
 
 ```dotenv
 PROMPT_LEDGER_BACKEND=postgres

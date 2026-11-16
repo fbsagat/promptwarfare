@@ -14,9 +14,10 @@ import {
   stopCatalogWatcher,
 } from './server/catalog.ts';
 import { isOriginAllowed, parseAllowedOrigins } from './server/httpCors.ts';
-import { createLedgerRuntime } from './server/ledgerFactory.ts';
+import { createLedgerRuntime, ledgerBackendFromEnv } from './server/ledgerFactory.ts';
 import { buildLoopReport } from './server/loopReport.ts';
 import { buildMetricsSnapshot, type MetricsSnapshot } from './server/metrics.ts';
+import { renderPrometheusMetrics } from './server/prometheus.ts';
 import { aggregateUsageWeights } from './server/contentPool.ts';
 import { RoomManager } from './server/roomManager.ts';
 
@@ -129,23 +130,42 @@ async function startServer() {
     });
   });
 
-  app.get('/api/metrics', async (req, res) => {
-    if (metricsToken && req.headers['x-metrics-token'] !== metricsToken) {
-      res.status(401).json({ error: 'Métricas protegidas.' });
-      return;
-    }
-    if (!metricsLoop) await refreshMetrics();
-    const snapshot = metricsLoop
+  const currentMetricsSnapshot = (): MetricsSnapshot | null =>
+    metricsLoop
       ? buildMetricsSnapshot({
           loop: metricsLoop,
           rooms: roomManager.getRuntimeStats(),
           uptimeSec: process.uptime(),
           catalogVersion: getCatalogVersion(),
           assetVersion: getAssetVersion(),
+          generatedAt: metricsLoop.generatedAt,
         })
       : metricsCache;
+
+  app.get('/api/metrics', async (req, res) => {
+    if (metricsToken && req.headers['x-metrics-token'] !== metricsToken) {
+      res.status(401).json({ error: 'Métricas protegidas.' });
+      return;
+    }
+    if (!metricsLoop) await refreshMetrics();
+    const snapshot = currentMetricsSnapshot();
     res.setHeader('Cache-Control', 'no-store');
     res.json(snapshot ?? { error: 'Métricas indisponíveis.' });
+  });
+
+  // Scrape Prometheus da stack interna. Não deve ser publicado publicamente
+  // pelo nginx; o container só é alcançável pela rede Docker de monitoramento.
+  app.get('/metrics', async (_req, res) => {
+    if (!metricsLoop) await refreshMetrics();
+    const snapshot = currentMetricsSnapshot();
+    if (!snapshot) {
+      res.status(503).type('text/plain; charset=utf-8').send('# métricas indisponíveis\n');
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res
+      .type('text/plain; version=0.0.4; charset=utf-8')
+      .send(renderPrometheusMetrics(snapshot, ledgerBackendFromEnv()));
   });
 
   app.get('/api/rooms', (_req, res) => {

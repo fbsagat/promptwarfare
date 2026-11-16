@@ -1,0 +1,56 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: promptwarfare/api:latest
+    container_name: pw_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      SERVE_CLIENT: "false"
+      CATALOG_WATCH: "true"
+    expose:
+      - "3000"
+    volumes:
+      - promptwarfare_data:/app/data
+      - ./content/catalog:/app/content/catalog:ro
+      - ./content/assets:/app/content/assets:ro
+    networks:
+      - monitoring
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: 0.5
+    mem_limit: 512M
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  promptwarfare_data:
+
+networks:
+  monitoring:
+    external: true
+    # Confirme com: docker network ls | grep memetrigger
+    name: ${MONITORING_NETWORK:-memetrigger_default}

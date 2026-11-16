@@ -120,6 +120,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 
 - `GET /api/health` expõe salas, jogadores humanos/bots, uptime e versões atuais.
 - `GET /api/metrics` expõe um snapshot agregado de cobertura, lacunas e itens com demanda/uso; não inclui texto de prompt. O snapshot do ledger é atualizado a cada 60 s, enquanto salas e uptime são lidos ao vivo. Também inclui `alerts` para baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa excessiva e ausência de uso.
+- `GET /metrics` expõe o mesmo snapshot em formato Prometheus (`text/plain; version=0.0.4`) para o scrape interno da stack Grafana/Prometheus. Não deve ser publicado pelo nginx.
 - `METRICS_TOKEN` (opcional) exige o header `X-Metrics-Token`; `METRICS_WINDOW_DAYS` controla a janela (padrão 90).
 
 ### Ferramentas offline (`tools/`)

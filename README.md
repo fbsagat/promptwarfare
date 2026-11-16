@@ -132,6 +132,7 @@ Vercel (HTTPS)  ── HTTP /api/*  ──▶  VPS (Express + TLS)
 - **Vercel**: importe o repositório; o `vercel.json` define `npm install --legacy-peer-deps`, `npm run build` e `dist/`. Configure `VITE_API_URL` e, se necessário, `VITE_WS_URL`.
 - **VPS**: rode a API com `NODE_ENV=production`, `SERVE_CLIENT=false`, `CORS_ORIGINS` apontando para o domínio da Vercel e TLS na frente (a página HTTPS só pode abrir `wss://`).
 - **CORS**: `CORS_ORIGINS` também valida a origem do handshake WebSocket quando não está vazio. Isso não substitui autenticação.
+- **Docker/monitoramento**: `docker-compose.prod.yml` sobe `pw_api` na rede da stack existente. O Prometheus coleta `pw_api:3000/metrics`, o Grafana provisiona o dashboard `Prompt Warfare` e o Uptime Kuma monitora `/api/health`. `/metrics` é interno; não publique pelo nginx.
 - **Chave Gemini**: fica apenas no ambiente das ferramentas offline; nunca use prefixo `VITE_` para segredos e nunca a configure no servidor do jogo.
 
 Passo a passo completo, proxy reverso e checklist em [docs/DEPLOY.md](docs/DEPLOY.md).
@@ -209,6 +210,7 @@ server/
   contentPool.ts          Arsenal determinístico por sala (uso + novidade)
   loopReport.ts           Demanda x uso x versão do catálogo
   metrics.ts              Snapshot agregado para /api/metrics
+  prometheus.ts           Exposition /metrics para Prometheus
   assets.ts               Manifesto de assets read-only
   ledger.ts               Ledger append-only de prompts (SQLite)
   ledgerReport.ts         Agregação de demanda/lacunas
