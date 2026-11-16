@@ -86,6 +86,8 @@ bun run dev
 npm run dev
 ```
 
+No Windows, também é possível dar um duplo clique em `dev.bat` na raiz do projeto: ele instala as dependências se faltarem, cria o `.env` a partir de `.env.example` quando necessário, abre o navegador e sobe o servidor. Use `NO_OPEN=1` para não abrir o navegador, `NO_PAUSE=1` para não pausar ao final e `PORT` para escolher outra porta. Se a porta padrão já estiver ocupada, ele avisa e usa a próxima livre.
+
 O comando inicia **um único processo** em <http://localhost:3000>: o `server.ts` sobe a API, o WebSocket em `/ws` e o middleware do Vite com HMR. Localmente, frontend e API compartilham a mesma origem, então `VITE_API_URL` pode ficar vazio.
 
 Em produção, o frontend fica na Vercel e a API/WebSocket na VPS. Nesse modo, o cliente usa `VITE_API_URL`/`VITE_WS_URL` e a VPS precisa liberar a origem da Vercel em `CORS_ORIGINS`. Veja [Deploy](docs/DEPLOY.md). Para rodar o frontend em outra porta local, defina `VITE_API_URL` e inclua a origem em `CORS_ORIGINS` (por exemplo, `http://localhost:5173`).
@@ -95,6 +97,7 @@ Em produção, o frontend fica na Vercel e a API/WebSocket na VPS. Nesse modo, o
 | Comando | O que faz |
 | --- | --- |
 | `npm run dev` | Inicia servidor + cliente em modo desenvolvimento. |
+| `dev.bat` | Atalho Windows: instala dependências, cria `.env` se preciso, evita porta ocupada, abre o navegador e roda `npm run dev`. |
 | `npm run build` | Gera o build do cliente em `dist/`. |
 | `npm start` | Inicia o servidor; em produção, serve `dist/` se `SERVE_CLIENT` não for `false`. |
 | `npm run preview` | Apenas pré-visualiza o build do Vite, **sem** API/WebSocket. |
