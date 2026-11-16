@@ -482,23 +482,46 @@ function buildProceduralEventFallback(
   let archetype: EventArchetype = 'WEATHER_HAZARD';
   if (/muni[çc][aã]o|caixa|suprimento|supply|bala|ammo|cura|kit|tesouro/i.test(lower)) {
     archetype = 'SUPPLY_DROP';
-  } else if (/lobo|aranha|golem|monstro|zumbi|rob[oô]|criatura|javali|drag|drone|enxame|tit[aã]/i.test(lower)) {
+  } else if (/lobo|aranha|golem|monstro|zumbi|rob[oô]|criatura|javali|drag|drone|enxame|tit[aã]|cobra|serpente/i.test(lower)) {
     archetype = 'ENTITY_SPAWN';
-  } else if (/vulc|fissura|racha|abismo|cristal|mar[eé]|tsunami|inund|terreno|pilar|montanha/i.test(lower)) {
+  } else if (/vulc|fissura|racha|abismo|cristal|mar[eé]|tsunami|inund|terreno|pilar|montanha|sorvedouro|geleira|floresta|selva/i.test(lower)) {
     archetype = 'TERRAIN_MUTATION';
   }
 
-  let weatherKind: 'acid_rain' | 'blizzard' | 'meteor_shower' | 'low_gravity' | 'earthquake' =
-    'meteor_shower';
+  let weatherKind:
+    | 'acid_rain'
+    | 'blizzard'
+    | 'meteor_shower'
+    | 'low_gravity'
+    | 'earthquake'
+    | 'sandstorm'
+    | 'thunderstorm'
+    | 'hail'
+    | 'tornado' = 'meteor_shower';
   if (/nevasca|gelo|neve|frio|congel/i.test(lower)) weatherKind = 'blizzard';
   else if (/[aá]cid|chuva|t[oó]xic/i.test(lower)) weatherKind = 'acid_rain';
   else if (/terremoto|tremor|abal/i.test(lower)) weatherKind = 'earthquake';
   else if (/gravidade|flutua|lua|peso/i.test(lower)) weatherKind = 'low_gravity';
+  else if (/granizo|pedra de gelo/i.test(lower)) weatherKind = 'hail';
+  else if (/raio|trovoada|relampago|tempestade eletrica/i.test(lower)) weatherKind = 'thunderstorm';
+  else if (/areia|deserto|siroco|poeira/i.test(lower)) weatherKind = 'sandstorm';
+  else if (/tornado|ciclone|furacao|redemoinho|vortice/i.test(lower)) weatherKind = 'tornado';
 
-  let mutationKind: 'volcano' | 'fissure' | 'crystal_spires' | 'rising_tide' = 'crystal_spires';
+  let mutationKind:
+    | 'volcano'
+    | 'fissure'
+    | 'crystal_spires'
+    | 'rising_tide'
+    | 'sinkhole'
+    | 'lava_river'
+    | 'glacier'
+    | 'overgrowth' = 'crystal_spires';
   if (/vulc|lava|erup/i.test(lower)) mutationKind = 'volcano';
   else if (/fissura|racha|abismo/i.test(lower)) mutationKind = 'fissure';
   else if (/mar[eé]|enchente|[aá]gua|tsunami|inund/i.test(lower)) mutationKind = 'rising_tide';
+  else if (/sorvedouro|sumidouro|cratera gigante|buraco enorme/i.test(lower)) mutationKind = 'sinkhole';
+  else if (/geleira|glaciar|era do gelo|banquisa/i.test(lower)) mutationKind = 'glacier';
+  else if (/floresta|selva|vegetacao|crescimento/i.test(lower)) mutationKind = 'overgrowth';
 
   const aiBehavior: EntityAiBehavior =
     archetype === 'SUPPLY_DROP'
@@ -634,9 +657,9 @@ export async function generateAiMapEvent(
         responseSchema: eventResponseSchema,
         systemInstruction: `Você é o Mestre de Caos do jogo Prompt Warfare.
 Classifique o evento em exatamente 1 archetype:
-- "WEATHER_HAZARD" (weatherKind: "acid_rain" | "blizzard" | "meteor_shower" | "low_gravity" | "earthquake")
+- "WEATHER_HAZARD" (weatherKind: "acid_rain" | "blizzard" | "meteor_shower" | "low_gravity" | "earthquake" | "sandstorm" | "thunderstorm" | "hail" | "tornado")
 - "ENTITY_SPAWN" (aiBehavior: "aggressive_nearest" | "territorial" | "fleeing" | "explosive_kamikaze")
-- "TERRAIN_MUTATION" (mutationKind: "volcano" | "fissure" | "crystal_spires" | "rising_tide")
+- "TERRAIN_MUTATION" (mutationKind: "volcano" | "fissure" | "crystal_spires" | "rising_tide" | "sinkhole" | "lava_river" | "glacier" | "overgrowth")
 - "SUPPLY_DROP" (apenas quando pedir munição/suprimentos/caixas; ammoRestore 10..60)
 Respeite o orçamento de 100 pontos: radiusMeters*0.9 + durationSec*0.45 + lethality*1.1 + (quantity*3.5 para spawn/supply) <= 100.
 Para ENTITY_SPAWN ou SUPPLY_DROP, gere também palette (3 cores hex) e rleVoxels para grade 16x16x16.`,

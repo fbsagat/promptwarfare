@@ -10,6 +10,7 @@ import {
   buildContentPool,
   poolUsageFactor,
 } from './contentPool.ts';
+import { getCatalog } from './catalog.ts';
 import type { ContentUsageRow } from './ledger.ts';
 
 const ARCHETYPES = ['pistol', 'rifle', 'smg', 'shotgun', 'sniper', 'launcher'];
@@ -135,6 +136,29 @@ test('different seeds produce different pools', () => {
   const a = buildContentPool({ seed: 1, targetPlayers: 6, catalog });
   const b = buildContentPool({ seed: 2, targetPlayers: 6, catalog });
   assert.notEqual(a.hash, b.hash);
+});
+
+test('real catalog pool stays within targets and covers every event category', () => {
+  const catalog = getCatalog();
+  for (const targetPlayers of [4, 8, 14]) {
+    const pool = buildContentPool({ seed: 7, targetPlayers, catalog });
+    assert.ok(
+      pool.weaponCount >= 16 && pool.weaponCount <= 26,
+      `${targetPlayers} jogadores: ${pool.weaponCount} armas no pool`,
+    );
+    assert.ok(
+      pool.eventCount >= 7 && pool.eventCount <= 11,
+      `${targetPlayers} jogadores: ${pool.eventCount} eventos no pool`,
+    );
+    assert.equal(new Set(pool.weaponIds).size, pool.weaponIds.length);
+    assert.equal(new Set(pool.eventIds).size, pool.eventIds.length);
+    for (const category of EVENT_CATEGORIES) {
+      assert.ok(
+        pool.eventIds.some((id) => id.startsWith(`evt_${category}_`)),
+        `pool sem categoria ${category}`,
+      );
+    }
+  }
 });
 
 test('pool usage factor penalizes used items and boosts unused ones', () => {

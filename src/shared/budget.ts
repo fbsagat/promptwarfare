@@ -490,6 +490,15 @@ export function buildFallbackWeaponVoxels(prompt: string, paletteLen: number): U
   const isSniper = /sniper|lazer|laser|feixe|precis/i.test(lower);
   const isCompact = /pistola|sub|smg|compact|mini/i.test(lower);
   const isExotic = /cristal|vazio|buraco|gravidade|s[oô]nic|tesla|arco/i.test(lower);
+  const isCrossbow = /besta|ballesta|crossbow|virote/i.test(lower);
+  const isBow = /(^|\s)arco(\s|$)|arco composto|arco longo|\bbow\b/i.test(lower);
+  const isGatling = /metralhadora pesada|gatling|minigun|metralha pesada/i.test(lower);
+  const isFlamethrower = /lan[çc]a[ -]?chamas|flamethrower|jato de fogo|queimador|ma[cç]arico/i.test(lower);
+  const isEnergyCannon = /canh[aã]o de (energia|plasma|part[ií]culas)|energy cannon/i.test(lower);
+  const isHarpoon = /arp[aã]o|harpoon|arpoadora/i.test(lower);
+  const isMortar = /morteiro|mortar|obuseiro|lan[çc]ador de granadas/i.test(lower);
+  const isDualPistols = /pistolas? duplas?|dual pistols/i.test(lower);
+  const isRailgun = /canh[aã]o de trilho|railgun|trilho magn[eé]tico|canh[aã]o magn[eé]tico/i.test(lower);
 
   // Ergonomic grip
   for (let y = 1; y <= 4; y++) {
@@ -498,6 +507,52 @@ export function buildFallbackWeaponVoxels(prompt: string, paletteLen: number): U
         v[idx(x, y, z)] = bodyColor;
       }
     }
+  }
+
+  if (isCrossbow) {
+    // Coronha longa + besta transversal com ponta de virote
+    for (let z = 4; z <= 19; z++) {
+      v[idx(5, 6, z)] = trimColor;
+      v[idx(6, 6, z)] = trimColor;
+    }
+    for (let x = 1; x <= 10; x++) {
+      v[idx(x, 6, 16)] = bodyColor;
+      if (x <= 3 || x >= 8) {
+        v[idx(x, 7, 17)] = accentColor;
+        v[idx(x, 5, 17)] = accentColor;
+      }
+    }
+    for (let z = 17; z <= 23; z++) {
+      v[idx(5, 6, z)] = coreColor;
+      v[idx(6, 6, z)] = coreColor;
+    }
+    return v;
+  }
+
+  if (isBow) {
+    // Arco curvo com corda tensionada e flecha pronta
+    for (let i = 0; i <= 4; i++) {
+      const z = 7 + i;
+      const upper = 7 + i;
+      const lower = 5 - i;
+      v[idx(5, upper, z)] = trimColor;
+      v[idx(6, upper, z)] = trimColor;
+      if (lower >= 1) {
+        v[idx(5, lower, z)] = trimColor;
+        v[idx(6, lower, z)] = trimColor;
+      }
+    }
+    for (let y = 1; y <= 11; y++) {
+      v[idx(5, y, 11)] = accentColor;
+      v[idx(6, y, 11)] = accentColor;
+    }
+    for (let z = 8; z <= 23; z++) {
+      v[idx(5, 8, z)] = coreColor;
+      v[idx(6, 8, z)] = coreColor;
+    }
+    v[idx(5, 9, 23)] = accentColor;
+    v[idx(6, 9, 23)] = accentColor;
+    return v;
   }
 
   if (isExotic) {
@@ -519,6 +574,196 @@ export function buildFallbackWeaponVoxels(prompt: string, paletteLen: number): U
     }
     v[idx(2, 7, 15)] = accentColor;
     v[idx(9, 7, 15)] = accentColor;
+    return v;
+  }
+
+  if (isGatling) {
+    // Tambor central + seis canos giratórios
+    for (let y = 4; y <= 9; y++) {
+      for (let z = 2; z <= 8; z++) {
+        for (let x = 3; x <= 8; x++) {
+          v[idx(x, y, z)] = z % 4 === 0 ? trimColor : bodyColor;
+        }
+      }
+    }
+    for (let y = 3; y <= 10; y++) {
+      for (let z = 8; z <= 12; z++) {
+        for (let x = 2; x <= 9; x++) {
+          const shell = x === 2 || x === 9 || y === 3 || y === 10;
+          if (shell) v[idx(x, y, z)] = trimColor;
+        }
+      }
+    }
+    for (let z = 12; z <= 22; z++) {
+      v[idx(4, 4, z)] = accentColor;
+      v[idx(7, 4, z)] = accentColor;
+      v[idx(4, 9, z)] = accentColor;
+      v[idx(7, 9, z)] = accentColor;
+      v[idx(3, 6, z)] = coreColor;
+      v[idx(8, 7, z)] = coreColor;
+    }
+    for (let x = 3; x <= 8; x++) {
+      v[idx(x, 4, 23)] = trimColor;
+      v[idx(x, 9, 23)] = trimColor;
+    }
+    return v;
+  }
+
+  if (isFlamethrower) {
+    // Tanques gêmeos, corpo compacto e bico com chama piloto
+    for (let y = 2; y <= 8; y++) {
+      for (let z = 2; z <= 8; z++) {
+        v[idx(3, y, z)] = trimColor;
+        v[idx(8, y, z)] = trimColor;
+      }
+    }
+    for (let y = 5; y <= 8; y++) {
+      for (let z = 4; z <= 16; z++) {
+        for (let x = 4; x <= 7; x++) {
+          v[idx(x, y, z)] = bodyColor;
+        }
+      }
+    }
+    for (let z = 16; z <= 21; z++) {
+      v[idx(5, 6, z)] = trimColor;
+      v[idx(6, 6, z)] = trimColor;
+      if (z >= 19) {
+        v[idx(5, 7, z)] = accentColor;
+        v[idx(6, 7, z)] = accentColor;
+      }
+    }
+    v[idx(5, 9, 15)] = coreColor;
+    v[idx(6, 9, 16)] = coreColor;
+    return v;
+  }
+
+  if (isEnergyCannon) {
+    // Tubo de plasma com bobinas e núcleo exposto
+    for (let y = 4; y <= 8; y++) {
+      for (let z = 2; z <= 20; z++) {
+        for (let x = 4; x <= 7; x++) {
+          v[idx(x, y, z)] = bodyColor;
+        }
+      }
+    }
+    for (const z of [6, 10, 14, 18]) {
+      for (let y = 3; y <= 9; y++) {
+        v[idx(3, y, z)] = trimColor;
+        v[idx(8, y, z)] = trimColor;
+      }
+    }
+    for (let z = 8; z <= 18; z += 2) {
+      v[idx(5, 8, z)] = accentColor;
+      v[idx(6, 9, z)] = coreColor;
+    }
+    for (let y = 4; y <= 8; y++) {
+      v[idx(4, y, 21)] = accentColor;
+      v[idx(7, y, 21)] = accentColor;
+    }
+    return v;
+  }
+
+  if (isHarpoon) {
+    // Haste com ponta farpada e carretel lateral
+    for (let z = 2; z <= 20; z++) {
+      v[idx(5, 6, z)] = bodyColor;
+      v[idx(6, 6, z)] = bodyColor;
+    }
+    for (let y = 4; y <= 8; y++) {
+      v[idx(5, y, 19)] = trimColor;
+      v[idx(6, y, 19)] = trimColor;
+    }
+    for (let z = 20; z <= 23; z++) {
+      v[idx(5, 6, z)] = coreColor;
+      v[idx(6, 6, z)] = coreColor;
+    }
+    v[idx(5, 4, 21)] = accentColor;
+    v[idx(6, 4, 21)] = accentColor;
+    v[idx(5, 8, 21)] = accentColor;
+    v[idx(6, 8, 21)] = accentColor;
+    for (let y = 3; y <= 7; y++) {
+      for (let z = 6; z <= 9; z++) {
+        v[idx(8, y, z)] = trimColor;
+      }
+    }
+    return v;
+  }
+
+  if (isMortar) {
+    // Tubo curto e largo, boca reforçada, bipé e placa base
+    for (let y = 4; y <= 9; y++) {
+      for (let z = 4; z <= 15; z++) {
+        for (let x = 3; x <= 8; x++) {
+          const shell = x === 3 || x === 8 || y === 4 || y === 9;
+          if (shell) v[idx(x, y, z)] = bodyColor;
+        }
+      }
+    }
+    for (let x = 2; x <= 9; x++) {
+      for (let y = 3; y <= 10; y++) {
+        if (x === 2 || x === 9 || y === 3 || y === 10) {
+          v[idx(x, y, 16)] = trimColor;
+        }
+      }
+    }
+    v[idx(4, 2, 8)] = trimColor;
+    v[idx(4, 3, 8)] = trimColor;
+    v[idx(7, 2, 8)] = trimColor;
+    v[idx(7, 3, 8)] = trimColor;
+    for (let x = 4; x <= 7; x++) {
+      for (let z = 7; z <= 9; z++) {
+        v[idx(x, 2, z)] = accentColor;
+      }
+    }
+    return v;
+  }
+
+  if (isDualPistols) {
+    // Dois corpos compactos lado a lado
+    for (const ox of [1, 7]) {
+      for (let y = 5; y <= 7; y++) {
+        for (let z = 5; z <= 15; z++) {
+          for (let x = ox; x <= ox + 3; x++) {
+            v[idx(x, y, z)] = z >= 12 ? trimColor : bodyColor;
+          }
+        }
+      }
+      for (let y = 2; y <= 4; y++) {
+        for (let z = 9; z <= 11; z++) {
+          v[idx(ox + 1, y, z)] = accentColor;
+        }
+      }
+      for (let z = 15; z <= 18; z++) {
+        v[idx(ox + 1, 6, z)] = coreColor;
+        v[idx(ox + 2, 6, z)] = coreColor;
+      }
+    }
+    return v;
+  }
+
+  if (isRailgun) {
+    // Dois trilhos paralelos com núcleo acelerador
+    for (let y = 4; y <= 8; y++) {
+      for (let z = 2; z <= 7; z++) {
+        for (let x = 4; x <= 7; x++) {
+          v[idx(x, y, z)] = bodyColor;
+        }
+      }
+    }
+    for (let z = 7; z <= 22; z++) {
+      v[idx(4, 5, z)] = trimColor;
+      v[idx(7, 5, z)] = trimColor;
+      v[idx(4, 8, z)] = trimColor;
+      v[idx(7, 8, z)] = trimColor;
+      if (z % 3 === 0) {
+        v[idx(5, 7, z)] = accentColor;
+        v[idx(6, 7, z)] = coreColor;
+      }
+    }
+    for (let y = 4; y <= 9; y++) {
+      v[idx(3, y, 22)] = accentColor;
+      v[idx(8, y, 22)] = accentColor;
+    }
     return v;
   }
 
@@ -648,6 +893,35 @@ export function buildFallbackEntityVoxels(
   }
 
   const lower = prompt.toLowerCase();
+  if (/cobra|serpente|v[ií]per/i.test(lower)) {
+    // Corpo enrolado em espiral + pescoço erguido e língua bífida
+    for (let ring = 0; ring < 3; ring++) {
+      const cy = 2 + ring * 2;
+      const r = 4 - ring;
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const dist = Math.hypot(dx, dz);
+          if (dist < r - 1 || dist > r) continue;
+          v[idx(8 + dx, cy, 8 + dz)] = c2;
+        }
+      }
+    }
+    for (let y = 7; y <= 12; y++) {
+      v[idx(8, y, 8)] = c2;
+    }
+    for (let y = 11; y <= 13; y++) {
+      for (let z = 7; z <= 10; z++) {
+        for (let x = 7; x <= 9; x++) {
+          v[idx(x, y, z)] = c2;
+        }
+      }
+    }
+    v[idx(7, 12, 11)] = c1;
+    v[idx(9, 12, 11)] = c1;
+    v[idx(8, 10, 11)] = c3;
+    return v;
+  }
+
   if (/aranha|escorpi|inseto|spider/i.test(lower)) {
     // Low wide thorax + 6 splayed legs + glowing eyes
     for (let y = 4; y <= 7; y++) {

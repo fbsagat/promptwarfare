@@ -14,6 +14,7 @@
 > **Dedup P2:** embeddings lexicais determinísticos (`server/semantic.ts`), quase-duplicatas (`server/semanticDuplicates.ts`), `catalog:dedupe` e merge semântico na promoção com tag/arquétipo compartilhados.
 > **Composição de eventos:** `MapEventState.components` combina categorias, escala o componente secundário para o orçamento total de 100 e aplica todos os efeitos no tick.
 > **Assets P2:** manifesto com `url`/`mimeType`/`hash`, `ASSET_BASE_URL`, resolução relativa no cliente, textura de arma e sample de som reais com fallback procedural, e `assets:check` para validar CDN.
+> **Biblioteca inicial ampliada:** catálogo com 90 armas (15 arquétipos × 6 elementos) e 30 eventos (9 de clima, 8 de terreno, 8 de entidades e 5 de suprimentos), todos aprovados sem clamp, com novos `weatherKind`/`mutationKind` aplicados no tick autoritativo e `catalog:dedupe` sem pares acima do threshold padrão.
 > **Documentos relacionados:** [ARQUITETURA](ARCHITECTURE.md), [PROTOCOLO](PROTOCOL.md), [DEPLOY](DEPLOY.md).
 
 ## 1. Objetivo
@@ -319,7 +320,7 @@ O servidor monta um pool de conteúdo aprovado por partida, considerando:
 - itens recém-publicados (quota de exploração);
 - fairness e orçamento.
 
-O prompt do jogador resolve **contra esse pool**, não contra o catálogo inteiro.
+O prompt do jogador resolve **contra esse pool**, não contra o catálogo inteiro. A exceção é o pedido explícito: nome/alias exato ou chave canônica de um item aprovado é honrado mesmo fora do pool (registrado como `pool_miss`); prompts vagos continuam limitados ao arsenal da sala.
 
 ## 9. Resolvedor determinístico
 

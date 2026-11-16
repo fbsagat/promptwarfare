@@ -120,6 +120,15 @@ const WEAPON_TAG_WORDS: Record<string, string[]> = {
   shotgun: ['escopeta', 'espingarda', 'shotgun', 'cartucho', 'dispersao', 'estilha'],
   sniper: ['sniper', 'franco', 'precisao', 'laser', 'feixe'],
   launcher: ['bazuca', 'lancador', 'canhao', 'missil', 'foguete', 'meteoro', 'explosivo'],
+  crossbow: ['besta', 'ballesta', 'crossbow', 'virote'],
+  bow: ['arco', 'bow', 'flecha'],
+  gatling: ['metralhadora pesada', 'gatling', 'minigun', 'metralha pesada'],
+  flamethrower: ['lanca chamas', 'flamethrower', 'jato de fogo', 'queimador', 'maçarico'],
+  energy_cannon: ['canhao de energia', 'canhao de plasma', 'canhao de particulas', 'energy cannon'],
+  harpoon: ['arpao', 'harpoon', 'arpoadora'],
+  mortar: ['morteiro', 'mortar', 'obuseiro', 'lancador de granadas'],
+  dual_pistols: ['pistolas duplas', 'pistola dupla', 'dual pistols'],
+  railgun: ['canhao de trilho', 'railgun', 'trilho magnetico', 'canhao magnetico'],
   ice: ['gelo', 'congel', 'crio', 'neve', 'frost', 'glacial'],
   fire: ['fogo', 'lava', 'chama', 'incendi', 'solar', 'flamejante', 'explosiv'],
   toxic: ['toxic', 'veneno', 'acido', 'verde', 'radioativ'],
@@ -229,15 +238,31 @@ const EVENT_TAG_WORDS: Record<string, string[]> = {
   meteor_shower: ['meteoro', 'meteorito', 'chuva de meteoros', 'flamejante'],
   low_gravity: ['gravidade', 'lua', 'flutuar', 'peso'],
   earthquake: ['terremoto', 'tremor', 'abal', 'sismo'],
+  sandstorm: ['areia', 'deserto', 'siroco', 'poeira'],
+  thunderstorm: ['raio', 'trovoada', 'relampago', 'tempestade eletrica'],
+  hail: ['granizo', 'pedra de gelo', 'chuva de gelo'],
+  tornado: ['tornado', 'ciclone', 'furacao', 'redemoinho', 'vortice'],
   volcano: ['vulc', 'lava', 'erupcao'],
   fissure: ['fissura', 'racha', 'abismo'],
   crystal_spires: ['cristal', 'pilar', 'montanha'],
   rising_tide: ['mare', 'enchente', 'agua', 'tsunami', 'inundacao'],
+  sinkhole: ['sorvedouro', 'sumidouro', 'buraco enorme', 'cratera gigante'],
+  lava_river: ['rio de lava', 'rio de magma', 'corrente de lava', 'rio de fogo'],
+  glacier: ['geleira', 'glaciar', 'era do gelo', 'banquisa'],
+  overgrowth: ['floresta', 'selva', 'vegetacao', 'crescimento'],
   aggressive_nearest: ['lobo', 'matilha', 'agressivo', 'zumbi', 'monstro', 'criatura'],
   territorial: ['guardi', 'territorio', 'torre', 'golem'],
   fleeing: ['foge', 'fugir', 'pasivo', 'coelho'],
   explosive_kamikaze: ['kamikaze', 'explosivo', 'bomba'],
+  spider_swarm: ['aranha', 'aracnideo', 'enxame de aranhas'],
+  hunter_drones: ['drone', 'robo voador', 'enxame de drones'],
+  ice_colossus: ['colosso', 'gigante de gelo', 'sentinela de gelo'],
+  venom_serpents: ['serpente', 'cobra', 'viper', 'venenosa'],
   supply: ['municao', 'caixa', 'suprimento', 'bala', 'ammo', 'cura', 'kit', 'tesouro'],
+  ammo_depot: ['deposito de municao', 'carga de municao', 'arsenal movel'],
+  elite_supply: ['suprimento raro', 'carga rara', 'drop lendario', 'elite'],
+  treasure_cache: ['cofre', 'bau', 'tesouro escondido', 'cache'],
+  emergency_cache: ['caixa de emergencia', 'kit de emergencia', 'resgate'],
   weather: ['clima', 'tempo', 'tempestade'],
   terrain: ['terreno', 'chao', 'muta'],
   entity: ['criatura', 'monstro', 'bicho', 'inimigo'],
@@ -481,16 +506,41 @@ function keywordScore(promptNorm: string, tags: string[], words: Record<string, 
 }
 
 const EVENT_CATEGORY_WORDS: Record<string, string[]> = {
-  weather: ['acid_rain', 'blizzard', 'meteor_shower', 'low_gravity', 'earthquake', 'weather'],
-  terrain: ['volcano', 'fissure', 'crystal_spires', 'rising_tide', 'terrain'],
+  weather: [
+    'acid_rain',
+    'blizzard',
+    'meteor_shower',
+    'low_gravity',
+    'earthquake',
+    'sandstorm',
+    'thunderstorm',
+    'hail',
+    'tornado',
+    'weather',
+  ],
+  terrain: [
+    'volcano',
+    'fissure',
+    'crystal_spires',
+    'rising_tide',
+    'sinkhole',
+    'lava_river',
+    'glacier',
+    'overgrowth',
+    'terrain',
+  ],
   entity: [
     'aggressive_nearest',
     'territorial',
     'fleeing',
     'explosive_kamikaze',
+    'spider_swarm',
+    'hunter_drones',
+    'ice_colossus',
+    'venom_serpents',
     'entity',
   ],
-  supply: ['supply'],
+  supply: ['supply', 'ammo_depot', 'elite_supply', 'treasure_cache', 'emergency_cache'],
 };
 
 function matchesAnyWord(promptNorm: string, keys: string[]): boolean {
@@ -823,6 +873,15 @@ export function resolveWeaponFromCatalog(
   if (!allowedIds) return pooled;
 
   const full = resolveWeaponInternal(prompt, null);
+  // Pedido explícito (nome/alias exato) vence o arsenal da sala; o desvio fica
+  // registrado como pool_miss para a curadoria ajustar o pool.
+  if (full.strategy === 'alias' || full.strategy === 'canonical') {
+    return {
+      ...full,
+      poolMiss: full.itemId !== pooled.itemId,
+      fullItemId: full.itemId,
+    };
+  }
   const fullCovered = COVERED_STRATEGIES.has(full.strategy);
   const modifiersDiffer =
     full.blueprint.modifiers.statusEffect !== pooled.blueprint.modifiers.statusEffect ||
@@ -926,6 +985,15 @@ export function resolveEventFromCatalog(
   if (!allowedIds) return pooled;
 
   const full = resolveEventInternal(prompt, authorId, authorName, center, null);
+  // Pedido explícito (nome/alias exato) vence o arsenal da sala; o desvio fica
+  // registrado como pool_miss para a curadoria ajustar o pool.
+  if (full.strategy === 'alias' || full.strategy === 'canonical') {
+    return {
+      ...full,
+      poolMiss: full.itemId !== pooled.itemId,
+      fullItemId: full.itemId,
+    };
+  }
   const poolMiss = COVERED_STRATEGIES.has(full.strategy) && full.itemId !== pooled.itemId;
   let result = pooled;
   if (poolMiss) {

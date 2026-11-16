@@ -1222,7 +1222,11 @@ export class BabylonVoxelArena {
 
     const storm =
       this.activeWeatherKind === 'blizzard' ||
-      this.activeWeatherKind === 'acid_rain';
+      this.activeWeatherKind === 'acid_rain' ||
+      this.activeWeatherKind === 'hail' ||
+      this.activeWeatherKind === 'thunderstorm' ||
+      this.activeWeatherKind === 'sandstorm' ||
+      this.activeWeatherKind === 'tornado';
 
     this.ambienceState = {
       underwater,
@@ -2241,16 +2245,38 @@ export class BabylonVoxelArena {
       const wk = activeWeather.params.weatherKind ?? 'meteor_shower';
       this.activeWeatherKind = wk;
       this.weatherBaseMesh.setEnabled(
-        wk === 'acid_rain' || wk === 'blizzard' || wk === 'meteor_shower',
+        wk === 'acid_rain' ||
+          wk === 'blizzard' ||
+          wk === 'meteor_shower' ||
+          wk === 'hail' ||
+          wk === 'thunderstorm' ||
+          wk === 'sandstorm' ||
+          wk === 'tornado',
       );
       if (wk === 'blizzard') {
         this.targetFogColor.set(0.84, 0.91, 0.98);
         this.targetClearColor.set(0.8, 0.88, 0.96, 1);
         this.targetFogDensity = 0.022;
+      } else if (wk === 'hail') {
+        this.targetFogColor.set(0.78, 0.86, 0.94);
+        this.targetClearColor.set(0.74, 0.83, 0.92, 1);
+        this.targetFogDensity = 0.02;
       } else if (wk === 'acid_rain') {
         this.targetFogColor.set(0.32, 0.45, 0.25);
         this.targetClearColor.set(0.28, 0.4, 0.22, 1);
         this.targetFogDensity = 0.015;
+      } else if (wk === 'thunderstorm') {
+        this.targetFogColor.set(0.24, 0.27, 0.36);
+        this.targetClearColor.set(0.2, 0.23, 0.32, 1);
+        this.targetFogDensity = 0.018;
+      } else if (wk === 'sandstorm') {
+        this.targetFogColor.set(0.76, 0.62, 0.36);
+        this.targetClearColor.set(0.78, 0.64, 0.4, 1);
+        this.targetFogDensity = 0.032;
+      } else if (wk === 'tornado') {
+        this.targetFogColor.set(0.5, 0.5, 0.5);
+        this.targetClearColor.set(0.46, 0.46, 0.47, 1);
+        this.targetFogDensity = 0.016;
       } else if (wk === 'meteor_shower' || wk === 'earthquake') {
         this.targetFogColor.set(0.42, 0.25, 0.22);
         this.targetClearColor.set(0.38, 0.22, 0.2, 1);
@@ -2364,20 +2390,33 @@ export class BabylonVoxelArena {
     if (
       this.activeWeatherKind === 'acid_rain' ||
       this.activeWeatherKind === 'blizzard' ||
-      this.activeWeatherKind === 'meteor_shower'
+      this.activeWeatherKind === 'meteor_shower' ||
+      this.activeWeatherKind === 'hail' ||
+      this.activeWeatherKind === 'thunderstorm' ||
+      this.activeWeatherKind === 'sandstorm' ||
+      this.activeWeatherKind === 'tornado'
     ) {
       const camPos = this.camera.position;
-      const isRain = this.activeWeatherKind === 'acid_rain';
-      const isSnow = this.activeWeatherKind === 'blizzard';
-      const fallSpeed = isRain ? 22 : isSnow ? 4.5 : 18;
-      const driftX = isRain ? 1.5 : isSnow ? 3.2 : 6.0;
-      const sx = isRain ? 0.3 : isSnow ? 0.8 : 1.0;
-      const sy = isRain ? 3.4 : isSnow ? 0.8 : 2.2;
+      const isRain =
+        this.activeWeatherKind === 'acid_rain' || this.activeWeatherKind === 'thunderstorm';
+      const isSnow = this.activeWeatherKind === 'blizzard' || this.activeWeatherKind === 'hail';
+      const isDust =
+        this.activeWeatherKind === 'sandstorm' || this.activeWeatherKind === 'tornado';
+      const fallSpeed = isRain ? 22 : isSnow ? (this.activeWeatherKind === 'hail' ? 14 : 4.5) : isDust ? 2.4 : 18;
+      const driftX = isRain ? 1.5 : isSnow ? 3.2 : isDust ? 12 : 6.0;
+      const sx = isRain ? 0.3 : isSnow ? 0.8 : isDust ? 1.3 : 1.0;
+      const sy = isRain ? 3.4 : isSnow ? 0.8 : isDust ? 0.45 : 2.2;
       const col: [number, number, number] = isRain
-        ? [0.45, 0.95, 0.35]
+        ? this.activeWeatherKind === 'thunderstorm'
+          ? [0.62, 0.76, 1.0]
+          : [0.45, 0.95, 0.35]
         : isSnow
-          ? [0.9, 0.96, 1.0]
-          : [1.0, 0.45, 0.12];
+          ? this.activeWeatherKind === 'hail'
+            ? [0.85, 0.93, 1.0]
+            : [0.9, 0.96, 1.0]
+          : isDust
+            ? [0.85, 0.72, 0.48]
+            : [1.0, 0.45, 0.12];
 
       for (let i = 0; i < this.WEATHER_CAP; i++) {
         const wp = this.weatherPool[i];
@@ -2453,6 +2492,60 @@ export class BabylonVoxelArena {
           hrtf: true,
           maxDistance: 140,
         });
+      } else if (this.activeWeatherKind === 'hail') {
+        this.weatherFxTimer = 0.2 + Math.random() * 0.35;
+        this.spawnMaterialBurst(
+          { x: wx, y: gy + 0.05, z: wz },
+          [0.85, 0.93, 1.0],
+          2,
+          0.16,
+          1.1,
+        );
+      } else if (this.activeWeatherKind === 'thunderstorm') {
+        this.weatherFxTimer = 1.1 + Math.random() * 1.1;
+        const p = this.shrapnelPool[this.shrapnelCursor];
+        this.shrapnelCursor = (this.shrapnelCursor + 1) % this.SHRAPNEL_CAP;
+        p.active = true;
+        p.px = wx;
+        p.py = cam.y + 16 + Math.random() * 8;
+        p.pz = wz;
+        p.vx = 0.4;
+        p.vy = -26;
+        p.vz = 0.2;
+        p.rx = 0;
+        p.ry = 0;
+        p.scale = 0.35;
+        p.ttl = 0.8;
+        p.color = [0.72, 0.86, 1.0];
+        this.spawnMaterialBurst(
+          { x: wx, y: gy + 0.05, z: wz },
+          [0.72, 0.86, 1.0],
+          4,
+          0.3,
+          2.2,
+        );
+        audioDirector.playWorld('sfx:weapon:electric', {
+          x: wx,
+          y: gy,
+          z: wz,
+        }, {
+          volume: 0.32,
+          priority: 1,
+          hrtf: true,
+          maxDistance: 150,
+        });
+      } else if (
+        this.activeWeatherKind === 'sandstorm' ||
+        this.activeWeatherKind === 'tornado'
+      ) {
+        this.weatherFxTimer = 0.18 + Math.random() * 0.3;
+        this.spawnMaterialBurst(
+          { x: wx, y: gy + 0.05, z: wz },
+          [0.85, 0.72, 0.48],
+          2,
+          0.22,
+          1.2,
+        );
       } else if (this.activeWeatherKind === 'earthquake') {
         this.weatherFxTimer = 1.2 + Math.random() * 0.9;
         this.spawnMaterialBurst(
@@ -2678,7 +2771,12 @@ export class BabylonVoxelArena {
 
     // Decaying trauma shake + earthquake micro-tremor
     this.cameraTrauma = Math.max(0, this.cameraTrauma - dt * 2.2);
-    const quake = this.activeWeatherKind === 'earthquake' ? 0.045 : 0;
+    const quake =
+      this.activeWeatherKind === 'earthquake'
+        ? 0.045
+        : this.activeWeatherKind === 'tornado'
+          ? 0.02
+          : 0;
     const shake =
       (this.cameraTrauma * this.cameraTrauma * 0.12 + quake) *
       (this.reducedMotion ? 0.25 : 1);

@@ -99,6 +99,46 @@ test('event resolver matches weather, terrain, entity, and supply', () => {
   assert.equal(unknown.itemId, 'evt_weather_meteor_shower');
 });
 
+test('catalog covers the expanded archetype and hazard library', () => {
+  const catalog = getCatalog();
+  const archetypes = [
+    'crossbow',
+    'bow',
+    'gatling',
+    'flamethrower',
+    'energy_cannon',
+    'harpoon',
+    'mortar',
+    'dual_pistols',
+    'railgun',
+  ];
+  for (const archetype of archetypes) {
+    const items = catalog.weapons.filter((item) => item.tags.includes(archetype));
+    assert.equal(items.length, 6, `${archetype} deveria ter as 6 variações elementais`);
+  }
+
+  const crossbow = resolveWeaponFromCatalog('Besta de gelo');
+  assert.equal(crossbow.itemId, 'wpn_crossbow_ice');
+  assert.equal(crossbow.strategy, 'alias');
+
+  const railgun = resolveWeaponFromCatalog('Railgun de choque');
+  assert.equal(railgun.itemId, 'wpn_railgun_electric');
+  assert.equal(railgun.strategy, 'alias');
+
+  const center: [number, number, number] = [0, 0, 0];
+  const tornado = resolveEventFromCatalog('Tornado', 'p1', 'Ana', center);
+  assert.equal(tornado.itemId, 'evt_weather_tornado');
+  assert.equal(tornado.event.params.weatherKind, 'tornado');
+
+  const sinkhole = resolveEventFromCatalog('Sorvedouro', 'p1', 'Ana', center);
+  assert.equal(sinkhole.itemId, 'evt_terrain_sinkhole');
+  assert.equal(sinkhole.event.params.mutationKind, 'sinkhole');
+
+  const spiders = resolveEventFromCatalog('Enxame de aranhas', 'p1', 'Ana', center);
+  assert.equal(spiders.itemId, 'evt_entity_spider_swarm');
+  assert.ok(spiders.event.entityBlueprint);
+});
+
 test('catalog lookup exposes governance metadata without trusting arbitrary ids', () => {
   assert.deepEqual(getCatalogItem('wpn_pistol_ice'), {
     kind: 'weapon',
@@ -168,13 +208,37 @@ test('reloadCatalog revalidates the artifact without losing the current version'
   assert.equal(getCatalog().weapons.length, before.weapons.length);
 });
 
-test('pool resolution marks exclusions and prefers the same element', () => {
+test('exact prompts bypass the pool; fuzzy ones stay pool-bound', () => {
   const catalog = getCatalog();
   const allowedIds = catalog.weapons
     .filter((item) => item.id !== 'wpn_pistol_ice' && item.tags.includes('ice'))
     .map((item) => item.id);
-  const resolution = resolveWeaponFromCatalog('Pistola de gelo', { allowedIds });
-  assert.equal(resolution.poolMiss, true);
-  assert.equal(resolution.fullItemId, 'wpn_pistol_ice');
-  assert.ok(resolution.blueprint.catalogId?.endsWith('_ice'));
+
+  // Nome/alias exato é um pedido explícito: entrega o item mesmo fora do pool.
+  const exact = resolveWeaponFromCatalog('Pistola de gelo', { allowedIds });
+  assert.equal(exact.itemId, 'wpn_pistol_ice');
+  assert.equal(exact.strategy, 'alias');
+  assert.equal(exact.poolMiss, true);
+  assert.equal(exact.fullItemId, 'wpn_pistol_ice');
+
+  // Prompt vago continua preso ao arsenal e prefere o mesmo elemento do pool.
+  const fuzzy = resolveWeaponFromCatalog('arma congelante', { allowedIds });
+  assert.equal(fuzzy.strategy, 'partial');
+  assert.equal(fuzzy.itemId === 'wpn_pistol_ice', false);
+  assert.ok(fuzzy.blueprint.catalogId?.endsWith('_ice'));
+
+  // Itens fora do pool mas citados pelo nome também valem para eventos.
+  const eventIds = catalog.events
+    .filter((item) => item.id !== 'evt_weather_thunderstorm')
+    .map((item) => item.id);
+  const thunderstorm = resolveEventFromCatalog(
+    'Tempestade de raios',
+    'p1',
+    'Ana',
+    [0, 0, 0],
+    { allowedIds: eventIds },
+  );
+  assert.equal(thunderstorm.itemId, 'evt_weather_thunderstorm');
+  assert.equal(thunderstorm.strategy, 'alias');
+  assert.equal(thunderstorm.poolMiss, true);
 });

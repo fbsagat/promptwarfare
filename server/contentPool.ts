@@ -5,14 +5,19 @@ import type {
   CatalogWeaponItem,
 } from './catalog.ts';
 import type { ContentPoolNetInfo } from '../src/shared/types.ts';
+import {
+  EVENT_CATEGORY_KEYS,
+  WEAPON_ARCHETYPE_KEYS,
+  WEAPON_ELEMENT_KEYS,
+} from '../src/shared/catalogTaxonomy.ts';
 
-export const POOL_ALGORITHM_VERSION = 1;
+export const POOL_ALGORITHM_VERSION = 2;
 export const DEFAULT_POOL_WEAPON_ID = 'wpn_rifle_standard';
 export const DEFAULT_POOL_EVENT_ID = 'evt_weather_meteor_shower';
 
-const WEAPON_ELEMENTS = ['standard', 'ice', 'fire', 'toxic', 'void', 'electric'];
-const WEAPON_ARCHETYPES = ['pistol', 'rifle', 'smg', 'shotgun', 'sniper', 'launcher'];
-const EVENT_CATEGORIES = ['weather', 'terrain', 'entity', 'supply'];
+const WEAPON_ELEMENTS: string[] = [...WEAPON_ELEMENT_KEYS];
+const WEAPON_ARCHETYPES: string[] = [...WEAPON_ARCHETYPE_KEYS];
+const EVENT_CATEGORIES: string[] = [...EVENT_CATEGORY_KEYS];
 
 export interface ContentPool {
   algorithmVersion: number;
@@ -289,7 +294,16 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
       ),
     );
   }
-  for (const archetype of WEAPON_ARCHETYPES) {
+  // Arquétipos entram em ordem sorteada (determinística pelo seed) e param no
+  // alvo. Salas pequenas recebem um subconjunto rotativo; salas grandes cobrem
+  // todos os arquétipos sem inflar o pool além do alvo.
+  const archetypeOrder = [...WEAPON_ARCHETYPES];
+  for (let i = archetypeOrder.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [archetypeOrder[i], archetypeOrder[j]] = [archetypeOrder[j], archetypeOrder[i]];
+  }
+  for (const archetype of archetypeOrder) {
+    if (selectedWeapons.size >= weaponTarget) break;
     addWeapon(
       selectedWeapons,
       weightedPick(

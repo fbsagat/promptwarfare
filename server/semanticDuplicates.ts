@@ -1,8 +1,12 @@
 import { textSetSimilarity } from './semantic.ts';
+import {
+  EVENT_CATEGORY_KEYS,
+  WEAPON_ARCHETYPE_KEYS,
+} from '../src/shared/catalogTaxonomy.ts';
 
 const GENERIC_TAGS = new Set(['weapon', 'event', 'candidate']);
-const WEAPON_ARCHETYPES = ['pistol', 'rifle', 'smg', 'shotgun', 'sniper', 'launcher'];
-const EVENT_CATEGORIES = ['weather', 'terrain', 'entity', 'supply'];
+const WEAPON_ARCHETYPES: string[] = [...WEAPON_ARCHETYPE_KEYS];
+const EVENT_CATEGORIES: string[] = [...EVENT_CATEGORY_KEYS];
 
 export const SEMANTIC_DUPLICATE_THRESHOLD = 0.75;
 

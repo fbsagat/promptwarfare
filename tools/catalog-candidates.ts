@@ -90,7 +90,20 @@ function candidateTags(
 function weaponStyleTags(prompt: string): string[] {
   const p = normalizePrompt(prompt);
   const tags: string[] = [];
+  // Arquétipos específicos primeiro: evita marcar "canhão de energia" como launcher
+  // e "metralhadora pesada" como smg.
   const archetypes: Array<[string, RegExp]> = [
+    ['crossbow', /besta|ballesta|crossbow|virote/],
+    ['bow', /(^|\s)arco(\s|$)|arco composto|arco longo|bow/],
+    ['gatling', /metralhadora pesada|gatling|minigun|metralha pesada/],
+    ['flamethrower', /lanca[ -]?chamas|flamethrower|jato de fogo|queimador/],
+    ['energy_cannon', /canhao de (energia|plasma|particulas)/],
+    ['harpoon', /arpao|harpoon|arpoadora/],
+    ['mortar', /morteiro|mortar|obuseiro|lancador de granadas/],
+    ['dual_pistols', /pistolas? duplas?|dual pistols|akimbo/],
+    ['railgun', /canhao de trilho|railgun|trilho magnetico/],
+  ];
+  const generic: Array<[string, RegExp]> = [
     ['pistol', /pistola|pistol|revolver/],
     ['rifle', /rifle|fuzil|carabina/],
     ['smg', /smg|submetralhadora|metralhadora|metralha/],
@@ -98,7 +111,12 @@ function weaponStyleTags(prompt: string): string[] {
     ['sniper', /sniper|precisao|franco|laser|feixe/],
     ['launcher', /bazuca|lancador|canhao|missil|foguete|meteoro/],
   ];
-  for (const [tag, rx] of archetypes) if (rx.test(p)) tags.push(tag);
+  const specific = archetypes.filter(([, rx]) => rx.test(p)).map(([tag]) => tag);
+  if (specific.length > 0) {
+    tags.push(...specific);
+  } else {
+    for (const [tag, rx] of generic) if (rx.test(p)) tags.push(tag);
+  }
   const elements: Array<[string, RegExp]> = [
     ['ice', /gelo|congel|crio|neve|frost|glacial/],
     ['fire', /fogo|lava|chama|incendi|solar|flamejante|explosiv/],

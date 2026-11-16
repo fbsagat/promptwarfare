@@ -89,7 +89,7 @@ Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalog
 - `hash` e contagem de itens aparecem em `room:init`/`room:tick` (`contentPool`);
 - itens `deprecated` e pools vazios caem para o catálogo completo.
 
-O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. Se o item ideal existe no catálogo mas não no pool, o ledger grava `pool_miss = 1` e `pool_hash`; isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
+O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. **Pedido explícito vence o arsenal**: se o prompt bate em nome/alias exato ou na chave canônica de um item aprovado, esse item é entregue mesmo fora do pool, e o desvio é registrado como `pool_miss = 1` com `pool_hash`. Para prompts vagos (tags/parcial), a resolução continua presa ao pool. Isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
 
 ### Composição de eventos
 
@@ -190,7 +190,7 @@ Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 - `engine/audio/materialAudio.ts` mapeia `MAT` para passos e impactos (pedra, madeira, metal, gelo, terracota, macio).
 - VFX derivam do que o servidor já envia: `fx:shrapnel` gera detritos/onda de choque/decals e projétil novo/removido gera tiro/impacto — sem novas mensagens de protocolo.
 - `engine/settings.ts` persiste volumes por bus, sensibilidade/inverter Y, preferência de estatísticas e **reduzir movimento**; `components/SettingsModal.tsx` centraliza áudio, mouse, qualidade e HUD.
-- Ambiência combina vento, água, fogo, pântano e caverna, com reverb procedural em interiores e crossfade; clima (chuva ácida, nevasca, meteoros, terremoto) altera névoa/cor e adiciona respingos/poeira/rumble, com transições suaves.
+- Ambiência combina vento, água, fogo, pântano e caverna, com reverb procedural em interiores e crossfade; clima (chuva ácida, nevasca, granizo, meteoros, terremoto, tempestade de areia, tempestade de raios e tornado) altera névoa/cor e adiciona respingos/poeira/rumble, com transições suaves. Mutações de terreno (vulcão, fissura, pilares de cristal, maré, sorvedouro, rio de lava, geleira e floresta voraz) alteram voxels de forma autoritativa no servidor.
 - Fullscreen (F/botão) usa `requestFullscreen` com fallback WebKit; o mouse é capturado por pointer lock no clique do canvas (cursor escondido) e `Esc` solta + pausa.
 - Traversal: `MAT.LADDER` é não-sólido para colisão e detectado por `isNearLadder`; sprint/crouch/slide/mantle e stamina rodam no tick autoritativo, e tirolesas usam `IslandMeta.ziplines` recomputado da seed no cliente e no servidor.
 - `engine/quality.ts` resolve presets de qualidade (`auto/low/medium/high`), persistidos em `localStorage` e aplicados pelo `babylonArena` (escala de render e sombras); `auto` usa low em iGPU. O HUD de perf é apenas DEV.

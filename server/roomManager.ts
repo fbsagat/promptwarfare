@@ -2989,33 +2989,53 @@ export class RoomManager {
 
       if (doHazardPulse) {
         for (const component of this.getEventComponents(evt)) {
+          if (component.archetype === 'TERRAIN_MUTATION' && component.params.mutationKind === 'lava_river') {
+            for (const p of room.players.values()) {
+              if (!p.alive) continue;
+              const fx = Math.floor(p.position.x / VOXEL_SIZE);
+              const fz = Math.floor(p.position.z / VOXEL_SIZE);
+              const fy = Math.floor((p.position.y + 0.2) / VOXEL_SIZE);
+              const onLava =
+                room.grid.get(fx, fy, fz) === MAT.LAVA ||
+                room.grid.get(fx, fy - 1, fz) === MAT.LAVA;
+              if (onLava) {
+                this.damagePlayer(room, p, component.params.lethality * 0.22, null, 'rio de lava');
+                p.velocity.y += 2.2;
+              }
+            }
+            continue;
+          }
           if (component.archetype !== 'WEATHER_HAZARD') continue;
           const params = component.params;
           const wKind = params.weatherKind ?? 'meteor_shower';
-          if (wKind === 'meteor_shower' || wKind === 'earthquake') {
+          if (wKind === 'meteor_shower' || wKind === 'earthquake' || wKind === 'thunderstorm') {
             const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
             let rx = (0.2 + Math.random() * 0.6) * room.dimX * VOXEL_SIZE;
             let rz = (0.2 + Math.random() * 0.6) * room.dimZ * VOXEL_SIZE;
-            if (alivePlayers.length > 0 && Math.random() < 0.48) {
+            const anchorChance = wKind === 'thunderstorm' ? 0.72 : 0.48;
+            if (alivePlayers.length > 0 && Math.random() < anchorChance) {
               const anchor = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
               const rad = Math.min(28, params.radiusMeters || 18);
               const ang = Math.random() * Math.PI * 2;
-              const d = Math.random() * rad;
+              const d = Math.random() * (wKind === 'thunderstorm' ? Math.min(6, rad) : rad);
               rx = Math.max(8, Math.min(room.dimX * VOXEL_SIZE - 8, anchor.position.x + Math.cos(ang) * d));
               rz = Math.max(8, Math.min(room.dimZ * VOXEL_SIZE - 8, anchor.position.z + Math.sin(ang) * d));
             }
             const gy = getGroundVoxelY(room.grid, Math.floor(rx / VOXEL_SIZE), Math.floor(rz / VOXEL_SIZE));
             const wy = (gy + 0.5) * VOXEL_SIZE;
-            this.applyVoxelCarve(room, rx, wy, rz, wKind === 'meteor_shower' ? 5.0 : 3.5, true);
+            const carveRadius = wKind === 'meteor_shower' ? 5.0 : wKind === 'thunderstorm' ? 2.6 : 3.5;
+            const hitRadius = wKind === 'thunderstorm' ? 3.2 : 4.5;
+            const damageFactor = wKind === 'thunderstorm' ? 0.7 : 0.55;
+            this.applyVoxelCarve(room, rx, wy, rz, carveRadius, true);
             for (const p of room.players.values()) {
               if (!p.alive) continue;
               const d = Math.hypot(p.position.x - rx, p.position.z - rz);
-              if (d < 4.5) {
-                this.damagePlayer(room, p, params.lethality * 0.55, null, evt.prompt);
-                p.velocity.y += 6.5;
+              if (d < hitRadius) {
+                this.damagePlayer(room, p, params.lethality * damageFactor, null, evt.prompt);
+                p.velocity.y += wKind === 'thunderstorm' ? 3.8 : 6.5;
               }
             }
-          } else if (wKind === 'acid_rain') {
+          } else if (wKind === 'acid_rain' || wKind === 'sandstorm') {
             for (const p of room.players.values()) {
               if (!p.alive) continue;
               // Check if player has roof overhead
@@ -3023,15 +3043,46 @@ export class RoomManager {
               const headVz = Math.floor(p.position.z / VOXEL_SIZE);
               const topVy = getGroundVoxelY(room.grid, headVx, headVz);
               if (topVy * VOXEL_SIZE <= p.position.y + 1.8) {
-                this.damagePlayer(room, p, params.lethality * 0.16, null, 'chuva ácida');
+                const factor = wKind === 'sandstorm' ? 0.12 : 0.16;
+                const reason = wKind === 'sandstorm' ? 'tempestade de areia' : 'chuva ácida';
+                this.damagePlayer(room, p, params.lethality * factor, null, reason);
               }
             }
-          } else if (wKind === 'blizzard') {
+          } else if (wKind === 'blizzard' || wKind === 'hail') {
             const now = Date.now();
+            const isHail = wKind === 'hail';
             for (const p of room.players.values()) {
               if (!p.alive) continue;
-              p.freezeUntil = now + 1500;
-              this.damagePlayer(room, p, params.lethality * 0.1, null, 'nevasca');
+              p.freezeUntil = now + (isHail ? 700 : 1500);
+              this.damagePlayer(
+                room,
+                p,
+                params.lethality * (isHail ? 0.28 : 0.1),
+                null,
+                isHail ? 'granizo' : 'nevasca',
+              );
+            }
+          } else if (wKind === 'tornado') {
+            const cx = (room.dimX * VOXEL_SIZE) / 2;
+            const cz = (room.dimZ * VOXEL_SIZE) / 2;
+            const drift = 10;
+            const tx = cx + Math.cos(room.elapsedSec * 0.35) * drift;
+            const tz = cz + Math.sin(room.elapsedSec * 0.35) * drift;
+            const rad = Math.max(12, params.radiusMeters || 24);
+            for (const p of room.players.values()) {
+              if (!p.alive) continue;
+              const dx = tx - p.position.x;
+              const dz = tz - p.position.z;
+              const d = Math.hypot(dx, dz);
+              if (d > rad) continue;
+              const pull = (1 - d / rad) * 4.2;
+              const inv = 1 / Math.max(0.001, d);
+              p.velocity.x += dx * inv * pull;
+              p.velocity.z += dz * inv * pull;
+              p.velocity.y += 1.4 + (1 - d / rad) * 3.4;
+              if (d < rad * 0.35) {
+                this.damagePlayer(room, p, params.lethality * 0.18, null, evt.prompt);
+              }
             }
           }
         }
@@ -3136,13 +3187,59 @@ export class RoomManager {
             }
           }
         }
+      } else if (mKind === 'sinkhole') {
+        const cx = Math.floor(room.dimX / 2);
+        const cz = Math.floor(room.dimZ / 2);
+        const baseY = getGroundVoxelY(room.grid, cx, cz);
+        const rMax = 11;
+        const depth = 28;
+        for (let dy = 0; dy < depth; dy++) {
+          const r = Math.max(1, Math.round(rMax * (1 - dy / depth)));
+          const vy = baseY - dy;
+          if (vy <= 1) break;
+          for (let dz = -r; dz <= r; dz++) {
+            for (let dx = -r; dx <= r; dx++) {
+              if (dx * dx + dz * dz > r * r) continue;
+              const vx = cx + dx;
+              const vz = cz + dz;
+              if (vx < 1 || vz < 1 || vx >= room.dimX - 1 || vz >= room.dimZ - 1) continue;
+              if (room.grid.set(vx, vy, vz, MAT.AIR)) {
+                deltas.push({ vx, vy, vz, mat: MAT.AIR });
+              }
+            }
+          }
+        }
+      } else if (mKind === 'lava_river') {
+        const xMid = Math.floor(room.dimX / 2);
+        const zMid = Math.floor(room.dimZ / 2);
+        const halfLen = Math.min(54, Math.floor(room.dimX * 0.16));
+        const width = 3;
+        for (let vx = xMid - halfLen; vx <= xMid + halfLen; vx++) {
+          for (let dz = -width; dz <= width; dz++) {
+            const vz = zMid + dz;
+            if (vz < 1 || vz >= room.dimZ - 1) continue;
+            const baseY = getGroundVoxelY(room.grid, vx, vz);
+            for (let vy = baseY; vy > baseY - 4 && vy > 1; vy--) {
+              if (room.grid.set(vx, vy, vz, MAT.AIR)) {
+                deltas.push({ vx, vy, vz, mat: MAT.AIR });
+              }
+            }
+            const lavaY = Math.max(1, baseY - 4);
+            if (room.grid.set(vx, lavaY, vz, MAT.LAVA)) {
+              deltas.push({ vx, vy: lavaY, vz, mat: MAT.LAVA });
+            }
+          }
+        }
       } else {
-        const pillars = mKind === 'volcano' ? 2 : 7;
+        const isVolcano = mKind === 'volcano';
+        const isGlacier = mKind === 'glacier';
+        const isOvergrowth = mKind === 'overgrowth';
+        const pillars = isVolcano ? 2 : isGlacier ? 6 : isOvergrowth ? 8 : 7;
         for (let p = 0; p < pillars; p++) {
           const px = Math.floor((0.25 + Math.random() * 0.5) * room.dimX);
           const pz = Math.floor((0.25 + Math.random() * 0.5) * room.dimZ);
-          const h = mKind === 'volcano' ? 22 : 16;
-          const rMax = mKind === 'volcano' ? 11 : 5;
+          const h = isVolcano ? 22 : isGlacier ? 20 : isOvergrowth ? 15 : 16;
+          const rMax = isVolcano ? 11 : isGlacier ? 6 : isOvergrowth ? 4 : 5;
           const baseY = getGroundVoxelY(room.grid, px, pz);
           for (let dy = 0; dy < h; dy++) {
             const r = Math.max(1, Math.round(rMax * (1 - dy / (h + 2))));
@@ -3150,12 +3247,17 @@ export class RoomManager {
               for (let dx = -r; dx <= r; dx++) {
                 if (dx * dx + dz * dz > r * r) continue;
                 const vy = Math.min(room.dimY - 2, baseY + dy);
-                const mat =
-                  mKind === 'volcano' && dy >= h - 3 && dx * dx + dz * dz <= 1
-                    ? MAT.LAVA
-                    : mKind === 'volcano'
-                      ? MAT.SCORCHED
-                      : MAT.CRYSTAL;
+                let mat: number;
+                if (isVolcano) {
+                  mat =
+                    dy >= h - 3 && dx * dx + dz * dz <= 1 ? MAT.LAVA : MAT.SCORCHED;
+                } else if (isGlacier) {
+                  mat = dy >= h - 3 ? MAT.SNOW : MAT.ICE;
+                } else if (isOvergrowth) {
+                  mat = dy >= h - 3 ? MAT.LEAVES : MAT.WOOD;
+                } else {
+                  mat = MAT.CRYSTAL;
+                }
                 if (room.grid.set(px + dx, vy, pz + dz, mat)) {
                   deltas.push({ vx: px + dx, vy, vz: pz + dz, mat });
                 }

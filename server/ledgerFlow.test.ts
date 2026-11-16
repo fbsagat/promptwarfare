@@ -48,10 +48,8 @@ test('RoomManager records equip and kill usage for catalog items', () => {
     assert.equal(usage.length, 1);
     assert.equal(usage[0].role, 'equip');
     const forgedWeaponId = usage[0].item_id;
-    assert.ok(
-      res.room.contentPool?.weaponIds.includes(forgedWeaponId),
-      'arma forjada deve pertencer ao pool da sala',
-    );
+    // Pedido explícito (alias exato) é honrado mesmo se o item ficar fora do pool.
+    assert.equal(forgedWeaponId, 'wpn_pistol_ice');
     assert.equal(usage[0].actor_type, 'human');
 
     (manager as any).killPlayer(res.room, victim, attacker, 'teste');
@@ -147,13 +145,16 @@ test('RoomManager records opened/submitted prompt sessions in the ledger', () =>
     assert.equal(rows[1].actor_type, 'human');
     assert.equal(rows[1].prompt, 'Pistola de gelo');
     assert.ok(rows[1].item_id);
-    assert.ok(
-      res.room.contentPool?.weaponIds.includes(rows[1].item_id!),
-      'item servido deve pertencer ao pool',
-    );
+    assert.equal(rows[1].item_id, 'wpn_pistol_ice');
     assert.ok(rows[1].strategy);
     assert.equal(rows[1].pool_hash, res.room.contentPool?.hash);
-    assert.ok(rows[1].pool_miss === 0 || rows[1].pool_miss === 1);
+    const inPool =
+      res.room.contentPool?.weaponIds.includes(rows[1].item_id!) ?? false;
+    assert.equal(
+      rows[1].pool_miss,
+      inPool ? 0 : 1,
+      'pool_miss deve refletir o desvio do arsenal em pedidos exatos',
+    );
     assert.equal(rows[1].room_id, 'LEDGER1');
     assert.ok(rows[1].match_id);
   } finally {

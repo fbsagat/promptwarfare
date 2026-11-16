@@ -165,8 +165,25 @@ export interface EventParams {
   durationSec: number; // 15..90
   lethality: number; // 5..45
   quantity: number; // 1..14
-  weatherKind?: 'acid_rain' | 'blizzard' | 'meteor_shower' | 'low_gravity' | 'earthquake';
-  mutationKind?: 'volcano' | 'fissure' | 'crystal_spires' | 'rising_tide';
+  weatherKind?:
+    | 'acid_rain'
+    | 'blizzard'
+    | 'meteor_shower'
+    | 'low_gravity'
+    | 'earthquake'
+    | 'sandstorm'
+    | 'thunderstorm'
+    | 'hail'
+    | 'tornado';
+  mutationKind?:
+    | 'volcano'
+    | 'fissure'
+    | 'crystal_spires'
+    | 'rising_tide'
+    | 'sinkhole'
+    | 'lava_river'
+    | 'glacier'
+    | 'overgrowth';
   aiBehavior?: EntityAiBehavior;
   ammoRestore?: number; // 10..60
 }
