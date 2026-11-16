@@ -3,9 +3,21 @@ import { DevPanel } from './components/DevPanel.tsx';
 import { GameHud } from './components/GameHud.tsx';
 import { LobbyOverlay } from './components/LobbyOverlay.tsx';
 import { PromptBar } from './components/PromptBar.tsx';
+import { SettingsModal } from './components/SettingsModal.tsx';
 import { StatusModal } from './components/StatusModal.tsx';
 import { WaitingRoomOverlay } from './components/WaitingRoomOverlay.tsx';
-import { BabylonVoxelArena } from './engine/babylonArena.ts';
+import { BabylonVoxelArena, type PerfStats } from './engine/babylonArena.ts';
+import { audioEngine } from './engine/audio/audioEngine.ts';
+import {
+  loadQualityLevel,
+  saveQualityLevel,
+  type QualityLevel,
+} from './engine/quality.ts';
+import {
+  loadSettings,
+  saveSettings,
+  type GameSettings,
+} from './engine/settings.ts';
 import { soundSynth } from './engine/soundSynth.ts';
 import type { AssetManifest } from './shared/assets.ts';
 import { isClientDevEnabled } from './shared/devMode.ts';
@@ -90,10 +102,32 @@ export default function App() {
   const promptRequestAtRef = useRef(0);
   const [zoomMeters, setZoomMeters] = useState(0);
   const [muted, setMuted] = useState(false);
+  const [qualityLevel, setQualityLevel] = useState<QualityLevel>(() =>
+    loadQualityLevel(),
+  );
+  const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [damageDirection, setDamageDirection] = useState<{
+    angle: number;
+    at: number;
+  } | null>(null);
+  const [damageNumbers, setDamageNumbers] = useState<
+    Array<{ id: number; x: number; y: number; amount: number }>
+  >([]);
+  const [perfStats, setPerfStats] = useState<PerfStats | null>(null);
+  const qualityLevelRef = useRef<QualityLevel>(qualityLevel);
+  const settingsRef = useRef<GameSettings>(settings);
+  const damageNumberSeqRef = useRef(0);
+  const pingSentAtRef = useRef(0);
   const [damageFlash, setDamageFlash] = useState(false);
   const [hitmarkerActive, setHitmarkerActive] = useState(false);
   const [aimContext, setAimContext] = useState<'neutral' | 'dig' | 'grapple' | 'enemy'>('neutral');
   const [nearbyLootName, setNearbyLootName] = useState<string | null>(null);
+  const [nearbyZipline, setNearbyZipline] = useState<string | null>(null);
+
   const [islandSizeMeters, setIslandSizeMeters] = useState(88);
   const [lootDrops, setLootDrops] = useState<LootDropState[]>([]);
   const [entities, setEntities] = useState<SpawnedEntityNetState[]>([]);
@@ -231,15 +265,23 @@ export default function App() {
       },
       onDropItem: () => sendWs({ type: 'player:drop' }),
       onPickupItem: () => sendWs({ type: 'player:pickup' }),
+      onUseZipline: (routeId) =>
+        sendWs({ type: 'player:zipline', payload: { routeId } }),
+      onZiplineNearby: (name) => setNearbyZipline(name),
       onOpenPrompt: () => openPromptByPriority(),
       onOpenWeaponPrompt: () => openWeaponPrompt(),
       onOpenEventPrompt: () => openEventPrompt(),
       onZoomChange: (z) => setZoomMeters(z),
       onAimContextChange: (ctx) => setAimContext(ctx),
       onContextLost: (lost) => setContextLost(lost),
+      onPointerLockChange: (locked) => setPointerLocked(locked),
     });
 
     arenaRef.current = arena;
+    arena.setQuality(qualityLevelRef.current);
+    arena.setLookSensitivity(settingsRef.current.sensitivity);
+    arena.setInvertY(settingsRef.current.invertY);
+    arena.setReducedMotion(settingsRef.current.reducedMotion);
     if (assetManifestRef.current) arena.setAssetManifest(assetManifestRef.current);
     return () => {
       if (damageFlashTimerRef.current) window.clearTimeout(damageFlashTimerRef.current);
@@ -381,7 +423,12 @@ export default function App() {
         }
 
         if (msg.type === 'fx:hit') {
-          const heavy = Boolean(msg.payload?.heavy);
+          const payload = msg.payload as {
+            damage?: number;
+            heavy?: boolean;
+            position?: Vec3;
+          };
+          const heavy = Boolean(payload?.heavy);
           arenaRef.current?.triggerHitstop(heavy ? 0.052 : 0.032);
           soundSynth.playHitConfirm(heavy);
           setHitmarkerActive(true);
@@ -389,6 +436,54 @@ export default function App() {
           hitmarkerTimerRef.current = window.setTimeout(() => {
             setHitmarkerActive(false);
           }, 160);
+          const damage = Number(payload?.damage);
+          if (payload?.position && Number.isFinite(damage)) {
+            const screen = arenaRef.current?.projectToScreen(payload.position);
+            if (screen?.visible) {
+              const id = ++damageNumberSeqRef.current;
+              setDamageNumbers((prev) => [
+                ...prev.slice(-7),
+                {
+                  id,
+                  x: screen.x,
+                  y: screen.y,
+                  amount: Math.round(damage),
+                },
+              ]);
+              window.setTimeout(() => {
+                setDamageNumbers((prev) => prev.filter((n) => n.id !== id));
+              }, 900);
+            }
+          }
+          return;
+        }
+
+        if (msg.type === 'fx:damage') {
+          const from = msg.payload?.from as Vec3 | undefined;
+          const local = playersRef.current.find(
+            (p) => p.id === localPlayerIdRef.current,
+          );
+          if (from && local) {
+            const dx = from.x - local.position.x;
+            const dz = from.z - local.position.z;
+            let angle = Math.atan2(dx, dz) - local.yaw;
+            angle = Math.atan2(Math.sin(angle), Math.cos(angle));
+            const at = Date.now();
+            setDamageDirection({ angle, at });
+            window.setTimeout(() => {
+              setDamageDirection((cur) =>
+                cur && cur.at === at ? null : cur,
+              );
+            }, 1300);
+          }
+          return;
+        }
+
+        if (msg.type === 'pong') {
+          const sentAt = Number(msg.payload?.t);
+          if (Number.isFinite(sentAt)) {
+            setPingMs(Math.max(0, Math.round(performance.now() - sentAt)));
+          }
           return;
         }
 
@@ -597,12 +692,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const toggleFullscreen = useCallback(async () => {
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void>;
+    };
+    try {
+      const active = doc.fullscreenElement ?? doc.webkitFullscreenElement;
+      if (active) {
+        if (doc.exitFullscreen) await doc.exitFullscreen();
+        else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
+      } else if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      }
+    } catch {
+      // Navegador/iframe pode bloquear fullscreen sem gesto.
+    }
+  }, []);
+
   // Global keyboard shortcuts (Pause P/Escape, Mute M)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const activeTag = document.activeElement?.tagName;
-      const inInput = activeTag === 'INPUT' || activeTag === 'TEXTAREA';
+      const inInput =
+        activeTag === 'INPUT' ||
+        activeTag === 'TEXTAREA' ||
+        activeTag === 'SELECT';
       if (inInput) return;
+
+      if (e.code === 'KeyF' && !e.repeat) {
+        e.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
+
+      if (settingsOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setSettingsOpen(false);
+        }
+        return;
+      }
 
       if (e.code === 'KeyM') {
         soundSynth.muted = !soundSynth.muted;
@@ -624,12 +759,83 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [settingsOpen, toggleFullscreen]);
 
   const handleToggleMute = () => {
     soundSynth.muted = !soundSynth.muted;
     setMuted(soundSynth.muted);
   };
+
+  const handleQualityChange = useCallback((level: QualityLevel) => {
+    setQualityLevel(level);
+    qualityLevelRef.current = level;
+    saveQualityLevel(level);
+    arenaRef.current?.setQuality(level);
+  }, []);
+
+  const handleSettingsChange = useCallback((next: GameSettings) => {
+    setSettings(next);
+  }, []);
+
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true);
+    if (gameStateRef.current === 'playing') {
+      setGameState('paused');
+    }
+    arenaRef.current?.releasePointerLock();
+  }, []);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+    saveSettings(settings);
+    audioEngine.setMasterVolume(settings.volumes.master);
+    audioEngine.setBusVolume('sfx', settings.volumes.sfx);
+    audioEngine.setBusVolume('ambience', settings.volumes.ambience);
+    audioEngine.setBusVolume('ui', settings.volumes.ui);
+    arenaRef.current?.setLookSensitivity(settings.sensitivity);
+    arenaRef.current?.setInvertY(settings.invertY);
+    arenaRef.current?.setReducedMotion(settings.reducedMotion);
+    if (!settings.showStats) setPerfStats(null);
+  }, [settings]);
+
+  useEffect(() => {
+    const onChange = () => {
+      const doc = document as Document & { webkitFullscreenElement?: Element | null };
+      setIsFullscreen(Boolean(doc.fullscreenElement ?? doc.webkitFullscreenElement));
+    };
+    onChange();
+    document.addEventListener('fullscreenchange', onChange);
+    document.addEventListener('webkitfullscreenchange', onChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      document.removeEventListener('webkitfullscreenchange', onChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      const t = performance.now();
+      pingSentAtRef.current = t;
+      wsRef.current.send(JSON.stringify({ type: 'ping', payload: { t } }));
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const next = arenaRef.current?.getPerfStats();
+      if (!next) return;
+      if (import.meta.env.DEV || settingsRef.current.showStats) {
+        setPerfStats(next);
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, []);
 
   const handlePromptSubmit = (prompt: string) => {
     if (promptMode === 'weapon') {
@@ -716,6 +922,9 @@ export default function App() {
           errorMessage={errorMessage}
           errorCode={errorCode}
           errorRoomId={errorRoomId}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => void toggleFullscreen()}
+          onOpenSettings={openSettings}
         />
       )}
 
@@ -753,14 +962,25 @@ export default function App() {
           killfeed={killfeed}
           zoomMeters={zoomMeters}
           muted={muted}
+          qualityLevel={qualityLevel}
+          perfStats={perfStats}
+          showStats={settings.showStats}
+          pingMs={pingMs}
+          pointerLocked={pointerLocked}
+          isFullscreen={isFullscreen}
           damageFlash={damageFlash}
           hitmarkerActive={hitmarkerActive}
           aimContext={aimContext}
           nearbyLootName={nearbyLootName}
+          nearbyZipline={nearbyZipline}
+          damageDirection={damageDirection}
+          damageNumbers={damageNumbers}
           devEnabled={import.meta.env.DEV && devEnabled}
           devPanelOpen={devPanelOpen}
           onToggleDevPanel={() => setDevPanelOpen((v) => !v)}
           onToggleMute={handleToggleMute}
+          onToggleFullscreen={() => void toggleFullscreen()}
+          onOpenSettings={openSettings}
           onPause={() => setGameState('paused')}
           onSelectSlot={(slot) => arenaRef.current?.selectSlot(slot)}
           onOpenWeaponPrompt={() => openWeaponPrompt()}
@@ -813,7 +1033,20 @@ export default function App() {
           onUpdateAccess={(accessMode, password) =>
             sendWs({ type: 'room:update_settings', payload: { accessMode, password } })
           }
+          onOpenSettings={openSettings}
           onBackToTitle={handleBackToTitle}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          qualityLevel={qualityLevel}
+          isFullscreen={isFullscreen}
+          onChange={handleSettingsChange}
+          onQualityChange={handleQualityChange}
+          onToggleFullscreen={() => void toggleFullscreen()}
+          onClose={closeSettings}
         />
       )}
     </main>

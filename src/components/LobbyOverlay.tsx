@@ -4,9 +4,12 @@ import {
   Dices,
   Lock,
   LockOpen,
+  Maximize,
+  Minimize,
   PlusCircle,
   RefreshCw,
   Search,
+  Settings,
   ShieldBan,
   Users,
   Zap,
@@ -34,6 +37,9 @@ interface LobbyOverlayProps {
   errorMessage: string | null;
   errorCode: string | null;
   errorRoomId: string | null;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
+  onOpenSettings: () => void;
 }
 
 type DiscoveryFilter = 'all' | 'open' | 'password' | 'lobby';
@@ -61,6 +67,9 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   errorMessage,
   errorCode,
   errorRoomId,
+  isFullscreen,
+  onToggleFullscreen,
+  onOpenSettings,
 }) => {
   const [activeTab, setActiveTab] = useState<'discover' | 'create'>('discover');
 
@@ -157,21 +166,43 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 <polygon points="33,10 18,18 18,34 33,26" fill="#0369a1" />
                 <rect x="14" y="8" width="8" height="4" fill="#f59e0b" />
               </svg>
-              <h1 className="font-display text-2xl md:text-3xl font-bold tracking-tight text-white">
+              <h1 className="font-display text-xl md:text-2xl font-bold tracking-tight text-white whitespace-nowrap">
                 Prompt <span className="text-sky-400">Warfare</span>
               </h1>
             </div>
 
-            <button
-              type="button"
-              data-start="true"
-              disabled={connecting}
-              onClick={onQuickPlay}
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-xs tracking-wide cursor-pointer disabled:opacity-60 whitespace-nowrap"
-            >
-              <Zap className="w-3.5 h-3.5 fill-current" />
-              <span>Partida Rápida</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-start="true"
+                disabled={connecting}
+                onClick={onQuickPlay}
+                className="inline-flex items-center gap-1 h-9 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-[11px] tracking-wide cursor-pointer disabled:opacity-60 whitespace-nowrap"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>Partida Rápida</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Configurações"
+                onClick={onOpenSettings}
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-slate-200 cursor-pointer"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                aria-label={isFullscreen ? 'Sair da tela cheia [F]' : 'Tela cheia [F]'}
+                onClick={onToggleFullscreen}
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-slate-200 cursor-pointer"
+              >
+                {isFullscreen ? (
+                  <Minimize className="w-4 h-4" />
+                ) : (
+                  <Maximize className="w-4 h-4" />
+                )}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-slate-300">
             Arena em micro-voxels destrutíveis com salas abertas, fechadas, senha e controle do Master.
@@ -239,8 +270,9 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           </button>
         </div>
 
-        {activeTab === 'discover' ? (
-          <div className="flex-1 min-h-0 flex flex-col gap-3">
+        <div className="h-[400px] max-h-[calc(88vh-255px)] min-h-0">
+          {activeTab === 'discover' ? (
+            <div className="h-full min-h-0 flex flex-col gap-3 overflow-y-auto pr-0.5">
             {/* Search & Refresh */}
             <div className="flex gap-1.5">
               <div className="relative flex-1">
@@ -471,7 +503,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
             </form>
           </div>
         ) : (
-          <form className="space-y-3 overflow-y-auto pr-0.5" onSubmit={handleCreateSubmit}>
+          <form className="h-full space-y-3 overflow-y-auto pr-0.5" onSubmit={handleCreateSubmit}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label
@@ -637,6 +669,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
             </button>
           </form>
         )}
+        </div>
 
         {displayedError && (
           <p className="mt-3 text-xs text-rose-400 font-medium" role="alert">

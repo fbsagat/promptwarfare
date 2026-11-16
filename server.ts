@@ -23,6 +23,7 @@ import { RoomManager } from './server/roomManager.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ASSETS_FILES_DIR = path.join(__dirname, 'content', 'assets', 'files');
 
 async function startServer() {
   const app = express();
@@ -52,6 +53,21 @@ async function startServer() {
   });
 
   app.use(express.json({ limit: '1mb' }));
+
+  // Assets estáticos do manifesto (SFX/texturas). Em produção com CDN/MinIO,
+  // ASSET_BASE_URL tem precedência e estes arquivos são servidos pelo bucket.
+  app.use(
+    '/assets/files',
+    express.static(ASSETS_FILES_DIR, {
+      etag: true,
+      maxAge: '30d',
+      immutable: true,
+      fallthrough: true,
+      setHeaders: (res) => {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      },
+    }),
+  );
 
   const ledger = await createLedgerRuntime();
   const roomManager = new RoomManager({ ledger });

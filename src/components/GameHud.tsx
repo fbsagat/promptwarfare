@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Volume2,
-  VolumeX,
+  Maximize,
+  Minimize,
   Pause,
+  Settings,
   Sparkles,
   AlertTriangle,
+  Volume2,
+  VolumeX,
   Wrench,
   ThumbsUp,
   ThumbsDown,
@@ -25,6 +28,17 @@ import type {
   PlayerNetState,
   SpawnedEntityNetState,
 } from '../shared/types.ts';
+import {
+  type QualityLevel,
+} from '../engine/quality.ts';
+import type { PerfStats } from '../engine/babylonArena.ts';
+
+const QUALITY_LABELS: Record<QualityLevel, string> = {
+  auto: 'Auto',
+  low: 'Baixa',
+  medium: 'Média',
+  high: 'Alta',
+};
 
 interface GameHudProps {
   localPlayer: PlayerNetState | null;
@@ -39,14 +53,25 @@ interface GameHudProps {
   killfeed: KillfeedEntry[];
   zoomMeters: number;
   muted: boolean;
+  qualityLevel: QualityLevel;
+  perfStats?: PerfStats | null;
+  showStats: boolean;
+  pingMs: number | null;
+  pointerLocked: boolean;
+  isFullscreen: boolean;
   damageFlash: boolean;
   hitmarkerActive: boolean;
   aimContext: 'neutral' | 'dig' | 'grapple' | 'enemy';
   nearbyLootName: string | null;
+  nearbyZipline: string | null;
+  damageDirection: { angle: number } | null;
+  damageNumbers: Array<{ id: number; x: number; y: number; amount: number }>;
   devEnabled?: boolean;
   devPanelOpen?: boolean;
   onToggleDevPanel?: () => void;
   onToggleMute: () => void;
+  onToggleFullscreen: () => void;
+  onOpenSettings: () => void;
   onPause: () => void;
   onSelectSlot: (slot: number) => void;
   onOpenWeaponPrompt: () => void;
@@ -74,6 +99,46 @@ const RISK_LABELS: Record<string, string> = {
   recoil_launch: 'Coice Extremo',
   overheat_explosion: 'Explosão Térmica',
   toxic_leak: 'Vazamento Tóxico',
+};
+
+const COMPASS_POINTS: Array<{ label: string; deg: number }> = [
+  { label: 'N', deg: 0 },
+  { label: 'NE', deg: 45 },
+  { label: 'E', deg: 90 },
+  { label: 'SE', deg: 135 },
+  { label: 'S', deg: 180 },
+  { label: 'SO', deg: 225 },
+  { label: 'O', deg: 270 },
+  { label: 'NO', deg: 315 },
+];
+
+const CompassBar: React.FC<{ yaw: number }> = ({ yaw }) => {
+  const heading = ((((yaw * 180) / Math.PI) % 360) + 360) % 360;
+  return (
+    <div className="relative h-6 w-60 md:w-72 rounded-md bg-[#0b101b]/72 border border-white/12 overflow-hidden pointer-events-none">
+      <div className="absolute inset-y-0 left-1/2 w-px bg-amber-300/80 -translate-x-1/2" />
+      {COMPASS_POINTS.map((point) => {
+        const delta = (((point.deg - heading + 540) % 360) - 180);
+        if (Math.abs(delta) > 82) return null;
+        return (
+          <span
+            key={point.label}
+            className={`absolute top-1/2 -translate-y-1/2 font-mono-tabular text-[10px] ${
+              point.label.length === 1
+                ? 'text-slate-100 font-bold'
+                : 'text-slate-400'
+            }`}
+            style={{ left: `calc(50% + ${(delta / 180) * 50}%)` }}
+          >
+            {point.label}
+          </span>
+        );
+      })}
+      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono-tabular text-[9px] text-amber-200/90">
+        {Math.round(heading)}°
+      </span>
+    </div>
+  );
 };
 
 function renderSlotIcon(item: InventorySlotItem | null) {
@@ -118,14 +183,25 @@ export const GameHud: React.FC<GameHudProps> = ({
   killfeed,
   zoomMeters,
   muted,
+  qualityLevel,
+  perfStats,
+  showStats,
+  pingMs,
+  pointerLocked,
+  isFullscreen,
   damageFlash,
   hitmarkerActive,
   aimContext,
   nearbyLootName,
+  nearbyZipline,
+  damageDirection,
+  damageNumbers,
   devEnabled,
   devPanelOpen,
   onToggleDevPanel,
   onToggleMute,
+  onToggleFullscreen,
+  onOpenSettings,
   onPause,
   onSelectSlot,
   onOpenWeaponPrompt,
@@ -237,6 +313,38 @@ export const GameHud: React.FC<GameHudProps> = ({
             />
           </div>
 
+          {localPlayer && (localPlayer.stamina ?? 100) < 99.5 && (
+            <div className="mt-2">
+              <div className="flex justify-between text-[11px] font-mono-tabular text-emerald-300 mb-0.5">
+                <span>Vigor</span>
+                <span>{Math.round(localPlayer.stamina ?? 100)}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded bg-slate-800 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-100 ${
+                    (localPlayer.stamina ?? 100) < 20
+                      ? 'bg-rose-400'
+                      : 'bg-emerald-400'
+                  }`}
+                  style={{
+                    width: `${Math.max(0, Math.min(100, localPlayer.stamina ?? 100))}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {localPlayer && localPlayer.sliding && (
+            <div className="mt-1.5 text-[10px] font-mono-tabular font-bold text-sky-300">
+              ESCORREGANDO
+            </div>
+          )}
+          {localPlayer && localPlayer.slideCooldownSec > 0 && (
+            <div className="mt-1 text-[10px] font-mono-tabular text-slate-400">
+              Slide recarrega em {localPlayer.slideCooldownSec.toFixed(1)}s
+            </div>
+          )}
+
           {inWater && (
             <div className="mt-2">
               <div className="flex justify-between text-[11px] font-mono-tabular text-cyan-300 mb-0.5">
@@ -255,6 +363,7 @@ export const GameHud: React.FC<GameHudProps> = ({
 
         {/* Top-Center: Global Map Event Raffle Timer [Y], Warning Banner, Stacked Events */}
         <div className="flex flex-col items-center gap-2 max-w-md w-full">
+          <CompassBar yaw={localPlayer?.yaw ?? 0} />
           {isRaffled ? (
             <button
               type="button"
@@ -398,6 +507,34 @@ export const GameHud: React.FC<GameHudProps> = ({
             <button
               type="button"
               tabIndex={-1}
+              aria-label="Configurações"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onOpenSettings();
+              }}
+              className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#0b101b]/84 border border-white/15 text-slate-200 hover:text-white hover:border-white/35 cursor-pointer"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label={isFullscreen ? 'Sair da tela cheia [F]' : 'Tela cheia [F]'}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onToggleFullscreen();
+              }}
+              className="w-9 h-9 flex items-center justify-center rounded-lg bg-[#0b101b]/84 border border-white/15 text-slate-200 hover:text-white hover:border-white/35 cursor-pointer"
+            >
+              {isFullscreen ? (
+                <Minimize className="w-4 h-4" />
+              ) : (
+                <Maximize className="w-4 h-4" />
+              )}
+            </button>
+            <button
+              type="button"
+              tabIndex={-1}
               aria-label={muted ? 'Ativar áudio [M]' : 'Silenciar áudio [M]'}
               onClick={(e) => {
                 e.currentTarget.blur();
@@ -463,6 +600,16 @@ export const GameHud: React.FC<GameHudProps> = ({
               <div className="absolute w-3 h-[1.5px] bg-rose-400 rotate-45 translate-x-1.5 translate-y-1.5" />
             </>
           )}
+          {damageDirection && (
+            <div
+              className="absolute left-1/2 top-1/2"
+              style={{
+                transform: `translate(-50%, -50%) rotate(${(damageDirection.angle * 180) / Math.PI}deg)`,
+              }}
+            >
+              <div className="absolute left-1/2 -translate-x-1/2 -top-[76px] w-0 h-0 border-l-[8px] border-r-[8px] border-b-[16px] border-l-transparent border-r-transparent border-b-rose-500 drop-shadow-[0_0_6px_rgba(244,63,94,0.9)]" />
+            </div>
+          )}
         </div>
         {localPlayer && activeItem?.kind === 'weapon' && (localPlayer.heat > 5 || isOverheated) && (
           <div className="mt-1.5 flex flex-col items-center gap-0.5">
@@ -492,6 +639,11 @@ export const GameHud: React.FC<GameHudProps> = ({
 
       {/* BOTTOM ROW: Loot Cue + Weapon Forge Status + Weapon Telemetry + 4-Slot Hotbar */}
       <div className="flex flex-col items-center gap-2">
+        {nearbyZipline && (
+          <div className="bg-[#0b101b]/90 border border-sky-400/60 rounded-lg px-3 py-1 text-xs font-medium text-sky-200">
+            Pressione <span className="font-mono-tabular font-bold text-white">[E]</span> para usar {nearbyZipline}
+          </div>
+        )}
         {nearbyLootName && (
           <div className="bg-[#0b101b]/90 border border-amber-400/60 rounded-lg px-3 py-1 text-xs font-medium text-amber-200">
             Pressione <span className="font-mono-tabular font-bold text-white">[E]</span> para pegar {nearbyLootName}
@@ -550,6 +702,21 @@ export const GameHud: React.FC<GameHudProps> = ({
 
           {activeItem?.kind === 'weapon' && activeItem.weapon && (
             <div className="bg-[#0b101b]/86 border border-white/15 rounded-lg px-3 py-1 text-[11px] text-slate-200 font-mono-tabular flex items-center gap-2.5">
+              <span className="text-amber-300 font-bold">
+                {activeItem.ammo ?? 0}/{activeItem.ammoMax ?? 0}
+              </span>
+              <span className="w-12 h-1.5 rounded bg-slate-900 overflow-hidden inline-block">
+                <span
+                  className={`block h-full ${
+                    isOverheated
+                      ? 'bg-rose-500'
+                      : (localPlayer?.heat ?? 0) >= 75
+                        ? 'bg-rose-400'
+                        : 'bg-amber-400'
+                  }`}
+                  style={{ width: `${Math.min(100, localPlayer?.heat ?? 0)}%` }}
+                />
+              </span>
               <span className="text-sky-300 font-bold">{activeItem.weapon.budgetUsed}/100 pts</span>
               <span>DMG {activeItem.weapon.stats.damage}×{activeItem.weapon.stats.projectiles}</span>
               <span>{BEHAVIOR_LABELS[activeItem.weapon.modifiers.projectileBehavior] ?? 'Balístico'}</span>
@@ -714,6 +881,42 @@ export const GameHud: React.FC<GameHudProps> = ({
           </span>
         </div>
       )}
+
+      {devEnabled && perfStats && (
+        <div className="fixed left-4 bottom-4 z-20 pointer-events-none rounded-md bg-black/55 px-2 py-1 font-mono-tabular text-[10px] leading-tight text-lime-300/90">
+          {perfStats.fps.toFixed(0)} quadros/s · {perfStats.frameMs.toFixed(1)} ms ·{' '}
+          {perfStats.chunks} chunks · {perfStats.activeMeshes} malhas ·{' '}
+          {perfStats.vertices} vért.
+        </div>
+      )}
+
+      {showStats && (
+        <div
+          className={`fixed left-4 z-20 pointer-events-none rounded-md bg-black/55 px-2 py-1 font-mono-tabular text-[10px] leading-tight text-lime-300/90 ${
+            devEnabled && perfStats ? 'bottom-[42px]' : 'bottom-4'
+          }`}
+        >
+          {perfStats ? Math.round(perfStats.fps) : '--'} FPS ·{' '}
+          {pingMs === null ? '--' : Math.round(pingMs)} ms ·{' '}
+          {QUALITY_LABELS[qualityLevel]}
+        </div>
+      )}
+
+      {!pointerLocked && (
+        <div className="fixed top-[92px] left-1/2 -translate-x-1/2 z-20 pointer-events-none rounded-lg bg-[#0b101b]/80 border border-white/15 px-3 py-1 text-[11px] text-slate-200">
+          Clique para capturar o mouse · Esc pausa
+        </div>
+      )}
+
+      {damageNumbers.map((num) => (
+        <div
+          key={num.id}
+          className="fixed pw-damage-float z-30 pointer-events-none font-display font-bold text-lg text-rose-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
+          style={{ left: num.x, top: num.y }}
+        >
+          -{num.amount}
+        </div>
+      ))}
     </div>
   );
 };

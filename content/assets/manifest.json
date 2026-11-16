@@ -1,243 +1,1401 @@
 {
-  "version": "2026-11-16.1",
+  "version": "2026-11-16.2",
+  "baseUrl": "/assets/files",
   "assets": [
     {
       "id": "texture:weapon:standard",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "standard"],
-      "params": { "kind": "palette", "colors": ["#38bdf8", "#334155", "#94a3b8", "#f59e0b"] }
+      "tags": [
+        "weapon",
+        "standard"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#38bdf8",
+          "#334155",
+          "#94a3b8",
+          "#f59e0b"
+        ]
+      }
     },
     {
       "id": "texture:weapon:ice",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "ice"],
-      "params": { "kind": "palette", "colors": ["#67e8f9", "#1e3a5f", "#bae6fd", "#e0f2fe"] }
+      "tags": [
+        "weapon",
+        "ice"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#67e8f9",
+          "#1e3a5f",
+          "#bae6fd",
+          "#e0f2fe"
+        ]
+      }
     },
     {
       "id": "texture:weapon:fire",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "fire"],
-      "params": { "kind": "palette", "colors": ["#fb923c", "#27272a", "#71717a", "#facc15"] }
+      "tags": [
+        "weapon",
+        "fire"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#fb923c",
+          "#27272a",
+          "#71717a",
+          "#facc15"
+        ]
+      }
     },
     {
       "id": "texture:weapon:toxic",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "toxic"],
-      "params": { "kind": "palette", "colors": ["#4ade80", "#1f2937", "#3f6212", "#a3e635"] }
+      "tags": [
+        "weapon",
+        "toxic"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#4ade80",
+          "#1f2937",
+          "#3f6212",
+          "#a3e635"
+        ]
+      }
     },
     {
       "id": "texture:weapon:void",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "void"],
-      "params": { "kind": "palette", "colors": ["#c084fc", "#1e1b4b", "#4c1d95", "#f472b6"] }
+      "tags": [
+        "weapon",
+        "void"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#c084fc",
+          "#1e1b4b",
+          "#4c1d95",
+          "#f472b6"
+        ]
+      }
     },
     {
       "id": "texture:weapon:electric",
       "type": "texture",
       "status": "approved",
-      "tags": ["weapon", "electric"],
-      "params": { "kind": "palette", "colors": ["#facc15", "#1e293b", "#38bdf8", "#fef08a"] }
+      "tags": [
+        "weapon",
+        "electric"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#facc15",
+          "#1e293b",
+          "#38bdf8",
+          "#fef08a"
+        ]
+      }
     },
     {
       "id": "sfx:weapon:standard",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "standard"],
-      "params": { "kind": "procedural", "patch": "shot" }
+      "tags": [
+        "weapon",
+        "standard"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "shot"
+      }
     },
     {
       "id": "sfx:weapon:ice",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "ice"],
-      "params": { "kind": "procedural", "patch": "freeze" }
+      "tags": [
+        "weapon",
+        "ice"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "freeze"
+      }
     },
     {
       "id": "sfx:weapon:fire",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "fire"],
-      "params": { "kind": "procedural", "patch": "burn" }
+      "tags": [
+        "weapon",
+        "fire"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "burn"
+      }
     },
     {
       "id": "sfx:weapon:toxic",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "toxic"],
-      "params": { "kind": "procedural", "patch": "acid" }
+      "tags": [
+        "weapon",
+        "toxic"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "acid"
+      }
     },
     {
       "id": "sfx:weapon:void",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "void"],
-      "params": { "kind": "procedural", "patch": "gravity" }
+      "tags": [
+        "weapon",
+        "void"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "gravity"
+      }
     },
     {
       "id": "sfx:weapon:electric",
       "type": "sound",
       "status": "approved",
-      "tags": ["weapon", "electric"],
-      "params": { "kind": "procedural", "patch": "shock" }
+      "tags": [
+        "weapon",
+        "electric"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "shock"
+      }
     },
     {
       "id": "fx:weapon:standard",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "standard"],
-      "params": { "kind": "particle", "color": "#38bdf8", "count": 8 }
+      "tags": [
+        "weapon",
+        "standard"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#38bdf8",
+        "count": 8
+      }
     },
     {
       "id": "fx:weapon:ice",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "ice"],
-      "params": { "kind": "particle", "color": "#67e8f9", "count": 14 }
+      "tags": [
+        "weapon",
+        "ice"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#67e8f9",
+        "count": 14
+      }
     },
     {
       "id": "fx:weapon:fire",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "fire"],
-      "params": { "kind": "particle", "color": "#fb923c", "count": 18 }
+      "tags": [
+        "weapon",
+        "fire"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#fb923c",
+        "count": 18
+      }
     },
     {
       "id": "fx:weapon:toxic",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "toxic"],
-      "params": { "kind": "particle", "color": "#4ade80", "count": 16 }
+      "tags": [
+        "weapon",
+        "toxic"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#4ade80",
+        "count": 16
+      }
     },
     {
       "id": "fx:weapon:void",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "void"],
-      "params": { "kind": "particle", "color": "#c084fc", "count": 20 }
+      "tags": [
+        "weapon",
+        "void"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#c084fc",
+        "count": 20
+      }
     },
     {
       "id": "fx:weapon:electric",
       "type": "effect",
       "status": "approved",
-      "tags": ["weapon", "electric"],
-      "params": { "kind": "particle", "color": "#facc15", "count": 12 }
+      "tags": [
+        "weapon",
+        "electric"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#facc15",
+        "count": 12
+      }
     },
     {
       "id": "texture:event:weather",
       "type": "texture",
       "status": "approved",
-      "tags": ["event", "weather"],
-      "params": { "kind": "palette", "colors": ["#67e8f9", "#1e3a5f", "#e0f2fe"] }
+      "tags": [
+        "event",
+        "weather"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#67e8f9",
+          "#1e3a5f",
+          "#e0f2fe"
+        ]
+      }
     },
     {
       "id": "texture:event:terrain",
       "type": "texture",
       "status": "approved",
-      "tags": ["event", "terrain"],
-      "params": { "kind": "palette", "colors": ["#fb923c", "#27272a", "#facc15"] }
+      "tags": [
+        "event",
+        "terrain"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#fb923c",
+          "#27272a",
+          "#facc15"
+        ]
+      }
     },
     {
       "id": "texture:event:entity",
       "type": "texture",
       "status": "approved",
-      "tags": ["event", "entity"],
-      "params": { "kind": "palette", "colors": ["#ef4444", "#3f3f46", "#a1a1aa"] }
+      "tags": [
+        "event",
+        "entity"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#ef4444",
+          "#3f3f46",
+          "#a1a1aa"
+        ]
+      }
     },
     {
       "id": "texture:event:supply",
       "type": "texture",
       "status": "approved",
-      "tags": ["event", "supply"],
-      "params": { "kind": "palette", "colors": ["#f59e0b", "#334155", "#22d3ee"] }
+      "tags": [
+        "event",
+        "supply"
+      ],
+      "params": {
+        "kind": "palette",
+        "colors": [
+          "#f59e0b",
+          "#334155",
+          "#22d3ee"
+        ]
+      }
     },
     {
       "id": "sfx:event:weather",
       "type": "sound",
       "status": "approved",
-      "tags": ["event", "weather"],
-      "params": { "kind": "procedural", "patch": "alert" }
+      "tags": [
+        "event",
+        "weather"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "alert"
+      }
     },
     {
       "id": "sfx:event:terrain",
       "type": "sound",
       "status": "approved",
-      "tags": ["event", "terrain"],
-      "params": { "kind": "procedural", "patch": "rumble" }
+      "tags": [
+        "event",
+        "terrain"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "rumble"
+      }
     },
     {
       "id": "sfx:event:entity",
       "type": "sound",
       "status": "approved",
-      "tags": ["event", "entity"],
-      "params": { "kind": "procedural", "patch": "growl" }
+      "tags": [
+        "event",
+        "entity"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "growl"
+      }
     },
     {
       "id": "sfx:event:supply",
       "type": "sound",
       "status": "approved",
-      "tags": ["event", "supply"],
-      "params": { "kind": "procedural", "patch": "pickup" }
+      "tags": [
+        "event",
+        "supply"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "pickup"
+      }
     },
     {
       "id": "fx:event:weather",
       "type": "effect",
       "status": "approved",
-      "tags": ["event", "weather"],
-      "params": { "kind": "particle", "color": "#67e8f9", "count": 32 }
+      "tags": [
+        "event",
+        "weather"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#67e8f9",
+        "count": 32
+      }
     },
     {
       "id": "fx:event:terrain",
       "type": "effect",
       "status": "approved",
-      "tags": ["event", "terrain"],
-      "params": { "kind": "particle", "color": "#fb923c", "count": 28 }
+      "tags": [
+        "event",
+        "terrain"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#fb923c",
+        "count": 28
+      }
     },
     {
       "id": "fx:event:entity",
       "type": "effect",
       "status": "approved",
-      "tags": ["event", "entity"],
-      "params": { "kind": "particle", "color": "#ef4444", "count": 20 }
+      "tags": [
+        "event",
+        "entity"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#ef4444",
+        "count": 20
+      }
     },
     {
       "id": "fx:event:supply",
       "type": "effect",
       "status": "approved",
-      "tags": ["event", "supply"],
-      "params": { "kind": "particle", "color": "#f59e0b", "count": 12 }
+      "tags": [
+        "event",
+        "supply"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#f59e0b",
+        "count": 12
+      }
     },
     {
       "id": "waypoint:event",
       "type": "waypoint",
       "status": "approved",
-      "tags": ["event"],
-      "params": { "kind": "ring", "radius": 2.5 }
+      "tags": [
+        "event"
+      ],
+      "params": {
+        "kind": "ring",
+        "radius": 2.5
+      }
     },
     {
       "id": "sfx:forge",
       "type": "sound",
       "status": "approved",
-      "tags": ["forge"],
-      "params": { "kind": "procedural", "patch": "forge" }
+      "tags": [
+        "forge"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "forge"
+      }
     },
     {
       "id": "sfx:pickup",
       "type": "sound",
       "status": "approved",
-      "tags": ["pickup"],
-      "params": { "kind": "procedural", "patch": "pickup" }
+      "tags": [
+        "pickup"
+      ],
+      "params": {
+        "kind": "procedural",
+        "patch": "pickup"
+      }
     },
     {
       "id": "fx:shockwave",
       "type": "effect",
       "status": "approved",
-      "tags": ["impact"],
-      "params": { "kind": "particle", "color": "#e2e8f0", "count": 24 }
+      "tags": [
+        "impact"
+      ],
+      "params": {
+        "kind": "particle",
+        "color": "#e2e8f0",
+        "count": 24
+      }
+    },
+    {
+      "id": "sfx:footstep:stone:1",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:stone",
+        "variant": "1",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_concrete_1.wav",
+        "material": "stone"
+      },
+      "url": "sfx/footstep/stone/1.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:46b1efb3f2d89632e4d4056c0dfed04090d0ded73f12217374fd8f7d6957d8e1"
+    },
+    {
+      "id": "sfx:footstep:stone:2",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:stone",
+        "variant": "2",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_concrete_2.wav",
+        "material": "stone"
+      },
+      "url": "sfx/footstep/stone/2.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:ee0711b7c8d62942054bdfe52b0ad7a6372487e6eb14d9ee4acc5366c2d49cea"
+    },
+    {
+      "id": "sfx:footstep:stone:3",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:stone",
+        "variant": "3",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_concrete_3.wav",
+        "material": "stone"
+      },
+      "url": "sfx/footstep/stone/3.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:52c49f4c51a3f2d9af65d45272b0df8b3dc622ea365b22c4e7e4ebe224478422"
+    },
+    {
+      "id": "sfx:footstep:stone:4",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:stone",
+        "variant": "4",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_concrete_4.wav",
+        "material": "stone"
+      },
+      "url": "sfx/footstep/stone/4.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:8d55a50f5125926d517dba9f80fe64036b5449b2a96ff3bbb1fd21ba21f3ce6c"
+    },
+    {
+      "id": "sfx:footstep:loose:1",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "sand"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:loose",
+        "variant": "1",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_gravel_1.wav",
+        "material": "sand"
+      },
+      "url": "sfx/footstep/loose/1.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:71646668d11eec2e76d14d92d02046d74980352d36352a848fffe14d61130b06"
+    },
+    {
+      "id": "sfx:footstep:loose:2",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "sand"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:loose",
+        "variant": "2",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_gravel_2.wav",
+        "material": "sand"
+      },
+      "url": "sfx/footstep/loose/2.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:d76f21e9649c416c16803e23ff7f615fffef662f26949d896bbbc67971b0fcda"
+    },
+    {
+      "id": "sfx:footstep:loose:3",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "sand"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:loose",
+        "variant": "3",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_gravel_3.wav",
+        "material": "sand"
+      },
+      "url": "sfx/footstep/loose/3.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:2350d2be388999249676a52f8fdfcbd1596c2c25c0cdd35fdd74ed0f4175937f"
+    },
+    {
+      "id": "sfx:footstep:loose:4",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "sand"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:loose",
+        "variant": "4",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_gravel_4.wav",
+        "material": "sand"
+      },
+      "url": "sfx/footstep/loose/4.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:be282eb43facca8eb773c9c602e72f96cabce30219faa2f12fa0801901efcad4"
+    },
+    {
+      "id": "sfx:footstep:soft:1",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "grass"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:soft",
+        "variant": "1",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_carpet_1.wav",
+        "material": "grass"
+      },
+      "url": "sfx/footstep/soft/1.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:e89405be477a484bcc4aa19b8739aa536c0169301ff87b9c2d13bf8332215ef2"
+    },
+    {
+      "id": "sfx:footstep:soft:2",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "grass"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:soft",
+        "variant": "2",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_carpet_2.wav",
+        "material": "grass"
+      },
+      "url": "sfx/footstep/soft/2.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:4cf0f131160a8977d6edaecc66273141721c6ec2bb8642b638089cf090d1d7b5"
+    },
+    {
+      "id": "sfx:footstep:soft:3",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "grass"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:soft",
+        "variant": "3",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_carpet_3.wav",
+        "material": "grass"
+      },
+      "url": "sfx/footstep/soft/3.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:e9bbd1f5d2bb83866f8e082dc0139752fc330d51b4c4af13c594ba955d9cba77"
+    },
+    {
+      "id": "sfx:footstep:soft:4",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "footstep",
+        "grass"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "footstep:soft",
+        "variant": "4",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Footsteps/foley_footstep_carpet_4.wav",
+        "material": "grass"
+      },
+      "url": "sfx/footstep/soft/4.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:a62f251436f9548c8dc0d48ae067b1ef343c850fc3922d26e3d7daaa6478baea"
+    },
+    {
+      "id": "sfx:impact:stone:short",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:stone",
+        "variant": "short",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/stone_push_short.wav",
+        "material": "stone"
+      },
+      "url": "sfx/impact/stone/short.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:f1103d6d2f0c29f9a224fa23cdbdd7c7f3999b8668c4c06604c18d2c47095023"
+    },
+    {
+      "id": "sfx:impact:stone:medium",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "stone"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:stone",
+        "variant": "medium",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/stone_push_medium.wav",
+        "material": "stone"
+      },
+      "url": "sfx/impact/stone/medium.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:4ca4c7a691813f7b950a7735b5f0a5c1866349b982de9ec48c010668df7d5a66"
+    },
+    {
+      "id": "sfx:impact:wood:hollow",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "wood"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:wood",
+        "variant": "hollow",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/wood_small_hollow.wav",
+        "material": "wood"
+      },
+      "url": "sfx/impact/wood/hollow.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:4a06fe9a5881a4177ff316b3567e9e5cd59d87709870fb307c40b59eedb92212"
+    },
+    {
+      "id": "sfx:impact:wood:drop",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "wood"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:wood",
+        "variant": "drop",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/wood_small_drop.wav",
+        "material": "wood"
+      },
+      "url": "sfx/impact/wood/drop.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:e43d9242e294d2b7a2d8303569272e8c076d14ddbf47496ce6d30d30c55c2b5a"
+    },
+    {
+      "id": "sfx:impact:metal:clang",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "metal"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:metal",
+        "variant": "clang",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/metal_clang.wav",
+        "material": "gold"
+      },
+      "url": "sfx/impact/metal/clang.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:fcae66f2f8e5e864bdf01f00ca805f194db7162e4705b22a04b8f1e9af384417"
+    },
+    {
+      "id": "sfx:impact:metal:tap",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "metal"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:metal",
+        "variant": "tap",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/metal_blunt_tap.wav",
+        "material": "gold"
+      },
+      "url": "sfx/impact/metal/tap.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:ccb203241aa781273e3f5db959037e6194a68d9914f228c8b79ccc54efa8025f"
+    },
+    {
+      "id": "sfx:impact:ice:small",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "ice"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:ice",
+        "variant": "small",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/glass_ping_small.wav",
+        "material": "ice"
+      },
+      "url": "sfx/impact/ice/small.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:228d16da46e4489fbc5085a40b0a6a068756a9481ac875fd12c78c2d0ab352c8"
+    },
+    {
+      "id": "sfx:impact:ice:big",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "ice"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:ice",
+        "variant": "big",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/glass_ping_big.wav",
+        "material": "ice"
+      },
+      "url": "sfx/impact/ice/big.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:d44e9006c850562f95eecd7ef871e66001718a954a57dd380197c94e171e9a3d"
+    },
+    {
+      "id": "sfx:impact:terracotta:clang",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "terracotta"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:terracotta",
+        "variant": "clang",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/pottery_clang.wav",
+        "material": "terracotta"
+      },
+      "url": "sfx/impact/terracotta/clang.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:27f6c9e515a8501222f628824a0a7048d9ad18cd362c0e17bf8407d6754a9b54"
+    },
+    {
+      "id": "sfx:impact:soft:hit",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "soft"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:soft",
+        "variant": "hit",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/cardboard_hit.wav",
+        "material": "leaves"
+      },
+      "url": "sfx/impact/soft/hit.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:f5249428aab3ca3018c5a4916c18135a8a19eb40f7bf753c684877755aa98af6"
+    },
+    {
+      "id": "sfx:impact:soft:drop",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "impact",
+        "soft"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "impact:soft",
+        "variant": "drop",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Materials/cardboard_drop.wav",
+        "material": "leaves"
+      },
+      "url": "sfx/impact/soft/drop.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:4d5f144dbf15358cb8744b70031cee13c51aeacadcad5c70f235e0a03759ae4c"
+    },
+    {
+      "id": "sfx:dig:shovel",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "dig",
+        "tool"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "dig",
+        "variant": "shovel",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Items/shovel_dig.wav"
+      },
+      "url": "sfx/dig/shovel.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:3fc5eb725f7c043ae82f15121357e0290b33a734200a7f2c5517bf46ff757655"
+    },
+    {
+      "id": "sfx:pickup:gem",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "pickup",
+        "loot"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "pickup",
+        "variant": "gem",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Items/gem_collect.wav"
+      },
+      "url": "sfx/pickup/gem.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:8e01a1159ba0054939063cc2e915ae360b369501ac197eda5bed1d10e107cbf7"
+    },
+    {
+      "id": "sfx:pickup:coin",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "pickup",
+        "loot"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "pickup",
+        "variant": "coin",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Items/coin_collect.wav"
+      },
+      "url": "sfx/pickup/coin.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:cf47265ac1c6e8d7d29727057859497f31ae01879cf5e1d7735fe3c431bc6102"
+    },
+    {
+      "id": "sfx:equip:item",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "equip",
+        "inventory"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "equip",
+        "variant": "item",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Items/item_equip.wav"
+      },
+      "url": "sfx/equip/item.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:fcbfdd928a019fd122846fc20e3d0625bc360df2e692d025894a562985769f54"
+    },
+    {
+      "id": "sfx:land:heavy",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "land",
+        "impact"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "land",
+        "variant": "heavy",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Weapons/harsh_thud.wav"
+      },
+      "url": "sfx/land/heavy.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:c772d5775f45f873385eee692b273e25b65a96b18a0f28a6b1db7d9f2466f292"
+    },
+    {
+      "id": "sfx:equip:weapon",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "equip",
+        "weapon"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "equip:weapon",
+        "variant": "weapon",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Weapons/weapon_equip.wav"
+      },
+      "url": "sfx/equip/weapon.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:70ee9fd22aca86fd666bfe63dcb1161b2edb4c9e5d7069ee40e5b1dacdc11d1f"
+    },
+    {
+      "id": "sfx:pickup:weapon",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "pickup",
+        "weapon"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "pickup:weapon",
+        "variant": "weapon",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Weapons/weapon_pick_up.wav"
+      },
+      "url": "sfx/pickup/weapon.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:860ffd87bfa78828650df6107cd52d1b70a4e687e4868c681a0ba16366148723"
+    },
+    {
+      "id": "sfx:drop:weapon",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "drop",
+        "weapon"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "drop:weapon",
+        "variant": "weapon",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Weapons/weapon_drop.wav"
+      },
+      "url": "sfx/drop/weapon.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:edf3d31d7e3bc67e640d04867f274a755f258460c1673c4ba58743cd51969636"
+    },
+    {
+      "id": "sfx:traversal:whoosh:1",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "traversal",
+        "slide"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "traversal:whoosh",
+        "variant": "1",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Other/whoosh_1.wav"
+      },
+      "url": "sfx/traversal/whoosh/1.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:64de873b9a57989845ab6ef7fd45821d22cedc93e0499856b84cf00f22c6645f"
+    },
+    {
+      "id": "sfx:traversal:whoosh:2",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "traversal",
+        "slide"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "traversal:whoosh",
+        "variant": "2",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Other/whoosh_2.wav"
+      },
+      "url": "sfx/traversal/whoosh/2.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:69e8fb2cce7bf1a199622ca21e2771eed0a514c9cef3544589263290e6793d4d"
+    },
+    {
+      "id": "sfx:grapple:twang",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "grapple",
+        "traversal"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "grapple",
+        "variant": "twang",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Other/elastic_twang.wav"
+      },
+      "url": "sfx/grapple/twang.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:9b4abdb299551247ebc64f824282f382a9db998d56b80ef408ac0499d8aa0c74"
+    },
+    {
+      "id": "sfx:ambience:wind",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ambience",
+        "wind"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ambience:wind",
+        "variant": "wind",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/ambient_wind.wav",
+        "loop": true
+      },
+      "url": "sfx/ambience/wind.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:bd63d2b1b85c85e6176ea48c80c7eac5ba76022972d6d1920e1756855d5aa9fb"
+    },
+    {
+      "id": "sfx:ambience:water:river",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ambience",
+        "water"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ambience:water",
+        "variant": "river",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/water_babbling_loop.wav",
+        "loop": true
+      },
+      "url": "sfx/ambience/water/river.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:b4f2afcc13d18a84558dfd0d1db787884874029d4f5339ae195ff8948fd6c610"
+    },
+    {
+      "id": "sfx:water:splash",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "water",
+        "impact"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "water:splash",
+        "variant": "splash",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/water_splashing.wav"
+      },
+      "url": "sfx/water/splash.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:844ee94810f0269f5974dd695693c4944cdeee1791d7db4f450f7914b4a340a3"
+    },
+    {
+      "id": "sfx:ambience:water:drip",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ambience",
+        "cave",
+        "water"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ambience:cave",
+        "variant": "drip",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/water_dripping.wav",
+        "loop": true
+      },
+      "url": "sfx/ambience/water/drip.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:aa230b5ea8c4163f4e37370a410ab4e4b11f9751657d79d16ccedc3b15387cfb"
+    },
+    {
+      "id": "sfx:ambience:fire",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ambience",
+        "fire"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ambience:fire",
+        "variant": "fire",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/fire_lighting.wav",
+        "loop": true
+      },
+      "url": "sfx/ambience/fire.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:02a8338e6661b4be09c76789c9ae1503b3850a1204b0b0e085e8a7583062c930"
+    },
+    {
+      "id": "sfx:ambience:swamp",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ambience",
+        "swamp"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ambience:swamp",
+        "variant": "swamp",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/gurgling.wav",
+        "loop": true
+      },
+      "url": "sfx/ambience/swamp.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:ec0f7dee1c6deebc5f9b37597221b8d2bb5295d685bb6b110716f00ac339d378"
+    },
+    {
+      "id": "sfx:water:ice",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "water",
+        "ice"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "water:ice",
+        "variant": "ice",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/ice_in_water.wav",
+        "material": "ice"
+      },
+      "url": "sfx/water/ice.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:e45dfcc14f5f21bba3896b32c924423a2b8c79aa4d29d9c375df118bac292575"
+    },
+    {
+      "id": "sfx:water:drop",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "water",
+        "drip"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "water:drop",
+        "variant": "drop",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "Environment/water_drop_medium.wav"
+      },
+      "url": "sfx/water/drop.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:063c9527c128a00f637c5c5755d3862151283fee15449639caf3f5e76f242c47"
+    },
+    {
+      "id": "sfx:ui:select",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ui"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ui:select",
+        "variant": "select",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "UI/sci_fi_select.wav"
+      },
+      "url": "sfx/ui/select.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:671293c719956c50850ecb1e261f905f491b33cfa1389b33771ae0677de23a67"
+    },
+    {
+      "id": "sfx:ui:confirm",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ui"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ui:confirm",
+        "variant": "confirm",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "UI/synth_confirmation.wav"
+      },
+      "url": "sfx/ui/confirm.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:1e0d045d6b9fa56a8e4df36dc9ba05d96464043d147f12f48729b54b48a3f589"
+    },
+    {
+      "id": "sfx:ui:cancel",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ui"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ui:cancel",
+        "variant": "cancel",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "UI/synth_cancel.wav"
+      },
+      "url": "sfx/ui/cancel.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:34b4e5fe325e6e636ecc14af9c40efec61e21f494f301f4a1578492e1688f928"
+    },
+    {
+      "id": "sfx:ui:error",
+      "type": "sound",
+      "status": "approved",
+      "tags": [
+        "ui"
+      ],
+      "params": {
+        "kind": "sample",
+        "group": "ui:error",
+        "variant": "error",
+        "sourcePack": "chequered-ink:400-sounds-pack",
+        "source": "UI/synth_error.wav"
+      },
+      "url": "sfx/ui/error.ogg",
+      "mimeType": "audio/ogg",
+      "hash": "sha256:77ef2277ea07afc6efe3ad1091e6de5a75f67f6cb0548777aa1a2504f508fd05"
     }
   ]
 }

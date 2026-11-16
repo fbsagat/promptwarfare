@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Crown, Lock, LockOpen, ShieldBan } from 'lucide-react';
+import { Crown, Lock, LockOpen, Settings, ShieldBan } from 'lucide-react';
 import type { RoomAccessMode, RoomMatchSummary } from '../shared/types.ts';
 
 interface StatusModalProps {
@@ -14,6 +14,7 @@ interface StatusModalProps {
   onResume: () => void;
   onRestart: () => void;
   onUpdateAccess: (accessMode: RoomAccessMode, password?: string) => void;
+  onOpenSettings: () => void;
   onBackToTitle: () => void;
 }
 
@@ -29,6 +30,7 @@ export const StatusModal: React.FC<StatusModalProps> = ({
   onResume,
   onRestart,
   onUpdateAccess,
+  onOpenSettings,
   onBackToTitle,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -146,6 +148,16 @@ export const StatusModal: React.FC<StatusModalProps> = ({
             >
               Continuar
             </button>
+            {kind === 'paused' && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="w-full h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-emerald-300 font-medium text-sm cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Configurações
+              </button>
+            )}
             <button
               type="button"
               onClick={handleCopyInvite}

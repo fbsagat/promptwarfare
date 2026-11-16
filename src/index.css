@@ -25,3 +25,22 @@ body,
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+@keyframes pw-damage-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -140%) scale(0.95);
+  }
+}
+
+.pw-damage-float {
+  animation: pw-damage-float 0.9s ease-out forwards;
+}

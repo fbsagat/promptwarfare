@@ -21,6 +21,7 @@ export const MAT = {
   MOSS: 14,
   BASALT: 15,
   GOLD: 16,
+  LADDER: 17,
 } as const;
 
 export type MaterialId = (typeof MAT)[keyof typeof MAT];
@@ -42,6 +43,7 @@ export const MATERIAL_COLORS: Record<number, [number, number, number]> = {
   [MAT.MOSS]: [66, 128, 64],
   [MAT.BASALT]: [56, 58, 68],
   [MAT.GOLD]: [244, 192, 58],
+  [MAT.LADDER]: [146, 98, 54],
 };
 
 export type ProjectileBehavior =
@@ -226,6 +228,13 @@ export interface PlayerNetState {
   activeSlot: number;
   heat: number; // 0..100
   overheatedUntil: number;
+  stamina: number; // 0..100 (sprint/slide/mantle)
+  sprinting: boolean;
+  crouching: boolean;
+  sliding: boolean;
+  slideCooldownSec: number;
+  climbing: boolean;
+  ziplineRouteId: string | null;
   isTypingPrompt: boolean;
   canForgeWeapon: boolean;
   weaponCooldownSec: number;
@@ -243,6 +252,16 @@ export interface LootDropState {
   id: string;
   position: Vec3;
   item: InventorySlotItem;
+}
+
+export interface IslandZipline {
+  id: string;
+  from: Vec3;
+  to: Vec3;
+}
+
+export interface IslandMeta {
+  ziplines: IslandZipline[];
 }
 
 export interface ProjectileNetState {
@@ -433,6 +452,8 @@ export interface ClientInputPacket {
   moveX: number; // -1..1
   moveZ: number; // -1..1
   jump: boolean;
+  sprint?: boolean;
+  crouch?: boolean;
   yaw: number;
   pitch: number;
   activeSlot: number;

@@ -33,10 +33,12 @@ Tratadas em `RoomManager.handleClientMessage`:
 
 | Tipo | Payload | Efeito |
 | --- | --- | --- |
-| `player:input` | `ClientInputPacket` | Movimento, pulo, yaw/pitch e slot ativo. Ignorado enquanto o jogador está escrevendo. |
-| `player:action` | `{ origin, dir }` | Ação primária (tiro, escavação ou gancho). Rejeitada durante a escrita. |
+| `player:input` | `ClientInputPacket` | Movimento, pulo, sprint (`sprint`), agachar (`crouch`), yaw/pitch e slot ativo. Ignorado enquanto o jogador está escrevendo. |
+| `player:action` | `{ origin, dir }` | Ação primária (tiro, escavação ou gancho). Rejeitada durante a escrita e durante tirolesa. |
 | `player:drop` | — | Descarta o item do slot ativo. Rejeitado durante a escrita. |
 | `player:pickup` | — | Pega o loot mais próximo. Rejeitado durante a escrita. |
+| `player:zipline` | `{ routeId }` | Inicia uma tirolesa se o jogador estiver a ≤ 3,6 m da âncora superior. |
+| `ping` | `{ t }` | Mede latência; o servidor responde com `pong` ecoando `t`. |
 | `prompt:open` | `{ kind: 'weapon' \| 'event' }` | Abre a janela de escrita no servidor e inicia o timeout. |
 | `prompt:cancel` | `{ kind }` | Cancela a escrita; o evento é consumido e a forja volta a ficar pronta. |
 | `ai:forge_weapon` | `{ prompt }` | Envia a arma; exige `prompt:open` de arma. Sem alocação. |
@@ -68,14 +70,18 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `room:killfeed` | `KillfeedEntry` (abates e avisos do sistema). |
 | `voxel:deltas` | `VoxelDelta[]` com alterações de voxels desde o último envio. |
 | `fx:shrapnel` | `{ center, voxels }` para estilhaços locais. |
-| `fx:hit` | `{ heavy }` para hitmarker/hitstop. |
+| `fx:hit` | `{ damage, heavy, position? }` para hitmarker/hitstop e números de dano. |
+| `fx:damage` | `{ amount, hp, from? }` para a direção do dano recebido (`from` é a posição do atacante). |
 | `fx:pickup` | Efeito sonoro de coleta. |
+| `pong` | `{ t }` ecoado de `ping` para calcular RTT no cliente. |
 | `ai:weapon_ready` | `{ weapon, slotIndex }` quando a arma do catálogo é equipada. |
 | `ai:error` | `{ message }` em falhas de permissão/tempo da forja ou evento. |
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
 
 Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala. Eventos compostos incluem `components?: [{ archetype, params, entityBlueprint?, budgetUsed }]`; o cliente deve usar os campos de topo para exibição e ignorar componentes desconhecidos.
+
+Cada jogador também traz `stamina`, `sprinting`, `crouching`, `sliding`, `slideCooldownSec`, `climbing` e `ziplineRouteId` para HUD/câmera. As rotas de tirolesa **não** vão no protocolo: cliente e servidor derivam a mesma lista determinística da seed/dimensões via `createProceduralIsland(..., meta)`.
 
 ## Códigos de erro
 

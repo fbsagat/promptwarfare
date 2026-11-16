@@ -3,6 +3,8 @@ import {
   VOXEL_SIZE,
   WATER_LEVEL_VOXEL,
   WATER_LEVEL_WORLD,
+  type IslandMeta,
+  type IslandZipline,
   type Vec3,
   type VoxelDelta,
 } from './types.ts';
@@ -165,8 +167,10 @@ export function createProceduralIsland(
   dimX: number,
   dimY: number,
   dimZ: number,
+  meta?: IslandMeta,
 ): VoxelGrid {
   const grid = new VoxelGrid(dimX, dimY, dimZ);
+  const ziplineAnchors: Vec3[] = [];
   const cx = dimX * 0.5;
   const cz = dimZ * 0.5;
   const islandRadius = Math.min(dimX, dimZ) * 0.44;
@@ -501,10 +505,15 @@ export function createProceduralIsland(
 
     if (i % 3 === 0) {
       const size = towerSizes[i % towerSizes.length];
-      placeWatchtower(grid, lx, baseVy, lz, {
+      const info = placeWatchtower(grid, lx, baseVy, lz, {
         icy: biome === 'tundra',
         volcanic: biome === 'volcanic',
         size,
+      });
+      ziplineAnchors.push({
+        x: (lx + 0.5) * VOXEL_SIZE,
+        y: (info.topVy + 1) * VOXEL_SIZE + 0.5,
+        z: (lz + 0.5) * VOXEL_SIZE,
       });
       registerStructure(lx, lz, 10);
     } else if (biome === 'desert') {
@@ -642,7 +651,46 @@ export function createProceduralIsland(
     }
   }
 
+  if (meta) {
+    meta.ziplines = buildZiplineRoutes(ziplineAnchors);
+  }
+
   return grid;
+}
+
+function buildZiplineRoutes(anchors: Vec3[]): IslandZipline[] {
+  const routes: IslandZipline[] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < anchors.length && routes.length < 4; i++) {
+    if (used.has(i)) continue;
+    const a = anchors[i];
+    let best = -1;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let j = i + 1; j < anchors.length; j++) {
+      if (used.has(j)) continue;
+      const b = anchors[j];
+      const horizontal = Math.hypot(a.x - b.x, a.z - b.z);
+      const vertical = Math.abs(a.y - b.y);
+      if (horizontal < 14 || horizontal > 80 || vertical < 1) continue;
+      const score = Math.abs(horizontal - 38) + vertical * 0.4;
+      if (score < bestScore) {
+        bestScore = score;
+        best = j;
+      }
+    }
+    if (best < 0) continue;
+    used.add(i);
+    used.add(best);
+    const other = anchors[best];
+    const from = a.y >= other.y ? a : other;
+    const to = a.y >= other.y ? other : a;
+    routes.push({
+      id: `zip_${routes.length}`,
+      from: { x: from.x, y: from.y, z: from.z },
+      to: { x: to.x, y: to.y, z: to.z },
+    });
+  }
+  return routes;
 }
 
 export function fillAnchoredPillar(
@@ -738,7 +786,7 @@ export function placeWatchtower(
   baseVy: number,
   vz: number,
   opts: { icy?: boolean; volcanic?: boolean; size?: 'small' | 'medium' | 'tall' } = {},
-): void {
+): { topVy: number; radius: number } {
   const wallMat = opts.icy ? MAT.ICE : opts.volcanic ? MAT.BASALT : MAT.STONE;
   const trimMat = opts.icy ? MAT.SNOW : opts.volcanic ? MAT.SCORCHED : MAT.WOOD;
   const accentMat = opts.volcanic ? MAT.LAVA : opts.icy ? MAT.CRYSTAL : MAT.GOLD;
@@ -816,6 +864,21 @@ export function placeWatchtower(
   grid.set(vx, baseVy + h - 1, vz, wallMat);
   grid.set(vx, baseVy + h, vz, accentMat);
   grid.set(vx, baseVy + h + 1, vz, accentMat);
+
+  // Exterior ladder on -Z, plus openings at floor decks/roof.
+  const ladderX = vx;
+  const ladderZ = vz - r - 1;
+  fillAnchoredPillar(grid, ladderX, ladderZ, baseVy, 1, wallMat);
+  for (let y = 1; y < h - 1; y++) {
+    grid.set(ladderX, baseVy + y, ladderZ, MAT.LADDER);
+  }
+  for (let y = floorSpacing; y < h - 1; y += floorSpacing) {
+    grid.set(vx, baseVy + y, vz - r, MAT.AIR);
+    grid.set(vx, baseVy + y + 1, vz - r, MAT.AIR);
+  }
+  grid.set(vx, baseVy + h - 2, vz - r, MAT.AIR);
+
+  return { topVy: baseVy + h - 1, radius: r };
 }
 
 export function placeHouse(
@@ -1426,7 +1489,8 @@ export function getTerrainVoxelY(grid: VoxelGrid, vx: number, vz: number): numbe
       m !== MAT.LEAVES &&
       m !== MAT.WOOD &&
       m !== MAT.CRYSTAL &&
-      m !== MAT.GOLD
+      m !== MAT.GOLD &&
+      m !== MAT.LADDER
     ) {
       return vy;
     }
@@ -1436,9 +1500,33 @@ export function getTerrainVoxelY(grid: VoxelGrid, vx: number, vz: number): numbe
 
 export function getGroundVoxelY(grid: VoxelGrid, vx: number, vz: number): number {
   for (let vy = grid.dimY - 1; vy >= 0; vy--) {
-    if (grid.isSolid(vx, vy, vz)) return vy;
+    if (grid.isSolid(vx, vy, vz) && grid.get(vx, vy, vz) !== MAT.LADDER) {
+      return vy;
+    }
   }
   return 0;
+}
+
+/** Detecta se há uma escada (MAT.LADDER) no volume do jogador. */
+export function isNearLadder(
+  grid: VoxelGrid,
+  pos: Vec3,
+  radius = 0.9,
+): boolean {
+  const minVx = Math.floor((pos.x - radius) / VOXEL_SIZE);
+  const maxVx = Math.floor((pos.x + radius) / VOXEL_SIZE);
+  const minVy = Math.floor((pos.y + 0.05) / VOXEL_SIZE);
+  const maxVy = Math.floor((pos.y + 1.45) / VOXEL_SIZE);
+  const minVz = Math.floor((pos.z - radius) / VOXEL_SIZE);
+  const maxVz = Math.floor((pos.z + radius) / VOXEL_SIZE);
+  for (let vy = minVy; vy <= maxVy; vy++) {
+    for (let vz = minVz; vz <= maxVz; vz++) {
+      for (let vx = minVx; vx <= maxVx; vx++) {
+        if (grid.get(vx, vy, vz) === MAT.LADDER) return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function findSafeSpawnPositions(
@@ -1839,7 +1927,8 @@ export function overlapsSolid(
   for (let vy = minVy; vy <= maxVy; vy++) {
     for (let vz = minVz; vz <= maxVz; vz++) {
       for (let vx = minVx; vx <= maxVx; vx++) {
-        if (grid.isSolid(vx, vy, vz)) return true;
+        const mat = grid.get(vx, vy, vz);
+        if (mat !== MAT.AIR && mat !== MAT.LADDER) return true;
       }
     }
   }

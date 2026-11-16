@@ -56,7 +56,18 @@ export function getAssetManifest(): AssetManifest {
       JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')),
     );
     const baseUrl = process.env.ASSET_BASE_URL?.trim();
-    cached = baseUrl ? { ...manifest, baseUrl } : manifest;
+    if (baseUrl) {
+      cached = { ...manifest, baseUrl };
+    } else {
+      const relativeBase =
+        manifest.baseUrl !== undefined && !/^https?:\/\//i.test(manifest.baseUrl);
+      if (relativeBase && process.env.SERVE_CLIENT === 'false') {
+        console.warn(
+          '[assets] ASSET_BASE_URL ausente em deploy API-only: o cliente vai resolver assets contra a origem do frontend.',
+        );
+      }
+      cached = manifest;
+    }
   }
   return cached;
 }

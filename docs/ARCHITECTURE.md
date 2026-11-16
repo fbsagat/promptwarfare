@@ -127,6 +127,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 - Lê `content/assets/manifest.json` no boot; runtime read-only.
 - IDs lógicos para `texture`, `sound`, `effect` e `waypoint`, com `status`, `params`, `url`, `mimeType` e `hash` opcionais.
 - `ASSET_BASE_URL` injeta `baseUrl` no `/api/assets`; o cliente resolve URLs relativas via `resolveAssetUrl`.
+- Em dev/all-in-one, `server.ts` serve `content/assets/files` em `/assets/files` com cache imutável; em Vercel + VPS o áudio deve vir do CDN (`ASSET_BASE_URL`), pois o frontend não fala com a origem da API.
 - `assetVersion` aparece em `room:init`/`room:tick`; o catálogo referencia IDs de assets.
 - O manifesto é validado por `server/assets.test.ts`; `npm run assets:check` valida URLs e, com `--remote`, faz HEAD/GET no CDN.
 - Texturas de arma usam o material Babylon quando há URL; sons usam cache de samples e caem no sintetizador procedural em falha/ausência.
@@ -166,7 +167,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 | `types.ts` | Protocolo, constantes de voxel e tipos de domínio. Fonte da verdade dos payloads. |
 | `budget.ts` | Orçamento de 100 pontos, normalização, clamps, RLE e geradores de fallback. |
 | `prompt.ts` | Normalização de prompt e chave canônica usadas pelo resolvedor e pelo cache offline. |
-| `voxelWorld.ts` | Ilha procedural determinística, raycast, movimento, carving e colapso de estruturas. |
+| `voxelWorld.ts` | Ilha procedural determinística (inclui escadas e rotas de tirolesa via `IslandMeta`), raycast, movimento, carving e colapso de estruturas. |
 | `botBrain.ts` | Personalidades, seleção de alvo, mira com previsão e decisões dos bots (executado no servidor). |
 | `controls.ts` | Cálculo de look/edge turn compartilhado com o cliente. |
 | `devMode.ts` | Gating de desenvolvimento no servidor e no cliente. |
@@ -179,9 +180,20 @@ Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 - `App.tsx` mantém o WebSocket, o estado da UI, o roteamento das mensagens e os overlays.
 - `components/` contém lobby, sala de espera, HUD, barra mínima de prompt (`PromptBar`), pausa e fim de partida.
 - `engine/babylonArena.ts` monta a cena, câmera, iluminação, projéteis, avatares e aplica deltas de voxels.
+- `engine/chunkDetailPlugin.ts` usa `matId` (enviado pelo mesher) para detalhe procedural, brilho de lava/cristal e borda Fresnel por material, sem texturas.
+- Água tem normal map procedural animado, espuma de costa gerada da heightmap e névoa submersa; o bloom fica atrás do preset de qualidade e só pega emissivos (threshold 1.0).
 - `engine/greedyMesher.worker.ts` faz greedy meshing por chunk em Web Worker; os chunks têm 16³ voxels e são enviados com padding para consulta O(1) de vizinhos.
 - `engine/voxelMeshBuilder.ts` converte RLE em malhas de armas, criaturas e avatares.
-- `engine/soundSynth.ts` sintetiza efeitos via Web Audio; não há arquivos de áudio carregados pelo código.
+- `engine/soundSynth.ts` sintetiza efeitos via Web Audio e usa samples do manifesto (`sfx:*`) quando existem, com fallback procedural.
+- `engine/audio/audioEngine.ts` centraliza contexto, limiter, buses (`sfx`, `ambience`, `ui`), cache de samples, listener e cadeia espacial (PannerNode + lowpass de oclusão).
+- `engine/audio/audioDirector.ts` resolve `sfx:*` do manifesto, espacializa tiros/impactos/explosões/passos, aplica oclusão por raycast e faz crossfade de ambiência (vento/água/fogo/caverna).
+- `engine/audio/materialAudio.ts` mapeia `MAT` para passos e impactos (pedra, madeira, metal, gelo, terracota, macio).
+- VFX derivam do que o servidor já envia: `fx:shrapnel` gera detritos/onda de choque/decals e projétil novo/removido gera tiro/impacto — sem novas mensagens de protocolo.
+- `engine/settings.ts` persiste volumes por bus, sensibilidade/inverter Y, preferência de estatísticas e **reduzir movimento**; `components/SettingsModal.tsx` centraliza áudio, mouse, qualidade e HUD.
+- Ambiência combina vento, água, fogo, pântano e caverna, com reverb procedural em interiores e crossfade; clima (chuva ácida, nevasca, meteoros, terremoto) altera névoa/cor e adiciona respingos/poeira/rumble, com transições suaves.
+- Fullscreen (F/botão) usa `requestFullscreen` com fallback WebKit; o mouse é capturado por pointer lock no clique do canvas (cursor escondido) e `Esc` solta + pausa.
+- Traversal: `MAT.LADDER` é não-sólido para colisão e detectado por `isNearLadder`; sprint/crouch/slide/mantle e stamina rodam no tick autoritativo, e tirolesas usam `IslandMeta.ziplines` recomputado da seed no cliente e no servidor.
+- `engine/quality.ts` resolve presets de qualidade (`auto/low/medium/high`), persistidos em `localStorage` e aplicados pelo `babylonArena` (escala de render e sombras); `auto` usa low em iGPU. O HUD de perf é apenas DEV.
 
 ## Regras de balanceamento
 

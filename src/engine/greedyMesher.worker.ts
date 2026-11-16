@@ -28,6 +28,7 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
+  const matIds: number[] = [];
   const indices: number[] = [];
 
   const dims = [chunkSize, chunkSize, chunkSize];
@@ -171,6 +172,7 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
                   worldOriginZ + c[2] * voxelSize,
                 );
                 normals.push(q[0], q[1], q[2]);
+                matIds.push(mat);
                 const ao = isGlowMat ? Math.max(0.92, aoVals[cIdx]) : aoVals[cIdx];
                 colors.push(rBase * ao, gBase * ao, bBase * ao, 1);
               }
@@ -204,6 +206,7 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
   const posArr = new Float32Array(positions);
   const normArr = new Float32Array(normals);
   const colArr = new Float32Array(colors);
+  const matArr = new Float32Array(matIds);
   const idxArr = new Uint32Array(indices);
 
   (self as unknown as Worker).postMessage(
@@ -215,8 +218,9 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
       positions: posArr,
       normals: normArr,
       colors: colArr,
+      matIds: matArr,
       indices: idxArr,
     },
-    [posArr.buffer, normArr.buffer, colArr.buffer, idxArr.buffer],
+    [posArr.buffer, normArr.buffer, colArr.buffer, matArr.buffer, idxArr.buffer],
   );
 };

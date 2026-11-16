@@ -144,15 +144,20 @@ Passo a passo completo, proxy reverso e checklist em [docs/DEPLOY.md](docs/DEPLO
 | --- | --- |
 | Mover | `WASD` ou setas |
 | Olhar | Mouse (pointer lock) ou borda da tela |
-| Pular | `Espaço` |
+| Correr | `Shift` (consome vigor) |
+| Agachar / slide | `C` (slide ao agachar correndo) |
+| Pular / escalar borda | `Espaço` |
+| Subir/descer escada | `W` / `S` encostado na escada |
 | Ação primária (atirar, escavar, gancho) | Clique esquerdo, segurado para tiro/escavação contínua |
 | Alternar 1ª/3ª pessoa | Scroll do mouse |
 | Selecionar slot | `1` a `4` |
-| Pegar item | `E` |
+| Interagir (item ou tirolesa) | `E` |
 | Descartar item | `G` ou `Q` |
 | Abrir prompt (forja ou evento) | `Enter` |
 | Atalhos de forja/evento | `T` / `Y` |
 | Pausar / retomar | `P` ou `Esc` |
+| Configurações | Engrenagem no lobby/HUD ou pausa |
+| Tela cheia | `F` |
 | Mutar áudio | `M` |
 | Painel de desenvolvimento (fora de produção) | `F8` |
 

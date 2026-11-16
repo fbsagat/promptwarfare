@@ -1,6 +1,7 @@
 import {
   Color3,
   Color4,
+  DefaultRenderingPipeline,
   DirectionalLight,
   DynamicTexture,
   Engine,
@@ -13,6 +14,7 @@ import {
   Scene,
   ShadowGenerator,
   StandardMaterial,
+  Texture,
   TransformNode,
   UniversalCamera,
   Vector3,
@@ -20,10 +22,13 @@ import {
 } from '@babylonjs/core';
 import {
   CHUNK_SIZE,
+  MAT,
   MATERIAL_COLORS,
   VOXEL_SIZE,
+  WATER_LEVEL_VOXEL,
   WATER_LEVEL_WORLD,
   type InventorySlotItem,
+  type IslandMeta,
   type LootDropState,
   type MapEventState,
   type PlayerNetState,
@@ -41,12 +46,24 @@ import {
 } from '../shared/controls.ts';
 import {
   createProceduralIsland,
+  getGroundVoxelY,
   raycastVoxels,
   VoxelGrid,
 } from '../shared/voxelWorld.ts';
 import type { AssetEntry, AssetManifest } from '../shared/assets.ts';
 import { resolveAssetUrl } from '../shared/assets.ts';
 import { soundSynth } from './soundSynth.ts';
+import { ChunkDetailPlugin } from './chunkDetailPlugin.ts';
+import { audioDirector } from './audio/audioDirector.ts';
+import { materialColor } from './audio/materialAudio.ts';
+import {
+  detectGpuTier,
+  loadQualityLevel,
+  resolveQuality,
+  type GpuTier,
+  type QualityLevel,
+  type QualityProfile,
+} from './quality.ts';
 import {
   buildBlueprintVoxelMesh,
   buildPlayerAvatarMesh,
@@ -69,12 +86,22 @@ interface ShrapnelParticle {
   color: [number, number, number];
 }
 
+export interface PerfStats {
+  fps: number;
+  frameMs: number;
+  chunks: number;
+  activeMeshes: number;
+  vertices: number;
+}
+
 export interface ArenaCallbacks {
   onSendInput: (
     input: {
       moveX: number;
       moveZ: number;
       jump: boolean;
+      sprint?: boolean;
+      crouch?: boolean;
       yaw: number;
       pitch: number;
       activeSlot: number;
@@ -84,12 +111,15 @@ export interface ArenaCallbacks {
   onPrimaryAction: (origin: Vec3, dir: Vec3) => void;
   onDropItem: () => void;
   onPickupItem: () => void;
+  onUseZipline?: (routeId: string) => void;
+  onZiplineNearby?: (name: string | null) => void;
   onOpenPrompt: () => void;
   onOpenWeaponPrompt: () => void;
   onOpenEventPrompt: () => void;
   onZoomChange: (zoomMeters: number) => void;
   onAimContextChange?: (ctx: 'neutral' | 'dig' | 'grapple' | 'enemy') => void;
   onContextLost?: (lost: boolean) => void;
+  onPointerLockChange?: (locked: boolean) => void;
 }
 
 export class BabylonVoxelArena {
@@ -99,6 +129,8 @@ export class BabylonVoxelArena {
   private camera: UniversalCamera;
   private callbacks: ArenaCallbacks;
   private isSoftwareGl = false;
+  private gpuTier: GpuTier = 'unknown';
+  private quality: QualityProfile;
 
   private grid: VoxelGrid;
   private chunkMeshes = new Map<string, Mesh>();
@@ -114,6 +146,69 @@ export class BabylonVoxelArena {
   private waterMesh: Mesh;
   private abyssFloorMesh: Mesh;
   private waterMat: StandardMaterial;
+  private waterNormalTexture: DynamicTexture | null = null;
+  private shoreFoamMesh: Mesh | null = null;
+  private shoreFoamMat: StandardMaterial | null = null;
+  private shoreFoamTexture: DynamicTexture | null = null;
+  private bloomPipeline: DefaultRenderingPipeline | null = null;
+
+  // VFX: ondas de choque e decals em pool
+  private shockwaves: Array<{
+    mesh: Mesh;
+    mat: StandardMaterial;
+    ttl: number;
+    maxTtl: number;
+    radius: number;
+  }> = [];
+  private shockwaveCursor = 0;
+  private decals: Array<{
+    mesh: Mesh;
+    mat: StandardMaterial;
+    ttl: number;
+    maxTtl: number;
+  }> = [];
+  private decalCursor = 0;
+  private scorchTexture: DynamicTexture | null = null;
+
+  private islandMeta: IslandMeta = { ziplines: [] };
+  private ziplineGroup: TransformNode | null = null;
+  private nearbyZiplineId: string | null = null;
+  private eyeHeight = 1.48;
+
+  // Áudio: rastro de projéteis, passos e ambiência
+  private projectileMeta = new Map<
+    string,
+    {
+      position: Vec3;
+      velocity: Vec3;
+      ownerId: string;
+      craterRadius: number;
+      color: string;
+    }
+  >();
+  private remoteAudio = new Map<
+    string,
+    { x: number; z: number; stride: number; airborne: boolean }
+  >();
+  private localAudio = {
+    x: 0,
+    y: 0,
+    z: 0,
+    stride: 0,
+    airborne: false,
+    sliding: false,
+    zipline: false,
+    initialized: false,
+  };
+  private ambienceTimer = 0;
+  private ambienceState = {
+    underwater: false,
+    underground: false,
+    nearWater: false,
+    nearLava: false,
+    nearSwamp: false,
+    storm: false,
+  };
 
   // Shrapnel zero-GC ThinInstance pool
   private shrapnelBaseMesh: Mesh;
@@ -164,6 +259,7 @@ export class BabylonVoxelArena {
   private weatherPool: Array<{ x: number; y: number; z: number; speed: number }> = [];
   private readonly WEATHER_CAP = 180;
   private activeWeatherKind: string | null = null;
+  private weatherFxTimer = 0;
   private blastFlashes: Array<{
     mesh: Mesh;
     mat: StandardMaterial;
@@ -173,6 +269,9 @@ export class BabylonVoxelArena {
   private blastCursor = 0;
   private targetWaterY = WATER_LEVEL_WORLD;
   private currentWaterY = WATER_LEVEL_WORLD;
+  private targetFogColor = new Color3(0.66, 0.84, 0.96);
+  private targetClearColor = new Color4(0.42, 0.72, 0.94, 1);
+  private targetFogDensity = 0.0022;
   private aimCheckAccum = 0;
   private lastAimContext: 'neutral' | 'dig' | 'grapple' | 'enemy' = 'neutral';
 
@@ -194,6 +293,9 @@ export class BabylonVoxelArena {
   private lastMouseClientY: number | null = null;
   private cursorEdgeTurn = 0;
   private cursorOverCanvas = false;
+  private lookSensitivity = 1;
+  private invertY = false;
+  private reducedMotion = false;
   private animTime = 0;
   private disposed = false;
 
@@ -207,10 +309,13 @@ export class BabylonVoxelArena {
     this.canvas = canvas;
     this.callbacks = callbacks;
 
-    this.engine = new Engine(canvas, true, {
+    const storedQuality = loadQualityLevel();
+    const bootstrapQuality = resolveQuality(storedQuality);
+
+    this.engine = new Engine(canvas, bootstrapQuality.antialias, {
       preserveDrawingBuffer: false,
       stencil: false,
-      antialias: true,
+      antialias: bootstrapQuality.antialias,
       powerPreference: 'high-performance',
     });
 
@@ -220,9 +325,15 @@ export class BabylonVoxelArena {
       const rendererName = dbg
         ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '')
         : String(gl.getParameter(gl.RENDERER) ?? '');
-      this.isSoftwareGl = /SwiftShader|llvmpipe|Software|Mesa/i.test(rendererName);
+      this.gpuTier = detectGpuTier(rendererName);
+      this.isSoftwareGl = this.gpuTier === 'software';
     }
-    this.engine.setHardwareScalingLevel(this.isSoftwareGl ? 1.5 : 1);
+
+    this.quality = resolveQuality(storedQuality, {
+      isSoftwareGl: this.isSoftwareGl,
+      gpuTier: this.gpuTier,
+    });
+    this.engine.setHardwareScalingLevel(this.quality.hardwareScaling);
 
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.42, 0.72, 0.94, 1);
@@ -241,6 +352,7 @@ export class BabylonVoxelArena {
     this.camera.minZ = 0.08;
     this.camera.maxZ = 950;
     this.camera.fov = 1.08;
+    this.ensureBloomPipeline();
 
     // Gradient sky dome (zenith cobalt -> sunlit horizon -> deep abyssal nadir)
     const skyDome = MeshBuilder.CreateSphere(
@@ -284,15 +396,23 @@ export class BabylonVoxelArena {
     rimLight.diffuse = new Color3(0.38, 0.65, 0.98);
 
     if (!this.isSoftwareGl) {
-      this.shadowGenerator = new ShadowGenerator(1024, sun);
+      // Cria no tamanho do perfil de boot (mínimo 1024); trocar de preset em
+      // runtime não redimensiona o mapa de sombras, apenas liga/desliga.
+      const shadowSize = Math.max(1024, this.quality.shadowMapSize);
+      this.shadowGenerator = new ShadowGenerator(shadowSize, sun);
       this.shadowGenerator.usePercentageCloserFiltering = true;
       this.shadowGenerator.bias = 0.0008;
     }
+    this.scene.shadowsEnabled = Boolean(this.shadowGenerator) && this.quality.shadows;
 
     // Chunk shared material (vertex colored + AO baked)
     this.chunkMat = new StandardMaterial('voxelChunkMat', this.scene);
     this.chunkMat.specularColor = new Color3(0.08, 0.09, 0.12);
     this.chunkMat.ambientColor = new Color3(0.22, 0.24, 0.3);
+    if (!this.isSoftwareGl) {
+      // Detalhe procedural + brilho por MAT sem materiais extras.
+      new ChunkDetailPlugin(this.chunkMat);
+    }
 
     // Abyssal deep sea floor beneath transparent animated ocean surface
     this.abyssFloorMesh = MeshBuilder.CreateGround(
@@ -315,12 +435,17 @@ export class BabylonVoxelArena {
     );
     this.waterMesh.position.set(64, WATER_LEVEL_WORLD - 0.12, 64);
     this.waterMat = new StandardMaterial('waterMat', this.scene);
-    this.waterMat.diffuseColor = Color3.FromHexString('#0c5d88');
+    this.waterMat.diffuseColor = Color3.FromHexString('#0a4f73');
     this.waterMat.emissiveColor = Color3.FromHexString('#032238');
-    this.waterMat.specularColor = new Color3(0.45, 0.72, 0.9);
+    this.waterMat.specularColor = new Color3(0.45, 0.62, 0.78);
     this.waterMat.specularPower = 64;
-    this.waterMat.alpha = 0.84;
+    this.waterMat.alpha = 0.8;
+    this.waterMat.backFaceCulling = false;
+    this.waterNormalTexture = this.createWaterNormalTexture();
+    this.waterMat.bumpTexture = this.waterNormalTexture;
+    this.waterMat.bumpTexture.level = 0.32;
     this.waterMesh.material = this.waterMat;
+    this.waterMesh.alphaIndex = 0;
 
     // Shrapnel zero-GC ThinInstance pool
     this.shrapnelBaseMesh = MeshBuilder.CreateBox(
@@ -446,6 +571,80 @@ export class BabylonVoxelArena {
       this.blastFlashes.push({ mesh: flash, mat: fMat, ttl: 0, maxTtl: 0.25 });
     }
 
+    // Ondas de choque de explosão (pool de 3 anéis)
+    for (let i = 0; i < 3; i++) {
+      const ring = MeshBuilder.CreateTorus(
+        `shock_${i}`,
+        { diameter: 1, thickness: 0.07, tessellation: 20 },
+        this.scene,
+      );
+      ring.isPickable = false;
+      ring.setEnabled(false);
+      const rMat = new StandardMaterial(`shockMat_${i}`, this.scene);
+      rMat.disableLighting = true;
+      rMat.emissiveColor = Color3.FromHexString('#fde68a');
+      rMat.alpha = 0;
+      rMat.backFaceCulling = false;
+      ring.material = rMat;
+      this.shockwaves.push({
+        mesh: ring,
+        mat: rMat,
+        ttl: 0,
+        maxTtl: 1,
+        radius: 1,
+      });
+    }
+
+    // Textura e pool de decals de impacto (10 quads no chão)
+    const scorch = new DynamicTexture(
+      'scorchTex',
+      { width: 64, height: 64 },
+      this.scene,
+      false,
+    );
+    const sctx = scorch.getContext();
+    const simg = sctx.getImageData(0, 0, 64, 64);
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const dx = (x - 31.5) / 31.5;
+        const dy = (y - 31.5) / 31.5;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        const noise =
+          ((((x * 73856093) ^ (y * 19349663)) >>> 0) % 1000) / 1000;
+        const alpha = Math.pow(Math.max(0, 1 - r), 1.6) * (0.7 + noise * 0.3);
+        const i = (y * 64 + x) * 4;
+        simg.data[i] = 255;
+        simg.data[i + 1] = 255;
+        simg.data[i + 2] = 255;
+        simg.data[i + 3] = Math.round(alpha * 255);
+      }
+    }
+    sctx.putImageData(simg, 0, 0);
+    scorch.hasAlpha = true;
+    scorch.update(false);
+    this.scorchTexture = scorch;
+
+    for (let i = 0; i < 10; i++) {
+      const decal = MeshBuilder.CreateGround(
+        `decal_${i}`,
+        { width: 1, height: 1, subdivisions: 1 },
+        this.scene,
+      );
+      decal.isPickable = false;
+      decal.receiveShadows = false;
+      decal.setEnabled(false);
+      const dMat = new StandardMaterial(`decalMat_${i}`, this.scene);
+      dMat.disableLighting = true;
+      dMat.diffuseColor = Color3.Black();
+      dMat.emissiveColor = new Color3(0.85, 0.5, 0.25);
+      dMat.opacityTexture = scorch;
+      dMat.alpha = 0;
+      dMat.backFaceCulling = false;
+      dMat.disableDepthWrite = true;
+      decal.material = dMat;
+      this.decals.push({ mesh: decal, mat: dMat, ttl: 0, maxTtl: 9 });
+    }
+
     // 1st-person viewmodel anchor + muzzle flash
     this.viewModelAnchor = new TransformNode('viewModelAnchor', this.scene);
     this.viewModelAnchor.parent = this.camera;
@@ -470,16 +669,26 @@ export class BabylonVoxelArena {
     this.mesherWorker.onmessage = (ev) => this.handleWorkerChunkBuilt(ev.data);
 
     // Initial Title preview island (120x120m high-res vista at 0.3125m voxels)
-    this.grid = createProceduralIsland(1337, 384, 80, 384);
+    this.grid = createProceduralIsland(1337, 384, 80, 384, this.islandMeta);
+    audioDirector.setOccluder((from, to) => this.isOccluded(from, to));
     const previewCx = (this.grid.dimX * VOXEL_SIZE) / 2;
     const previewCz = (this.grid.dimZ * VOXEL_SIZE) / 2;
     this.waterMesh.position.set(previewCx, WATER_LEVEL_WORLD - 0.12, previewCz);
     this.abyssFloorMesh.position.set(previewCx, 0.25, previewCz);
     this.camera.position.set(previewCx + 52, 26, previewCz + 52);
     this.rebuildAllChunks();
+    this.rebuildShoreFoam();
+    this.rebuildZiplines();
 
     this.bindInputListeners();
     this.attachContextListeners();
+
+    // Hook de depuração apenas em DEV (removido do bundle de produção).
+    if (import.meta.env.DEV) {
+      (
+        window as unknown as { __pwArena?: BabylonVoxelArena }
+      ).__pwArena = this;
+    }
 
     this.engine.runRenderLoop(() => {
       if (this.disposed) return;
@@ -498,6 +707,561 @@ export class BabylonVoxelArena {
     this.canvas.addEventListener('webglcontextrestored', () => {
       this.callbacks.onContextLost?.(false);
     });
+  }
+
+  private ensureBloomPipeline(): void {
+    if (this.bloomPipeline || this.isSoftwareGl || !this.quality.bloom) return;
+    const pipeline = new DefaultRenderingPipeline(
+      'pwPost',
+      Boolean(this.engine.getCaps().textureHalfFloatRender),
+      this.scene,
+      [this.camera],
+    );
+    pipeline.bloomEnabled = true;
+    pipeline.bloomThreshold = 1.0;
+    pipeline.bloomWeight = 0.3;
+    pipeline.bloomKernel = 32;
+    pipeline.bloomScale = 0.5;
+    pipeline.fxaaEnabled = true;
+    this.bloomPipeline = pipeline;
+  }
+
+  private createWaterNormalTexture(): DynamicTexture {
+    const size = 128;
+    const texture = new DynamicTexture(
+      'waterNormalTex',
+      { width: size, height: size },
+      this.scene,
+      true,
+    );
+    const ctx = texture.getContext();
+    const image = ctx.getImageData(0, 0, size, size);
+    for (let y = 0; y < size; y++) {
+      const fz = (y / size) * Math.PI * 2;
+      for (let x = 0; x < size; x++) {
+        const fx = (x / size) * Math.PI * 2;
+        const dx =
+          Math.sin(fx * 2 + Math.sin(fz * 2) * 0.8) * 0.45 +
+          Math.sin((fx + fz) * 3) * 0.25;
+        const dy =
+          Math.cos(fz * 2 + Math.sin(fx * 3) * 0.8) * 0.45 +
+          Math.cos((fx - fz) * 2) * 0.25;
+        const i = (y * size + x) * 4;
+        image.data[i] = 128 + dx * 108;
+        image.data[i + 1] = 128 + dy * 108;
+        image.data[i + 2] = 255;
+        image.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    texture.update(false);
+    texture.wrapU = Texture.WRAP_ADDRESSMODE;
+    texture.wrapV = Texture.WRAP_ADDRESSMODE;
+    texture.uScale = 48;
+    texture.vScale = 48;
+    return texture;
+  }
+
+  /**
+   * Máscara de espuma gerada da heightmap: só desenha onde o topo do terreno
+   * está próximo da linha d'água. Determinística e sem depth texture.
+   */
+  private rebuildShoreFoam(): void {
+    this.shoreFoamMesh?.dispose();
+    this.shoreFoamMesh = null;
+    this.shoreFoamMat?.dispose(true, true);
+    this.shoreFoamMat = null;
+    this.shoreFoamTexture?.dispose();
+    this.shoreFoamTexture = null;
+
+    const size = 384;
+    const texture = new DynamicTexture(
+      'shoreFoamTex',
+      { width: size, height: size },
+      this.scene,
+      false,
+      Texture.BILINEAR_SAMPLINGMODE,
+      undefined,
+      false,
+    );
+    const ctx = texture.getContext();
+    const image = ctx.getImageData(0, 0, size, size);
+    const dimX = this.grid.dimX;
+    const dimZ = this.grid.dimZ;
+
+    for (let py = 0; py < size; py++) {
+      const vz = Math.min(dimZ - 1, Math.floor(((py + 0.5) / size) * dimZ));
+      for (let px = 0; px < size; px++) {
+        const vx = Math.min(dimX - 1, Math.floor(((px + 0.5) / size) * dimX));
+        const top = getGroundVoxelY(this.grid, vx, vz);
+        const dist = Math.abs(top - WATER_LEVEL_VOXEL);
+        let alpha = 0;
+        if (dist <= 2.2) {
+          const hash =
+            (((vx * 73856093) ^ (vz * 19349663)) >>> 0) % 1000 / 1000;
+          alpha = dist <= 1.0 ? 0.95 : 0.45 + hash * 0.35;
+        }
+        const i = (py * size + px) * 4;
+        image.data[i] = 232;
+        image.data[i + 1] = 247;
+        image.data[i + 2] = 255;
+        image.data[i + 3] = Math.round(alpha * 255);
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    texture.hasAlpha = true;
+    texture.update(false);
+    texture.wrapU = Texture.CLAMP_ADDRESSMODE;
+    texture.wrapV = Texture.CLAMP_ADDRESSMODE;
+    texture.uScale = 1;
+    texture.vScale = 1;
+
+    const width = dimX * VOXEL_SIZE;
+    const height = dimZ * VOXEL_SIZE;
+    const mesh = MeshBuilder.CreateGround(
+      'shoreFoam',
+      { width, height, subdivisions: 1 },
+      this.scene,
+    );
+    mesh.position.set(width / 2, this.currentWaterY + 0.02, height / 2);
+    mesh.isPickable = false;
+    mesh.receiveShadows = false;
+    mesh.alphaIndex = 1;
+
+    const material = new StandardMaterial('shoreFoamMat', this.scene);
+    material.disableLighting = true;
+    material.diffuseColor = Color3.Black();
+    material.emissiveColor = new Color3(0.82, 0.94, 1);
+    material.specularColor = Color3.Black();
+    material.opacityTexture = texture;
+    material.alpha = 0.7;
+    material.disableDepthWrite = true;
+    material.backFaceCulling = false;
+    mesh.material = material;
+
+    this.shoreFoamTexture = texture;
+    this.shoreFoamMat = material;
+    this.shoreFoamMesh = mesh;
+  }
+
+  private rebuildZiplines(): void {
+    this.ziplineGroup?.dispose(false, true);
+    const group = new TransformNode('ziplines', this.scene);
+    for (const route of this.islandMeta.ziplines) {
+      const points: Vector3[] = [];
+      const segments = 24;
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const sag = Math.sin(Math.PI * t) * 1.1;
+        points.push(
+          new Vector3(
+            route.from.x + (route.to.x - route.from.x) * t,
+            route.from.y + (route.to.y - route.from.y) * t - sag,
+            route.from.z + (route.to.z - route.from.z) * t,
+          ),
+        );
+      }
+      const line = MeshBuilder.CreateLines(
+        `zipline_${route.id}`,
+        { points },
+        this.scene,
+      );
+      line.color = new Color3(0.82, 0.9, 1);
+      line.isPickable = false;
+      line.parent = group;
+
+      for (const [index, anchor] of [route.from, route.to].entries()) {
+        const ring = MeshBuilder.CreateTorus(
+          `ziplineAnchor_${route.id}_${index}`,
+          { diameter: 1.0, thickness: 0.09, tessellation: 18 },
+          this.scene,
+        );
+        ring.position.set(anchor.x, anchor.y, anchor.z);
+        ring.isPickable = false;
+        ring.parent = group;
+        const mat = new StandardMaterial(
+          `ziplineAnchorMat_${route.id}_${index}`,
+          this.scene,
+        );
+        mat.disableLighting = true;
+        mat.emissiveColor = Color3.FromHexString('#fbbf24');
+        mat.alpha = 0.9;
+        ring.material = mat;
+      }
+    }
+    this.ziplineGroup = group;
+  }
+
+  private applyUnderwaterAtmosphere(): void {
+    this.targetFogColor.set(0.04, 0.28, 0.45);
+    this.targetClearColor.set(0.03, 0.2, 0.34, 1);
+    this.targetFogDensity = 0.075;
+  }
+
+  private isOccluded(
+    from: { x: number; y: number; z: number },
+    to: { x: number; y: number; z: number },
+  ): boolean {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 1.2) return false;
+    const hit = raycastVoxels(
+      this.grid,
+      from.x,
+      from.y,
+      from.z,
+      dx / dist,
+      dy / dist,
+      dz / dist,
+      Math.max(0.2, dist - 0.6),
+    );
+    return hit.hit;
+  }
+
+  private spawnMaterialBurst(
+    center: Vec3,
+    color: [number, number, number],
+    count: number,
+    scale: number,
+    speed: number,
+  ): void {
+    const n = Math.max(0, Math.min(24, Math.round(count)));
+    for (let i = 0; i < n; i++) {
+      const p = this.shrapnelPool[this.shrapnelCursor];
+      this.shrapnelCursor = (this.shrapnelCursor + 1) % this.SHRAPNEL_CAP;
+      const angle = Math.random() * Math.PI * 2;
+      const radial = Math.random();
+      p.active = true;
+      p.px = center.x + (Math.random() - 0.5) * 0.24;
+      p.py = center.y + Math.random() * 0.18;
+      p.pz = center.z + (Math.random() - 0.5) * 0.24;
+      p.vx = Math.cos(angle) * speed * radial;
+      p.vy = speed * (0.25 + Math.random() * 0.75);
+      p.vz = Math.sin(angle) * speed * radial;
+      p.rx = Math.random() * 6;
+      p.ry = Math.random() * 6;
+      p.scale = scale * (0.75 + Math.random() * 0.5);
+      p.ttl = 0.35 + Math.random() * 0.45;
+      p.color = [color[0], color[1], color[2]];
+    }
+  }
+
+  private spawnFootstepDust(
+    mat: number,
+    position: Vec3,
+    underwater: boolean,
+    count = 2,
+  ): void {
+    const color: [number, number, number] = underwater
+      ? [0.55, 0.85, 1]
+      : materialColor(mat);
+    this.spawnMaterialBurst(
+      { x: position.x, y: position.y + 0.04, z: position.z },
+      color,
+      count,
+      0.24,
+      0.9,
+    );
+  }
+
+  private spawnShockwave(center: Vec3, radius: number): void {
+    if (this.shockwaves.length === 0) return;
+    const s = this.shockwaves[this.shockwaveCursor];
+    this.shockwaveCursor = (this.shockwaveCursor + 1) % this.shockwaves.length;
+    s.mesh.position.set(center.x, center.y + 0.05, center.z);
+    s.mesh.scaling.set(0.35, 1, 0.35);
+    s.mesh.setEnabled(true);
+    s.ttl = 0.45;
+    s.maxTtl = 0.45;
+    s.radius = Math.max(0.6, radius);
+    s.mat.emissiveColor = Color3.FromHexString('#fde68a');
+    s.mat.alpha = 0.6;
+  }
+
+  private spawnDecal(
+    position: Vec3,
+    color: [number, number, number],
+    size: number,
+  ): void {
+    if (this.decals.length === 0) return;
+    const d = this.decals[this.decalCursor];
+    this.decalCursor = (this.decalCursor + 1) % this.decals.length;
+    d.mesh.position.set(position.x, position.y + 0.02, position.z);
+    d.mesh.rotation.y = Math.random() * Math.PI * 2;
+    d.mesh.scaling.set(Math.max(0.25, size), 1, Math.max(0.25, size));
+    d.mat.emissiveColor.set(
+      Math.min(1, color[0] * 0.9),
+      Math.min(1, color[1] * 0.9),
+      Math.min(1, color[2] * 0.9),
+    );
+    d.mat.alpha = 0.62;
+    d.mesh.setEnabled(true);
+    d.ttl = 9;
+    d.maxTtl = 9;
+  }
+
+  private spawnExplosionVfx(center: Vec3, radius: number): void {
+    this.spawnShockwave(center, radius * 1.9);
+    this.spawnMaterialBurst(
+      { x: center.x, y: center.y + 0.35, z: center.z },
+      [0.5, 0.5, 0.56],
+      10,
+      1.05,
+      4.2,
+    );
+    this.spawnDecal(
+      { x: center.x, y: Math.max(0, center.y - 0.2), z: center.z },
+      [1, 0.42, 0.12],
+      radius * 2.4,
+    );
+  }
+
+  private spawnImpactVfx(
+    material: number,
+    point: Vec3,
+    ny: number,
+    local: boolean,
+  ): void {
+    if (material <= 0) return;
+    const color = materialColor(material);
+    audioDirector.playImpact(material, point, { local });
+    this.spawnMaterialBurst(point, color, 4, 0.45, 2.6);
+    if (ny > 0.55) {
+      this.spawnDecal(
+        point,
+        [color[0] * 0.4, color[1] * 0.4, color[2] * 0.4],
+        0.55 + Math.random() * 0.35,
+      );
+    }
+  }
+
+  private updateLocalMovementAudio(players: PlayerNetState[]): void {
+    if (this.mode !== 'playing') return;
+    const local = players.find((p) => p.id === this.localPlayerId);
+    if (!local || !local.alive) {
+      this.localAudio.initialized = false;
+      return;
+    }
+    const pos = local.position;
+    if (!this.localAudio.initialized) {
+      this.localAudio.x = pos.x;
+      this.localAudio.y = pos.y;
+      this.localAudio.z = pos.z;
+      this.localAudio.initialized = true;
+      return;
+    }
+
+    const vx = Math.max(0, Math.floor(pos.x / VOXEL_SIZE));
+    const vz = Math.max(0, Math.floor(pos.z / VOXEL_SIZE));
+    const top = getGroundVoxelY(this.grid, vx, vz);
+    const groundY = (top + 1) * VOXEL_SIZE;
+    const underwater = pos.y + 1.0 < this.currentWaterY;
+    const grounded = pos.y <= groundY + 0.12 || underwater;
+    const dy = (pos.y - this.localAudio.y) / 0.05;
+    const moved = Math.hypot(pos.x - this.localAudio.x, pos.z - this.localAudio.z);
+    const mat = this.grid.get(vx, Math.max(0, top), vz);
+
+    if (local.sliding && !this.localAudio.sliding) {
+      audioDirector.playWorld('sfx:traversal:whoosh:1', pos, {
+        volume: 0.55,
+        priority: 2,
+        hrtf: false,
+        occlusion: false,
+        maxDistance: 30,
+      });
+    }
+    if (local.ziplineRouteId && !this.localAudio.zipline) {
+      audioDirector.playWorld('sfx:traversal:whoosh:2', pos, {
+        volume: 0.6,
+        priority: 2,
+        hrtf: false,
+        occlusion: false,
+        maxDistance: 30,
+      });
+    }
+    this.localAudio.sliding = local.sliding;
+    this.localAudio.zipline = Boolean(local.ziplineRouteId);
+
+    if (local.climbing) {
+      const climbDy = Math.abs(pos.y - this.localAudio.y);
+      if (climbDy > 0.01) {
+        this.localAudio.stride += climbDy;
+        if (this.localAudio.stride >= 0.7) {
+          this.localAudio.stride = 0;
+          audioDirector.playImpact(MAT.WOOD, pos, { local: true });
+        }
+      }
+    } else if (grounded && !this.localAudio.airborne && moved > 0.01) {
+      this.localAudio.stride += moved;
+      if (this.localAudio.stride >= 2.1) {
+        this.localAudio.stride = 0;
+        audioDirector.playFootstep(mat, pos, { local: true, underwater });
+        this.spawnFootstepDust(mat, pos, underwater);
+      }
+    }
+    if (grounded && this.localAudio.airborne && dy < -2.4) {
+      audioDirector.playLanding(mat, pos, true);
+      this.spawnFootstepDust(mat, pos, underwater, 4);
+    }
+
+    this.localAudio.airborne = !grounded;
+    this.localAudio.x = pos.x;
+    this.localAudio.y = pos.y;
+    this.localAudio.z = pos.z;
+  }
+
+  private updateRemoteMovementAudio(players: PlayerNetState[]): void {
+    const seen = new Set<string>();
+    for (const p of players) {
+      if (p.id === this.localPlayerId) continue;
+      seen.add(p.id);
+      if (!p.alive) {
+        this.remoteAudio.delete(p.id);
+        continue;
+      }
+      const distanceToCamera = Math.hypot(
+        p.position.x - this.camera.position.x,
+        p.position.z - this.camera.position.z,
+      );
+      const entry = this.remoteAudio.get(p.id);
+      if (!entry) {
+        this.remoteAudio.set(p.id, {
+          x: p.position.x,
+          z: p.position.z,
+          stride: 0,
+          airborne: false,
+        });
+        continue;
+      }
+
+      const moved = Math.hypot(p.position.x - entry.x, p.position.z - entry.z);
+      if (distanceToCamera < 42 && moved > 0.01 && moved < 2.5) {
+        const vx = Math.max(0, Math.floor(p.position.x / VOXEL_SIZE));
+        const vz = Math.max(0, Math.floor(p.position.z / VOXEL_SIZE));
+        const top = getGroundVoxelY(this.grid, vx, vz);
+        const grounded = p.position.y <= (top + 1) * VOXEL_SIZE + 0.15;
+        if (grounded) {
+          entry.stride += moved;
+          if (entry.stride >= 2.2) {
+            entry.stride = 0;
+            const mat = this.grid.get(vx, Math.max(0, top), vz);
+            const underwater = p.position.y + 1.0 < this.currentWaterY;
+            audioDirector.playFootstep(mat, p.position, {
+              local: false,
+              underwater,
+            });
+          }
+        }
+      }
+      entry.x = p.position.x;
+      entry.z = p.position.z;
+    }
+    for (const id of this.remoteAudio.keys()) {
+      if (!seen.has(id)) this.remoteAudio.delete(id);
+    }
+  }
+
+  private refreshAmbienceState(): void {
+    const pos = this.camera.position;
+    const vx = Math.max(0, Math.floor(pos.x / VOXEL_SIZE));
+    const vy = Math.max(0, Math.floor(pos.y / VOXEL_SIZE));
+    const vz = Math.max(0, Math.floor(pos.z / VOXEL_SIZE));
+    const underwater = pos.y < this.currentWaterY - 0.03;
+
+    let underground = false;
+    for (let dy = 2; dy <= 10; dy += 2) {
+      if (this.grid.isSolid(vx, vy + dy, vz)) {
+        underground = true;
+        break;
+      }
+    }
+
+    let nearWater = false;
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2;
+      const sx = Math.max(
+        0,
+        Math.floor((pos.x + Math.cos(angle) * 7) / VOXEL_SIZE),
+      );
+      const sz = Math.max(
+        0,
+        Math.floor((pos.z + Math.sin(angle) * 7) / VOXEL_SIZE),
+      );
+      const top = getGroundVoxelY(this.grid, sx, sz);
+      if (top > 0 && Math.abs(top - WATER_LEVEL_VOXEL) <= 1) {
+        nearWater = true;
+        break;
+      }
+    }
+
+    let nearLava = false;
+    outer: for (let dx = -6; dx <= 6; dx += 4) {
+      for (let dz = -6; dz <= 6; dz += 4) {
+        for (let dy = -2; dy <= 5; dy += 3) {
+          if (this.grid.get(vx + dx, vy + dy, vz + dz) === MAT.LAVA) {
+            nearLava = true;
+            break outer;
+          }
+        }
+      }
+    }
+
+    let nearSwamp = false;
+    outerSwamp: for (let dx = -6; dx <= 6; dx += 4) {
+      for (let dz = -6; dz <= 6; dz += 4) {
+        for (let dy = -2; dy <= 4; dy += 3) {
+          if (this.grid.get(vx + dx, vy + dy, vz + dz) === MAT.MOSS) {
+            nearSwamp = true;
+            break outerSwamp;
+          }
+        }
+      }
+    }
+
+    const storm =
+      this.activeWeatherKind === 'blizzard' ||
+      this.activeWeatherKind === 'acid_rain';
+
+    this.ambienceState = {
+      underwater,
+      underground,
+      nearWater,
+      nearLava,
+      nearSwamp,
+      storm,
+    };
+  }
+
+  private handleProjectileEnded(
+    meta: {
+      position: Vec3;
+      velocity: Vec3;
+      ownerId: string;
+      craterRadius: number;
+      color: string;
+    },
+  ): void {
+    if (meta.craterRadius > 0) return; // explosão já é tratada pelo fx:shrapnel
+    const vx = meta.velocity.x;
+    const vy = meta.velocity.y;
+    const vz = meta.velocity.z;
+    const len = Math.hypot(vx, vy, vz);
+    if (len < 0.01) return;
+    const hit = raycastVoxels(
+      this.grid,
+      meta.position.x - (vx / len) * 0.08,
+      meta.position.y - (vy / len) * 0.08,
+      meta.position.z - (vz / len) * 0.08,
+      vx / len,
+      vy / len,
+      vz / len,
+      2.2,
+    );
+    if (!hit.hit) return;
+    const local = meta.ownerId === this.localPlayerId;
+    this.spawnImpactVfx(hit.material, hit.point, hit.ny, local);
   }
 
   public setMode(mode: 'title' | 'playing' | 'paused' | 'gameover'): void {
@@ -535,6 +1299,42 @@ export class BabylonVoxelArena {
 
   public setAssetManifest(manifest: AssetManifest | null): void {
     this.assetManifest = manifest;
+    audioDirector.setManifest(manifest);
+  }
+
+  /**
+   * Troca o preset em runtime. Escala de render e sombras valem na hora;
+   * tamanho do shadow map e antialias só no próximo boot.
+   */
+  public setQuality(level: QualityLevel): QualityProfile {
+    this.quality = resolveQuality(level, {
+      isSoftwareGl: this.isSoftwareGl,
+      gpuTier: this.gpuTier,
+    });
+    this.engine.setHardwareScalingLevel(this.quality.hardwareScaling);
+    this.scene.shadowsEnabled =
+      Boolean(this.shadowGenerator) && this.quality.shadows;
+    if (this.quality.bloom) this.ensureBloomPipeline();
+    if (this.bloomPipeline) {
+      this.bloomPipeline.bloomEnabled = this.quality.bloom;
+      this.bloomPipeline.fxaaEnabled = this.quality.bloom;
+    }
+    return this.quality;
+  }
+
+  public getQuality(): QualityProfile {
+    return this.quality;
+  }
+
+  public getPerfStats(): PerfStats {
+    const activeMeshes = this.scene.getActiveMeshes();
+    return {
+      fps: this.engine.getFps(),
+      frameMs: this.engine.getDeltaTime(),
+      chunks: this.chunkMeshes.size,
+      activeMeshes: activeMeshes.length,
+      vertices: this.scene.getTotalVertices(),
+    };
   }
 
   private getAsset(id: string | undefined): AssetEntry | null {
@@ -548,7 +1348,16 @@ export class BabylonVoxelArena {
 
   public loadRoomInit(init: RoomInitPayload): void {
     this.localPlayerId = init.playerId;
-    this.grid = createProceduralIsland(init.seed, init.dimX, init.dimY, init.dimZ);
+    this.nearbyZiplineId = null;
+    this.callbacks.onZiplineNearby?.(null);
+    this.islandMeta = { ziplines: [] };
+    this.grid = createProceduralIsland(
+      init.seed,
+      init.dimX,
+      init.dimY,
+      init.dimZ,
+      this.islandMeta,
+    );
     this.grid.applyDeltas(init.deltas);
     const cx = (init.dimX * VOXEL_SIZE) / 2;
     const cz = (init.dimZ * VOXEL_SIZE) / 2;
@@ -567,6 +1376,12 @@ export class BabylonVoxelArena {
     this.lootMeshes.clear();
     for (const e of this.entityMeshes.values()) e.node.dispose();
     this.entityMeshes.clear();
+    this.projectileMeta.clear();
+    this.remoteAudio.clear();
+    this.localAudio.initialized = false;
+    this.localAudio.airborne = false;
+    this.localAudio.sliding = false;
+    this.localAudio.zipline = false;
 
     const local = init.players.find((p) => p.id === init.playerId);
     if (local) {
@@ -580,6 +1395,8 @@ export class BabylonVoxelArena {
     }
 
     this.rebuildAllChunks();
+    this.rebuildShoreFoam();
+    this.rebuildZiplines();
   }
 
   public applyVoxelDeltas(deltas: VoxelDelta[]): void {
@@ -614,20 +1431,40 @@ export class BabylonVoxelArena {
     voxels: Array<{ vx: number; vy: number; vz: number; mat: number }>,
   ): void {
     if (voxels.length > 0) {
-      if (voxels.length > 5) {
-        soundSynth.playExplosion();
-        this.cameraTrauma = Math.min(1, this.cameraTrauma + 0.35);
+      const isBlast = voxels.length > 5;
+      if (isBlast) {
+        soundSynth.playExplosionAt(center);
+        const dist = Math.hypot(
+          center.x - this.camera.position.x,
+          center.y - this.camera.position.y,
+          center.z - this.camera.position.z,
+        );
+        if (dist < 26) {
+          this.cameraTrauma = Math.min(
+            1,
+            this.cameraTrauma + 0.35 * (1 - dist / 26),
+          );
+        }
+        this.spawnExplosionVfx(center, 1.1 + Math.random() * 0.45);
       } else {
-        soundSynth.playDig();
+        soundSynth.playDigAt(center);
+        const dist = Math.hypot(
+          center.x - this.camera.position.x,
+          center.y - this.camera.position.y,
+          center.z - this.camera.position.z,
+        );
+        if (dist > 7) {
+          audioDirector.playDig(voxels[0].mat, center, false);
+        }
       }
       const flash = this.blastFlashes[this.blastCursor];
       this.blastCursor = (this.blastCursor + 1) % this.blastFlashes.length;
-      const baseScale = voxels.length > 5 ? 0.65 : 0.32;
+      const baseScale = isBlast ? 0.65 : 0.32;
       flash.mesh.position.set(center.x, center.y, center.z);
       flash.mesh.scaling.set(baseScale, baseScale, baseScale);
-      flash.ttl = voxels.length > 5 ? 0.24 : 0.14;
+      flash.ttl = isBlast ? 0.24 : 0.14;
       flash.maxTtl = flash.ttl;
-      flash.mat.alpha = voxels.length > 5 ? 0.68 : 0.42;
+      flash.mat.alpha = isBlast ? 0.68 : 0.42;
       flash.mesh.setEnabled(true);
     }
 
@@ -663,6 +1500,8 @@ export class BabylonVoxelArena {
     this.latestTick = tick;
     this.targetWaterY = tick.waterLevelWorld ?? WATER_LEVEL_WORLD;
     this.syncPlayers(tick.players);
+    this.updateLocalMovementAudio(tick.players);
+    this.updateRemoteMovementAudio(tick.players);
     this.syncProjectiles(tick.projectiles);
     this.syncLootDrops(tick.lootDrops);
     this.syncEntities(tick.entities);
@@ -687,6 +1526,50 @@ export class BabylonVoxelArena {
         // Ignore headless pointer lock restriction
       }
     }
+  }
+
+  public releasePointerLock(): void {
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+    }
+  }
+
+  public setLookSensitivity(multiplier: number): void {
+    this.lookSensitivity = Math.max(0.4, Math.min(2, Number.isFinite(multiplier) ? multiplier : 1));
+  }
+
+  public setInvertY(invert: boolean): void {
+    this.invertY = Boolean(invert);
+  }
+
+  public setReducedMotion(reduced: boolean): void {
+    this.reducedMotion = Boolean(reduced);
+  }
+
+  public projectToScreen(point: Vec3): {
+    x: number;
+    y: number;
+    visible: boolean;
+  } {
+    const width = Math.max(1, this.canvas.clientWidth);
+    const height = Math.max(1, this.canvas.clientHeight);
+    const projected = Vector3.Project(
+      new Vector3(point.x, point.y, point.z),
+      Matrix.Identity(),
+      this.scene.getTransformMatrix(),
+      this.camera.viewport.toGlobal(width, height),
+    );
+    return {
+      x: projected.x,
+      y: projected.y,
+      visible:
+        projected.z > 0 &&
+        projected.z < 1 &&
+        projected.x >= -40 &&
+        projected.x <= width + 40 &&
+        projected.y >= -40 &&
+        projected.y <= height + 40,
+    };
   }
 
   private rebuildAllChunks(): void {
@@ -815,6 +1698,7 @@ export class BabylonVoxelArena {
     positions: Float32Array;
     normals: Float32Array;
     colors: Float32Array;
+    matIds: Float32Array;
     indices: Uint32Array;
   }): void {
     if (this.disposed) return;
@@ -845,6 +1729,9 @@ export class BabylonVoxelArena {
     vData.colors = data.colors;
     vData.indices = data.indices;
     vData.applyToMesh(mesh, false);
+    if (data.matIds && data.matIds.length === data.positions.length / 3) {
+      mesh.setVerticesData('matId', data.matIds, false, 1);
+    }
   }
 
   private syncPlayers(players: PlayerNetState[]): void {
@@ -1049,6 +1936,13 @@ export class BabylonVoxelArena {
     const seen = new Set<string>();
     for (const pr of projectiles) {
       seen.add(pr.id);
+      this.projectileMeta.set(pr.id, {
+        position: { x: pr.position.x, y: pr.position.y, z: pr.position.z },
+        velocity: { x: pr.velocity.x, y: pr.velocity.y, z: pr.velocity.z },
+        ownerId: pr.ownerId,
+        craterRadius: pr.craterRadius,
+        color: pr.color,
+      });
       let mesh = this.projectileMeshes.get(pr.id);
       if (!mesh) {
         mesh = MeshBuilder.CreateBox(
@@ -1063,6 +1957,7 @@ export class BabylonVoxelArena {
         mat.disableLighting = true;
         mesh.material = mat;
         this.projectileMeshes.set(pr.id, mesh);
+        this.playRemoteShot(pr);
       }
       mesh.position.set(pr.position.x, pr.position.y, pr.position.z);
       mesh.lookAt(
@@ -1097,8 +1992,28 @@ export class BabylonVoxelArena {
       if (!seen.has(id)) {
         m.dispose();
         this.projectileMeshes.delete(id);
+        const meta = this.projectileMeta.get(id);
+        this.projectileMeta.delete(id);
+        if (meta) this.handleProjectileEnded(meta);
       }
     }
+  }
+
+  private playRemoteShot(pr: ProjectileNetState): void {
+    if (pr.ownerId === this.localPlayerId) return;
+    const owner = this.latestTick?.players.find((p) => p.id === pr.ownerId);
+    if (!owner) return;
+    const item = owner.slots[owner.activeSlot];
+    if (!item) return;
+    const sfxId = item.weapon?.assets?.find((id) =>
+      id.startsWith('sfx:weapon:'),
+    );
+    soundSynth.playShootAt(
+      item.massKg,
+      sfxId,
+      pr.position,
+      this.getAssetUrl(sfxId),
+    );
   }
 
   private syncLootDrops(drops: LootDropState[]): void {
@@ -1145,6 +2060,28 @@ export class BabylonVoxelArena {
 
     for (const [id, n] of this.lootMeshes) {
       if (!seen.has(id)) {
+        const nearest = this.latestTick?.players
+          .filter((p) => p.alive)
+          .map((p) => ({
+            player: p,
+            dist: Math.hypot(
+              p.position.x - n.position.x,
+              p.position.y + 0.8 - n.position.y,
+              p.position.z - n.position.z,
+            ),
+          }))
+          .sort((a, b) => a.dist - b.dist)[0];
+        if (
+          nearest &&
+          nearest.dist < 3 &&
+          nearest.player.id !== this.localPlayerId
+        ) {
+          audioDirector.playPickup({
+            x: n.position.x,
+            y: n.position.y,
+            z: n.position.z,
+          });
+        }
         n.dispose();
         this.lootMeshes.delete(id);
       }
@@ -1271,6 +2208,11 @@ export class BabylonVoxelArena {
         mat.alpha = 0.72;
         mesh.material = mat;
         this.eventWaypointMeshes.set(evt.id, mesh);
+        audioDirector.playEvent({
+          x: evt.center[0],
+          y: evt.center[1],
+          z: evt.center[2],
+        });
       }
       mesh.position.set(evt.center[0], evt.center[1] + 0.08, evt.center[2]);
       mesh.setEnabled(true);
@@ -1284,45 +2226,73 @@ export class BabylonVoxelArena {
   }
 
   private applyWeatherAtmosphere(events: MapEventState[]): void {
+    const underwater = this.camera.position.y < this.currentWaterY - 0.05;
     const activeWeather = events.find(
       (e) => e.warningRemainingSec <= 0 && e.archetype === 'WEATHER_HAZARD',
     );
+
     if (!activeWeather) {
       this.activeWeatherKind = null;
       this.weatherBaseMesh.setEnabled(false);
-      if (this.camera.position.y < this.currentWaterY) {
-        this.scene.fogColor.set(0.06, 0.34, 0.52);
-        this.scene.clearColor.set(0.05, 0.26, 0.42, 1);
-        this.scene.fogDensity = 0.042;
-      } else {
-        this.scene.fogColor.set(0.66, 0.84, 0.96);
-        this.scene.clearColor.set(0.42, 0.72, 0.94, 1);
-        this.scene.fogDensity = 0.0022;
+      this.targetFogColor.set(0.66, 0.84, 0.96);
+      this.targetClearColor.set(0.42, 0.72, 0.94, 1);
+      this.targetFogDensity = 0.0022;
+    } else {
+      const wk = activeWeather.params.weatherKind ?? 'meteor_shower';
+      this.activeWeatherKind = wk;
+      this.weatherBaseMesh.setEnabled(
+        wk === 'acid_rain' || wk === 'blizzard' || wk === 'meteor_shower',
+      );
+      if (wk === 'blizzard') {
+        this.targetFogColor.set(0.84, 0.91, 0.98);
+        this.targetClearColor.set(0.8, 0.88, 0.96, 1);
+        this.targetFogDensity = 0.022;
+      } else if (wk === 'acid_rain') {
+        this.targetFogColor.set(0.32, 0.45, 0.25);
+        this.targetClearColor.set(0.28, 0.4, 0.22, 1);
+        this.targetFogDensity = 0.015;
+      } else if (wk === 'meteor_shower' || wk === 'earthquake') {
+        this.targetFogColor.set(0.42, 0.25, 0.22);
+        this.targetClearColor.set(0.38, 0.22, 0.2, 1);
+        this.targetFogDensity = 0.012;
       }
-      return;
     }
 
-    const wk = activeWeather.params.weatherKind ?? 'meteor_shower';
-    this.activeWeatherKind = wk;
-    this.weatherBaseMesh.setEnabled(wk === 'acid_rain' || wk === 'blizzard' || wk === 'meteor_shower');
-    if (wk === 'blizzard') {
-      this.scene.fogColor.set(0.84, 0.91, 0.98);
-      this.scene.clearColor.set(0.8, 0.88, 0.96, 1);
-      this.scene.fogDensity = 0.022;
-    } else if (wk === 'acid_rain') {
-      this.scene.fogColor.set(0.32, 0.45, 0.25);
-      this.scene.clearColor.set(0.28, 0.4, 0.22, 1);
-      this.scene.fogDensity = 0.015;
-    } else if (wk === 'meteor_shower' || wk === 'earthquake') {
-      this.scene.fogColor.set(0.42, 0.25, 0.22);
-      this.scene.clearColor.set(0.38, 0.22, 0.2, 1);
-      this.scene.fogDensity = 0.012;
-    }
+    // Água submersa tem prioridade: névoa densa e escura mesmo com clima ativo.
+    if (underwater) this.applyUnderwaterAtmosphere();
   }
 
   private updateFrame(dt: number): void {
     this.animTime += dt;
     this.drainPendingChunks(36);
+
+    // Transições suaves de atmosfera (clima, bioma e submerso).
+    const fogK = 1 - Math.exp(-2.2 * dt);
+    this.scene.fogColor.set(
+      this.scene.fogColor.r + (this.targetFogColor.r - this.scene.fogColor.r) * fogK,
+      this.scene.fogColor.g + (this.targetFogColor.g - this.scene.fogColor.g) * fogK,
+      this.scene.fogColor.b + (this.targetFogColor.b - this.scene.fogColor.b) * fogK,
+    );
+    this.scene.clearColor.set(
+      this.scene.clearColor.r +
+        (this.targetClearColor.r - this.scene.clearColor.r) * fogK,
+      this.scene.clearColor.g +
+        (this.targetClearColor.g - this.scene.clearColor.g) * fogK,
+      this.scene.clearColor.b +
+        (this.targetClearColor.b - this.scene.clearColor.b) * fogK,
+      1,
+    );
+    this.scene.fogDensity +=
+      (this.targetFogDensity - this.scene.fogDensity) * fogK;
+
+    const forward = this.camera.getDirection(Vector3.Forward());
+    audioDirector.updateListener(this.camera.position, forward);
+    this.ambienceTimer -= dt;
+    if (this.ambienceTimer <= 0) {
+      this.ambienceTimer = 0.5;
+      this.refreshAmbienceState();
+    }
+    audioDirector.updateAmbience(dt, this.ambienceState);
 
     // Drift sky clouds lazily across larger island span
     for (let i = 0; i < this.clouds.length; i++) {
@@ -1335,6 +2305,15 @@ export class BabylonVoxelArena {
     this.currentWaterY += (this.targetWaterY - this.currentWaterY) * (1 - Math.exp(-3 * dt));
     this.waterMesh.position.y =
       this.currentWaterY - 0.12 + Math.sin(this.animTime * 1.4) * 0.04;
+    if (this.shoreFoamMesh) {
+      this.shoreFoamMesh.position.y = this.currentWaterY + 0.02;
+    }
+    if (this.waterNormalTexture) {
+      this.waterNormalTexture.uOffset =
+        (this.waterNormalTexture.uOffset + dt * 0.012) % 1;
+      this.waterNormalTexture.vOffset =
+        (this.waterNormalTexture.vOffset + dt * 0.008) % 1;
+    }
 
     // Update explosion shockwave flashes
     for (const f of this.blastFlashes) {
@@ -1348,6 +2327,31 @@ export class BabylonVoxelArena {
       const sc = 0.8 + p * 4.2;
       f.mesh.scaling.set(sc, sc, sc);
       f.mat.alpha = (1 - p) * 0.65;
+    }
+
+    // Ondas de choque
+    for (const s of this.shockwaves) {
+      if (s.ttl <= 0) continue;
+      s.ttl -= dt;
+      if (s.ttl <= 0) {
+        s.mesh.setEnabled(false);
+        continue;
+      }
+      const p = 1 - s.ttl / s.maxTtl;
+      const sc = 0.35 + p * s.radius * 2;
+      s.mesh.scaling.set(sc, 1, sc);
+      s.mat.alpha = (1 - p) * 0.6;
+    }
+
+    // Decals de impacto
+    for (const d of this.decals) {
+      if (d.ttl <= 0) continue;
+      d.ttl -= dt;
+      if (d.ttl <= 0) {
+        d.mesh.setEnabled(false);
+        continue;
+      }
+      d.mat.alpha = 0.62 * Math.min(1, d.ttl / (d.maxTtl * 0.5));
     }
 
     // Hitstop micro-freeze for crisp heavy impact feel (40-60ms)
@@ -1398,6 +2402,77 @@ export class BabylonVoxelArena {
       }
       this.weatherBaseMesh.thinInstanceBufferUpdated('matrix');
       this.weatherBaseMesh.thinInstanceBufferUpdated('color');
+    }
+
+    // Weather polish: respingos, meteoros e poeira de terremoto
+    this.weatherFxTimer -= dt;
+    if (this.weatherFxTimer <= 0 && this.activeWeatherKind) {
+      const cam = this.camera.position;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 3 + Math.random() * 16;
+      const wx = cam.x + Math.cos(angle) * dist;
+      const wz = cam.z + Math.sin(angle) * dist;
+      const top = getGroundVoxelY(
+        this.grid,
+        Math.max(0, Math.floor(wx / VOXEL_SIZE)),
+        Math.max(0, Math.floor(wz / VOXEL_SIZE)),
+      );
+      const gy = (top + 1) * VOXEL_SIZE;
+      if (this.activeWeatherKind === 'acid_rain') {
+        this.weatherFxTimer = 0.35 + Math.random() * 0.5;
+        this.spawnMaterialBurst(
+          { x: wx, y: gy + 0.05, z: wz },
+          [0.45, 0.9, 0.35],
+          2,
+          0.2,
+          0.7,
+        );
+      } else if (this.activeWeatherKind === 'meteor_shower') {
+        this.weatherFxTimer = 1.8 + Math.random() * 1.4;
+        const p = this.shrapnelPool[this.shrapnelCursor];
+        this.shrapnelCursor = (this.shrapnelCursor + 1) % this.SHRAPNEL_CAP;
+        p.active = true;
+        p.px = wx;
+        p.py = cam.y + 14 + Math.random() * 8;
+        p.pz = wz;
+        p.vx = 2 + Math.random() * 2;
+        p.vy = -14;
+        p.vz = 1;
+        p.rx = 0;
+        p.ry = 0;
+        p.scale = 0.55;
+        p.ttl = 1.2;
+        p.color = [1, 0.45, 0.12];
+        audioDirector.playWorld('sfx:impact:stone:medium', {
+          x: wx - 12,
+          y: gy,
+          z: wz - 12,
+        }, {
+          volume: 0.28,
+          priority: 1,
+          hrtf: true,
+          maxDistance: 140,
+        });
+      } else if (this.activeWeatherKind === 'earthquake') {
+        this.weatherFxTimer = 1.2 + Math.random() * 0.9;
+        this.spawnMaterialBurst(
+          { x: wx, y: gy + 0.05, z: wz },
+          [0.55, 0.5, 0.45],
+          3,
+          0.45,
+          1.4,
+        );
+        audioDirector.playWorld('sfx:impact:stone:short', {
+          x: wx,
+          y: gy,
+          z: wz,
+        }, {
+          volume: 0.3,
+          priority: 1,
+          hrtf: false,
+          maxDistance: 90,
+        });
+      }
     }
 
     // Update shrapnel ring buffer
@@ -1507,6 +2582,28 @@ export class BabylonVoxelArena {
     const localPlayer = this.latestTick?.players.find((p) => p.id === this.localPlayerId);
     if (localPlayer) {
       this.sendInputFrame(false);
+      const targetFov = localPlayer.sprinting && !this.reducedMotion ? 1.13 : 1.08;
+      this.camera.fov += (targetFov - this.camera.fov) * (1 - Math.exp(-8 * dt));
+
+      let bestZipline: string | null = null;
+      if (!localPlayer.ziplineRouteId) {
+        let bestDist = 3.4;
+        for (const route of this.islandMeta.ziplines) {
+          const d = Math.hypot(
+            localPlayer.position.x - route.from.x,
+            localPlayer.position.y - route.from.y,
+            localPlayer.position.z - route.from.z,
+          );
+          if (d < bestDist) {
+            bestDist = d;
+            bestZipline = route.id;
+          }
+        }
+      }
+      if (bestZipline !== this.nearbyZiplineId) {
+        this.nearbyZiplineId = bestZipline;
+        this.callbacks.onZiplineNearby?.(bestZipline ? 'a tirolesa' : null);
+      }
     }
 
     // Smooth camera zoom (0m = 1st person, 0.5..7.0m = 3rd person)
@@ -1521,7 +2618,13 @@ export class BabylonVoxelArena {
           (this.grid.dimZ * VOXEL_SIZE) / 2,
         );
 
-    const eyePos = new Vector3(anchorPos.x, anchorPos.y + 1.48, anchorPos.z);
+    const targetEye = localPlayer?.crouching
+      ? localPlayer.sliding
+        ? 0.92
+        : 1.1
+      : 1.48;
+    this.eyeHeight += (targetEye - this.eyeHeight) * (1 - Math.exp(-14 * dt));
+    const eyePos = new Vector3(anchorPos.x, anchorPos.y + this.eyeHeight, anchorPos.z);
     const cosP = Math.cos(this.pitch);
     const lookDir = new Vector3(
       Math.sin(this.yaw) * cosP,
@@ -1544,8 +2647,8 @@ export class BabylonVoxelArena {
           this.keysPressed.has('KeyA') ||
           this.keysPressed.has('KeyS') ||
           this.keysPressed.has('KeyD'));
-      const bobX = isMoving ? Math.cos(this.animTime * 9) * 0.016 : Math.cos(this.animTime * 1.8) * 0.004;
-      const bobY = isMoving ? Math.abs(Math.sin(this.animTime * 9)) * 0.018 : Math.sin(this.animTime * 1.8) * 0.004;
+      const bobX = (isMoving ? Math.cos(this.animTime * 9) * 0.016 : Math.cos(this.animTime * 1.8) * 0.004) * (this.reducedMotion ? 0.35 : 1);
+      const bobY = (isMoving ? Math.abs(Math.sin(this.animTime * 9)) * 0.018 : Math.sin(this.animTime * 1.8) * 0.004) * (this.reducedMotion ? 0.35 : 1);
       this.viewModelAnchor.position.set(
         0.32 + bobX,
         -0.25 - bobY,
@@ -1576,7 +2679,9 @@ export class BabylonVoxelArena {
     // Decaying trauma shake + earthquake micro-tremor
     this.cameraTrauma = Math.max(0, this.cameraTrauma - dt * 2.2);
     const quake = this.activeWeatherKind === 'earthquake' ? 0.045 : 0;
-    const shake = this.cameraTrauma * this.cameraTrauma * 0.12 + quake;
+    const shake =
+      (this.cameraTrauma * this.cameraTrauma * 0.12 + quake) *
+      (this.reducedMotion ? 0.25 : 1);
     this.scratchVec.set(
       eyePos.x + lookDir.x * 25 + (Math.random() - 0.5) * shake,
       eyePos.y + lookDir.y * 25 + (Math.random() - 0.5) * shake,
@@ -1682,11 +2787,17 @@ export class BabylonVoxelArena {
     }
 
     const jump = !this.promptOpen && this.keysPressed.has('Space');
+    const sprint =
+      !this.promptOpen &&
+      (this.keysPressed.has('ShiftLeft') || this.keysPressed.has('ShiftRight'));
+    const crouch = !this.promptOpen && this.keysPressed.has('KeyC');
     this.callbacks.onSendInput(
       {
         moveX,
         moveZ,
         jump,
+        sprint,
+        crouch,
         yaw: this.yaw,
         pitch: this.pitch,
         activeSlot: this.activeSlot,
@@ -1701,7 +2812,7 @@ export class BabylonVoxelArena {
     const origin: Vec3 = localRig
       ? {
           x: localRig.currentPos.x,
-          y: localRig.currentPos.y + 1.48,
+          y: localRig.currentPos.y + this.eyeHeight,
           z: localRig.currentPos.z,
         }
       : { x: camPos.x, y: camPos.y, z: camPos.z };
@@ -1800,7 +2911,13 @@ export class BabylonVoxelArena {
       else if (e.code === 'Digit3') this.selectSlot(2);
       else if (e.code === 'Digit4') this.selectSlot(3);
       else if (e.code === 'KeyG' || e.code === 'KeyQ') this.callbacks.onDropItem();
-      else if (e.code === 'KeyE') this.callbacks.onPickupItem();
+      else if (e.code === 'KeyE') {
+        if (this.nearbyZiplineId) {
+          this.callbacks.onUseZipline?.(this.nearbyZiplineId);
+        } else {
+          this.callbacks.onPickupItem();
+        }
+      }
       else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
         e.preventDefault();
         this.callbacks.onOpenPrompt();
@@ -1832,7 +2949,10 @@ export class BabylonVoxelArena {
     };
 
     const onPointerLockChange = () => {
+      const locked = document.pointerLockElement === this.canvas;
+      this.canvas.style.cursor = locked ? 'none' : '';
       resetMouseTracking();
+      this.callbacks.onPointerLockChange?.(locked);
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -1843,12 +2963,13 @@ export class BabylonVoxelArena {
       }
 
       if (document.pointerLockElement === this.canvas) {
+        const dy = this.invertY ? -e.movementY : e.movementY;
         const next = applyPointerLookDelta(
           this.yaw,
           this.pitch,
           e.movementX,
-          e.movementY,
-          0.0026,
+          dy,
+          0.0026 * this.lookSensitivity,
         );
         this.yaw = next.yaw;
         this.pitch = next.pitch;
@@ -1869,7 +2990,7 @@ export class BabylonVoxelArena {
           dx = e.movementX;
           dy = e.movementY;
         }
-        const next = applyPointerLookDelta(this.yaw, this.pitch, dx, dy, 0.0034);
+        const next = applyPointerLookDelta(this.yaw, this.pitch, dx, dy, 0.0034 * this.lookSensitivity);
         this.yaw = next.yaw;
         this.pitch = next.pitch;
       }
@@ -1979,6 +3100,31 @@ export class BabylonVoxelArena {
       r.rig.dispose();
     }
     this.playerRigs.clear();
+    this.bloomPipeline?.dispose();
+    this.bloomPipeline = null;
+    this.shoreFoamMesh?.dispose();
+    this.shoreFoamMesh = null;
+    this.shoreFoamMat?.dispose(true, true);
+    this.shoreFoamMat = null;
+    this.shoreFoamTexture?.dispose();
+    this.shoreFoamTexture = null;
+    this.waterNormalTexture?.dispose();
+    this.waterNormalTexture = null;
+    this.ziplineGroup?.dispose(false, true);
+    this.ziplineGroup = null;
+    audioDirector.setOccluder(null);
+    for (const s of this.shockwaves) {
+      s.mesh.dispose();
+      s.mat.dispose();
+    }
+    this.shockwaves.length = 0;
+    for (const d of this.decals) {
+      d.mesh.dispose();
+      d.mat.dispose(false, false);
+    }
+    this.decals.length = 0;
+    this.scorchTexture?.dispose();
+    this.scorchTexture = null;
     this.scene.dispose();
     this.engine.dispose();
   }

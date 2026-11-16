@@ -22,6 +22,8 @@ import {
   type EventCyclePhase,
   type EventCycleState,
   type InventorySlotItem,
+  type IslandMeta,
+  type IslandZipline,
   type KillfeedEntry,
   type LootDropState,
   type MapEventComponent,
@@ -51,6 +53,7 @@ import {
   createProceduralIsland,
   findSafeSpawnPositions,
   getGroundVoxelY,
+  isNearLadder,
   overlapsSolid,
   raycastVoxels,
   resolvePlayerMovement,
@@ -104,6 +107,15 @@ interface ServerPlayer extends PlayerNetState {
   grappleTimerSec: number;
   grappleMode: 'pull_self' | 'pull_target' | null;
   grappleTargetId: string | null;
+  sprint: boolean;
+  jumpHeld: boolean;
+  crouchHeld: boolean;
+  slideTimerSec: number;
+  slideCooldownSec: number;
+  slideDirX: number;
+  slideDirZ: number;
+  mantleCooldownSec: number;
+  ziplineT: number;
   promptSessionId: string | null;
   promptOpenedAt: number | null;
   promptOpenWindowStart: number;
@@ -135,6 +147,7 @@ interface GameRoom {
   targetPlayers: number;
   fillWithBots: boolean;
   grid: VoxelGrid;
+  ziplines: IslandZipline[];
   deltas: VoxelDelta[];
   pendingTickDeltas: VoxelDelta[];
   players: Map<string, ServerPlayer>;
@@ -421,6 +434,7 @@ export class RoomManager {
       targetPlayers,
       fillWithBots,
       grid: new VoxelGrid(1, 1, 1),
+    ziplines: [],
       deltas: [],
       pendingTickDeltas: [],
       players: new Map(),
@@ -634,6 +648,13 @@ export class RoomManager {
       activeSlot: 0,
       heat: 0,
       overheatedUntil: 0,
+      stamina: 100,
+      sprinting: false,
+      crouching: false,
+      sliding: false,
+      slideCooldownSec: 0,
+      climbing: false,
+      ziplineRouteId: null,
       isTypingPrompt: false,
       canForgeWeapon: false,
       weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
@@ -663,6 +684,14 @@ export class RoomManager {
       promptOpenCount: 0,
       feedbackWindowStart: 0,
       feedbackCount: 0,
+      sprint: false,
+      jumpHeld: false,
+      crouchHeld: false,
+      slideTimerSec: 0,
+      slideDirX: 0,
+      slideDirZ: 0,
+      mantleCooldownSec: 0,
+      ziplineT: 0,
     };
   }
 
@@ -683,7 +712,9 @@ export class RoomManager {
       room.contentPool = null;
       console.warn('[Pool] falha ao montar arsenal da sala:', (err as Error).message);
     }
-    room.grid = createProceduralIsland(room.seed, dimX, dimY, dimZ);
+    const islandMeta: IslandMeta = { ziplines: [] };
+    room.grid = createProceduralIsland(room.seed, dimX, dimY, dimZ, islandMeta);
+    room.ziplines = islandMeta.ziplines;
     room.deltas = [];
     room.pendingTickDeltas = [];
     room.projectiles = [];
@@ -738,6 +769,22 @@ export class RoomManager {
       p.grappleTargetId = null;
       p.burnUntil = 0;
       p.freezeUntil = 0;
+      p.stamina = 100;
+      p.sprinting = false;
+      p.crouching = false;
+      p.sliding = false;
+      p.slideCooldownSec = 0;
+      p.slideTimerSec = 0;
+      p.climbing = false;
+      p.ziplineRouteId = null;
+      p.ziplineT = 0;
+      p.sprint = false;
+      p.crouchHeld = false;
+      p.jumpHeld = false;
+      p.jumpQueued = false;
+      p.mantleCooldownSec = 0;
+      p.slideDirX = 0;
+      p.slideDirZ = 0;
     }
 
     if (room.fillWithBots) {
@@ -788,6 +835,13 @@ export class RoomManager {
       activeSlot: 0,
       heat: 0,
       overheatedUntil: 0,
+      stamina: 100,
+      sprinting: false,
+      crouching: false,
+      sliding: false,
+      slideCooldownSec: 0,
+      climbing: false,
+      ziplineRouteId: null,
       isTypingPrompt: false,
       canForgeWeapon: false,
       weaponCooldownSec: 6 + Math.random() * 5,
@@ -818,6 +872,14 @@ export class RoomManager {
       promptOpenCount: 0,
       feedbackWindowStart: 0,
       feedbackCount: 0,
+      sprint: false,
+      jumpHeld: false,
+      crouchHeld: false,
+      slideTimerSec: 0,
+      slideDirX: 0,
+      slideDirZ: 0,
+      mantleCooldownSec: 0,
+      ziplineT: 0,
     };
     room.players.set(botId, bot);
     return bot;
@@ -896,6 +958,9 @@ export class RoomManager {
           player.moveX = 0;
           player.moveZ = 0;
           player.jumpQueued = false;
+          player.jumpHeld = false;
+          player.sprint = false;
+          player.crouchHeld = false;
           player.isTypingPrompt = true;
           break;
         }
@@ -903,7 +968,11 @@ export class RoomManager {
         player.pitch = Math.max(-1.48, Math.min(1.48, Number(p.pitch) || 0));
         player.moveX = Math.max(-1, Math.min(1, Number(p.moveX) || 0));
         player.moveZ = Math.max(-1, Math.min(1, Number(p.moveZ) || 0));
-        if (p.jump) player.jumpQueued = true;
+        const jumpNow = Boolean(p.jump);
+        if (jumpNow && !player.jumpHeld) player.jumpQueued = true;
+        player.jumpHeld = jumpNow;
+        player.sprint = Boolean(p.sprint);
+        player.crouchHeld = Boolean(p.crouch);
         if (Number.isInteger(p.activeSlot) && p.activeSlot >= 0 && p.activeSlot < 4) {
           player.activeSlot = p.activeSlot;
         }
@@ -913,6 +982,7 @@ export class RoomManager {
 
       case 'player:action': {
         if (!player.alive || room.phase !== 'playing' || player.prompt) return;
+        if (player.ziplineRouteId) return;
         this.performActiveItem(room, player, msg.payload?.origin, msg.payload?.dir);
         break;
       }
@@ -926,6 +996,24 @@ export class RoomManager {
       case 'player:pickup': {
         if (!player.alive || room.phase !== 'playing' || player.prompt) return;
         this.pickupNearestItem(room, player);
+        break;
+      }
+
+      case 'player:zipline': {
+        if (!player.alive || room.phase !== 'playing' || player.prompt) return;
+        this.startZipline(
+          room,
+          player,
+          String(msg.payload?.routeId ?? '').slice(0, 32),
+        );
+        break;
+      }
+
+      case 'ping': {
+        const t = Number(msg.payload?.t);
+        if (Number.isFinite(t)) {
+          this.sendToPlayer(player, { type: 'pong', payload: { t } });
+        }
         break;
       }
 
@@ -1832,10 +1920,35 @@ export class RoomManager {
     if (victim.isBot && attacker && attacker.id !== victim.id) {
       notifyBotDamaged(victim.botBrain, attacker.id);
     }
+    if (!victim.isBot && victim.ws && amount > 0) {
+      this.sendToPlayer(victim, {
+        type: 'fx:damage',
+        payload: {
+          amount: Math.round(amount),
+          hp: victim.hp,
+          from:
+            attacker && attacker.id !== victim.id
+              ? {
+                  x: attacker.position.x,
+                  y: attacker.position.y + 1,
+                  z: attacker.position.z,
+                }
+              : null,
+        },
+      });
+    }
     if (attacker && attacker.id !== victim.id && !attacker.isBot && attacker.ws && amount >= 3) {
       this.sendToPlayer(attacker, {
         type: 'fx:hit',
-        payload: { damage: Math.round(amount), heavy: amount >= 28 || victim.hp <= 0 },
+        payload: {
+          damage: Math.round(amount),
+          heavy: amount >= 28 || victim.hp <= 0,
+          position: {
+            x: victim.position.x,
+            y: victim.position.y + 1,
+            z: victim.position.z,
+          },
+        },
       });
     }
     if (victim.hp <= 0) {
@@ -1977,6 +2090,64 @@ export class RoomManager {
         });
       }
     }
+  }
+
+  private startZipline(
+    room: GameRoom,
+    player: ServerPlayer,
+    routeId: string,
+  ): void {
+    if (player.ziplineRouteId) return;
+    const route = room.ziplines.find((r) => r.id === routeId);
+    if (!route) return;
+    const distance = Math.hypot(
+      player.position.x - route.from.x,
+      player.position.y - route.from.y,
+      player.position.z - route.from.z,
+    );
+    if (distance > 3.6) return;
+    player.ziplineRouteId = route.id;
+    player.ziplineT = 0;
+    player.position = { ...route.from };
+    player.velocity = { x: 0, y: 0, z: 0 };
+    player.sprinting = false;
+    player.crouching = false;
+    player.sliding = false;
+    player.climbing = false;
+  }
+
+  private tryMantle(
+    room: GameRoom,
+    player: ServerPlayer,
+    dirX: number,
+    dirZ: number,
+  ): boolean {
+    const len = Math.hypot(dirX, dirZ);
+    if (len < 0.001) return false;
+    const nx = dirX / len;
+    const nz = dirZ / len;
+    for (let lift = 0.65; lift <= 2.3; lift += VOXEL_SIZE) {
+      const tx = player.position.x + nx * 0.95;
+      const tz = player.position.z + nz * 0.95;
+      const ty = player.position.y + lift;
+      if (overlapsSolid(room.grid, tx, ty, tz, 0.34, 1.65)) continue;
+      const top = getGroundVoxelY(
+        room.grid,
+        Math.max(0, Math.floor(tx / VOXEL_SIZE)),
+        Math.max(0, Math.floor(tz / VOXEL_SIZE)),
+      );
+      const surfaceY = (top + 1) * VOXEL_SIZE;
+      if (Math.abs(surfaceY - ty) > 0.55) continue;
+      player.position = { x: tx, y: ty + 0.02, z: tz };
+      player.velocity = { x: 0, y: 0, z: 0 };
+      player.stamina = Math.max(0, player.stamina - 12);
+      player.mantleCooldownSec = 0.55;
+      player.crouching = false;
+      player.sliding = false;
+      player.climbing = false;
+      return true;
+    }
+    return false;
   }
 
   private tickRoom(room: GameRoom, dt: number): void {
@@ -2170,10 +2341,12 @@ export class RoomManager {
         if (!player.alive) continue;
       }
 
-      // Movement physics
+      // Movement physics: sprint/crouch/slide/mantle, escada e tirolesa
+      player.slideCooldownSec = Math.max(0, player.slideCooldownSec - dt);
+      player.mantleCooldownSec = Math.max(0, player.mantleCooldownSec - dt);
+
       const weightPenalty = Math.max(0.65, 1 - Math.max(0, player.massKg - 77) * 0.009);
       const freezeMult = now < player.freezeUntil ? 0.55 : 1.0;
-      const moveSpeed = 7.4 * weightPenalty * freezeMult;
 
       const sinY = Math.sin(player.yaw);
       const cosY = Math.cos(player.yaw);
@@ -2185,30 +2358,183 @@ export class RoomManager {
       const wishX = forwardX * player.moveZ + rightX * player.moveX;
       const wishZ = forwardZ * player.moveZ + rightZ * player.moveX;
       const wishLen = Math.hypot(wishX, wishZ);
+      const speedNow = Math.hypot(player.velocity.x, player.velocity.z);
+      const wasInWater = player.position.y < effectiveWaterLevel - 0.15;
 
-      if (player.grappleTimerSec <= 0.05) {
-        const accel = wishLen > 0.01 ? 14 : 10;
-        const targetVx = wishLen > 0.01 ? (wishX / wishLen) * moveSpeed : 0;
-        const targetVz = wishLen > 0.01 ? (wishZ / wishLen) * moveSpeed : 0;
-        player.velocity.x += (targetVx - player.velocity.x) * Math.min(1, accel * dt);
-        player.velocity.z += (targetVz - player.velocity.z) * Math.min(1, accel * dt);
-      }
+      let grounded = false;
+      let inWater = wasInWater;
 
-      const { grounded, inWater } = resolvePlayerMovement(
-        room.grid,
-        player.position,
-        player.velocity,
-        dt,
-        0.34,
-        1.65,
-        gravity,
-        effectiveWaterLevel,
-      );
+      if (player.ziplineRouteId) {
+        const route = room.ziplines.find((r) => r.id === player.ziplineRouteId);
+        if (route) {
+          const dx = route.to.x - route.from.x;
+          const dy = route.to.y - route.from.y;
+          const dz = route.to.z - route.from.z;
+          const len = Math.hypot(dx, dy, dz) || 1;
+          player.ziplineT = Math.min(1, player.ziplineT + (dt * 10) / len);
+          const t = player.ziplineT;
+          const sag = Math.sin(Math.PI * t) * 1.1;
+          player.position.x = route.from.x + dx * t;
+          player.position.y = route.from.y + dy * t - sag;
+          player.position.z = route.from.z + dz * t;
+          player.velocity.x = (dx / len) * 10;
+          player.velocity.y = (dy / len) * 10;
+          player.velocity.z = (dz / len) * 10;
+          player.sprinting = false;
+          player.crouching = false;
+          player.sliding = false;
+          player.climbing = false;
+          player.stamina = Math.min(100, player.stamina + 10 * dt);
+          if (player.ziplineT >= 1) {
+            player.ziplineRouteId = null;
+            player.ziplineT = 0;
+            player.velocity.x *= 0.55;
+            player.velocity.z *= 0.55;
+            player.velocity.y = 2.4;
+          }
+        } else {
+          player.ziplineRouteId = null;
+          player.ziplineT = 0;
+        }
+        inWater = player.position.y < effectiveWaterLevel - 0.15;
+      } else {
+        let crouching = player.crouchHeld || player.sliding;
+        if (
+          !crouching &&
+          player.crouching &&
+          overlapsSolid(
+            room.grid,
+            player.position.x,
+            player.position.y,
+            player.position.z,
+            0.34,
+            1.65,
+          )
+        ) {
+          crouching = true;
+        }
 
-      if (player.jumpQueued) {
-        player.jumpQueued = false;
-        if (grounded || inWater) {
-          player.velocity.y = inWater ? 6.5 : hasLowGrav ? 10.5 : 8.8;
+        if (
+          player.crouchHeld &&
+          player.sprint &&
+          !player.sliding &&
+          player.slideCooldownSec <= 0 &&
+          player.stamina >= 8 &&
+          speedNow > 4.5 &&
+          !wasInWater
+        ) {
+          player.sliding = true;
+          player.slideTimerSec = 0.65;
+          player.slideCooldownSec = 1.4;
+          player.stamina = Math.max(0, player.stamina - 8);
+          player.slideDirX = player.velocity.x / Math.max(0.001, speedNow);
+          player.slideDirZ = player.velocity.z / Math.max(0.001, speedNow);
+          crouching = true;
+        }
+        if (player.sliding) {
+          player.slideTimerSec -= dt;
+          if (player.slideTimerSec <= 0) {
+            player.sliding = false;
+            player.velocity.x *= 0.75;
+            player.velocity.z *= 0.75;
+          }
+        }
+        player.crouching = crouching;
+
+        const slideActive = player.sliding;
+        let sprinting =
+          !slideActive &&
+          !player.crouching &&
+          player.sprint &&
+          wishLen > 0.01 &&
+          player.stamina > 0.5 &&
+          !wasInWater;
+        if (sprinting) {
+          player.stamina = Math.max(0, player.stamina - 3.2 * dt);
+          if (player.stamina <= 0) sprinting = false;
+        } else if (!slideActive) {
+          player.stamina = Math.min(100, player.stamina + 20 * dt);
+        }
+        player.sprinting = sprinting;
+
+        const speedMult = slideActive
+          ? 1
+          : sprinting
+            ? 1.42
+            : player.crouching
+              ? 0.5
+              : 1;
+        const moveSpeed = 7.4 * weightPenalty * freezeMult * speedMult;
+
+        if (slideActive) {
+          const slideSpeed =
+            (5.5 + 6.5 * Math.max(0, player.slideTimerSec / 0.65)) *
+            weightPenalty;
+          player.velocity.x = player.slideDirX * slideSpeed;
+          player.velocity.z = player.slideDirZ * slideSpeed;
+        } else if (player.grappleTimerSec <= 0.05) {
+          const accel = wishLen > 0.01 ? 14 : 10;
+          const targetVx = wishLen > 0.01 ? (wishX / wishLen) * moveSpeed : 0;
+          const targetVz = wishLen > 0.01 ? (wishZ / wishLen) * moveSpeed : 0;
+          player.velocity.x += (targetVx - player.velocity.x) * Math.min(1, accel * dt);
+          player.velocity.z += (targetVz - player.velocity.z) * Math.min(1, accel * dt);
+        }
+
+        const nearLadder =
+          !slideActive &&
+          Math.abs(player.moveZ) > 0.1 &&
+          isNearLadder(room.grid, player.position);
+        player.climbing = nearLadder;
+        if (player.climbing) player.sprinting = false;
+        let gravityForMove = gravity;
+        if (player.climbing) {
+          gravityForMove = 0;
+          player.velocity.y = player.moveZ > 0 ? 4.2 : -3.6;
+          const inv = 1 / Math.max(0.001, wishLen);
+          player.velocity.x = wishX * inv * 2.4;
+          player.velocity.z = wishZ * inv * 2.4;
+        }
+
+        if (
+          player.jumpQueued &&
+          player.mantleCooldownSec <= 0 &&
+          player.stamina >= 12 &&
+          wishLen > 0.01 &&
+          !player.climbing
+        ) {
+          if (this.tryMantle(room, player, wishX / wishLen, wishZ / wishLen)) {
+            player.jumpQueued = false;
+          }
+        }
+
+        const bodyHeight = player.sliding
+          ? 1.05
+          : player.crouching
+            ? 1.15
+            : 1.65;
+        const result = resolvePlayerMovement(
+          room.grid,
+          player.position,
+          player.velocity,
+          dt,
+          0.34,
+          bodyHeight,
+          gravityForMove,
+          effectiveWaterLevel,
+        );
+        grounded = result.grounded;
+        inWater = result.inWater;
+
+        if (player.jumpQueued) {
+          player.jumpQueued = false;
+          if (player.climbing) {
+            player.climbing = false;
+            player.velocity.y = 5.2;
+            player.velocity.x = -(wishX / Math.max(0.001, wishLen)) * 4;
+            player.velocity.z = -(wishZ / Math.max(0.001, wishLen)) * 4;
+          } else if (grounded || inWater) {
+            player.velocity.y = inWater ? 6.5 : hasLowGrav ? 10.5 : 8.8;
+          }
         }
       }
 
@@ -3031,7 +3357,15 @@ export class RoomManager {
         if (attacker && !attacker.isBot && attacker.ws) {
           this.sendToPlayer(attacker, {
             type: 'fx:hit',
-            payload: { damage: Math.round(pr.damage), heavy: ent.hp <= 0 || pr.damage >= 28 },
+            payload: {
+              damage: Math.round(pr.damage),
+              heavy: ent.hp <= 0 || pr.damage >= 28,
+              position: {
+                x: ent.position.x,
+                y: ent.position.y + 0.6,
+                z: ent.position.z,
+              },
+            },
           });
         }
         if (ent.hp <= 0) room.entities.splice(hitCreatureIdx, 1);
@@ -3331,6 +3665,13 @@ export class RoomManager {
       activeSlot: p.activeSlot,
       heat: p.heat,
       overheatedUntil: p.overheatedUntil,
+      stamina: p.stamina,
+      sprinting: p.sprinting,
+      crouching: p.crouching,
+      sliding: p.sliding,
+      slideCooldownSec: p.slideCooldownSec,
+      climbing: p.climbing,
+      ziplineRouteId: p.ziplineRouteId,
       isTypingPrompt: p.prompt !== null,
       canForgeWeapon: p.canForgeWeapon,
       weaponCooldownSec: Math.ceil(p.weaponCooldownSec),
