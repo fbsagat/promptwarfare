@@ -93,7 +93,7 @@ O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio
 
 ### `server/ledger.ts`
 
-Ledger append-only de prompts em SQLite (`node:sqlite`):
+Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend Postgres opcional para múltiplas instâncias (`PROMPT_LEDGER_BACKEND=postgres`, driver `pg` carregado dinamicamente):
 
 - tabela `prompt_events` com uma linha por fase (`opened`, `submitted`, `cancelled`, `timed_out`);
 - `session_id` correlaciona abertura, envio e abandono;

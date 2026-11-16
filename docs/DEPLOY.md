@@ -76,6 +76,25 @@ npm run ledger:prune -- --db /var/lib/prompt-warfare/prompt-ledger.db --days 90 
 
 `--redact-prompts` preserva os agregados (item, estratégia, cobertura) e apaga o texto bruto; sem ele, as linhas antigas de prompt e uso são removidas.
 
+### Ledger Postgres (múltiplas instâncias)
+
+O backend padrão continua SQLite. Para compartilhar o ledger entre instâncias:
+
+```bash
+npm install pg
+```
+
+```dotenv
+PROMPT_LEDGER_BACKEND=postgres
+PROMPT_LEDGER_POSTGRES_URL=postgres://user:pass@host:5432/promptwarfare
+```
+
+- As tabelas e índices são criados automaticamente no boot (`prompt_events` e `content_usage`).
+- `ledger:report`, `usage:report`, `loop:report`, `ledger:prune` e `/api/metrics` usam o mesmo backend configurado.
+- `--db` continua valendo apenas para SQLite.
+- O backend Postgres compartilha **telemetria**, não o estado das partidas: salas continuam em memória. Para rodar várias instâncias, use afinidade/sticky sessions por sala no proxy.
+- A troca de SQLite para Postgres não migra dados antigos automaticamente; exporte/importe com `sqlite3`/CSV ou comece um ledger novo.
+
 ### Hot reload do catálogo
 
 Com `CATALOG_WATCH=true` (padrão), o servidor observa `content/catalog/catalog.json` e troca o cache de forma atômica quando o arquivo muda. Se o JSON estiver inválido, a versão anterior continua em memória e o erro vai para o log.

@@ -70,9 +70,9 @@ import {
   type ContentPool,
 } from './contentPool.ts';
 import {
-  PromptLedger,
   type LedgerPhase,
   type LedgerPromptKind,
+  type LedgerSink,
   type PromptLedgerEvent,
 } from './ledger.ts';
 import {
@@ -246,10 +246,10 @@ function closestPointOnSegmentT(
 export class RoomManager {
   private rooms = new Map<string, GameRoom>();
   private readonly devEnabled: boolean;
-  private readonly ledger: PromptLedger | null;
+  private readonly ledger: LedgerSink | null;
   private usageWeights: Record<string, number> = {};
 
-  constructor(opts: { devEnabled?: boolean; ledger?: PromptLedger | null } = {}) {
+  constructor(opts: { devEnabled?: boolean; ledger?: LedgerSink | null } = {}) {
     this.devEnabled = opts.devEnabled ?? isServerDevEnabled();
     this.ledger = opts.ledger ?? null;
   }

@@ -84,10 +84,21 @@ export interface ContentUsageRow {
 
 const DEFAULT_DB_PATH = path.resolve(process.cwd(), 'data', 'prompt-ledger.db');
 
-type QueuedPromptEvent = PromptLedgerEvent & { createdAt: number };
-type QueuedUsageEvent = ContentUsageEvent & { createdAt: number };
+export type QueuedPromptEvent = PromptLedgerEvent & { createdAt: number };
+export type QueuedUsageEvent = ContentUsageEvent & { createdAt: number };
 
-export class PromptLedger {
+export interface LedgerSink {
+  record(event: PromptLedgerEvent): void;
+  recordUsage(event: ContentUsageEvent): void;
+  close(): void | Promise<void>;
+}
+
+export interface LedgerRuntime extends LedgerSink {
+  readPromptEvents(limit?: number, since?: number): Promise<PromptEventRow[]>;
+  readContentUsage(limit?: number, since?: number): Promise<ContentUsageRow[]>;
+}
+
+export class PromptLedger implements LedgerRuntime {
   private db: DatabaseSync;
   private readonly dbPath: string;
   private queue: QueuedPromptEvent[] = [];
@@ -296,6 +307,14 @@ export class PromptLedger {
       )
       .all(since, limit) as unknown as ContentUsageRow[];
     return rows.reverse();
+  }
+
+  async readPromptEvents(limit = 100000, since = 0): Promise<PromptEventRow[]> {
+    return this.getEvents(limit, since);
+  }
+
+  async readContentUsage(limit = 100000, since = 0): Promise<ContentUsageRow[]> {
+    return this.getUsage(limit, since);
   }
 
   close(): void {

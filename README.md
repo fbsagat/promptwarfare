@@ -67,6 +67,8 @@ Copy-Item .env.example .env
 | `SERVE_CLIENT` | `true` | `false` deixa a VPS em modo API-only, sem entregar o frontend. |
 | `CORS_ORIGINS` | vazio | Origens permitidas, separadas por vírgula. Aceita `*` e curingas como `https://prompt-warfare-*.vercel.app`. Vazio = HTTP somente mesma origem. |
 | `PROMPT_LEDGER_DB_PATH` | `data/prompt-ledger.db` | Caminho do SQLite append-only de prompts. |
+| `PROMPT_LEDGER_BACKEND` | `sqlite` | `sqlite` ou `postgres` para múltiplas instâncias. |
+| `PROMPT_LEDGER_POSTGRES_URL` | vazio | URL do Postgres quando `PROMPT_LEDGER_BACKEND=postgres` (ou use `DATABASE_URL`). |
 | `CATALOG_WATCH` | `true` | Hot reload de `content/catalog/catalog.json`; `false` exige restart. |
 | `METRICS_WINDOW_DAYS` | `90` | Janela de agregação do snapshot de `/api/metrics`. |
 | `METRICS_TOKEN` | vazio | Token opcional exigido em `X-Metrics-Token`; vazio expõe apenas agregados públicos. |

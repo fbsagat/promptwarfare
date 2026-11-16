@@ -14,7 +14,7 @@ import {
   stopCatalogWatcher,
 } from './server/catalog.ts';
 import { isOriginAllowed, parseAllowedOrigins } from './server/httpCors.ts';
-import { PromptLedger, readContentUsage, readPromptEvents } from './server/ledger.ts';
+import { createLedgerRuntime } from './server/ledgerFactory.ts';
 import { buildLoopReport } from './server/loopReport.ts';
 import { buildMetricsSnapshot, type MetricsSnapshot } from './server/metrics.ts';
 import { aggregateUsageWeights } from './server/contentPool.ts';
@@ -52,9 +52,11 @@ async function startServer() {
 
   app.use(express.json({ limit: '1mb' }));
 
-  const ledger = new PromptLedger();
+  const ledger = await createLedgerRuntime();
   const roomManager = new RoomManager({ ledger });
-  process.once('exit', () => ledger.close());
+  process.once('exit', () => {
+    void ledger.close();
+  });
 
   const metricsWindowDays = Math.max(
     1,
@@ -64,11 +66,11 @@ async function startServer() {
   let metricsLoop: ReturnType<typeof buildLoopReport> | null = null;
   let metricsCache: MetricsSnapshot | null = null;
 
-  const refreshMetrics = (): void => {
+  const refreshMetrics = async (): Promise<void> => {
     try {
       const since = Date.now() - metricsWindowDays * 24 * 60 * 60 * 1000;
-      const prompts = readPromptEvents(ledger.getPath(), 100000, since);
-      const usage = readContentUsage(ledger.getPath(), 100000, since);
+      const prompts = await ledger.readPromptEvents(100000, since);
+      const usage = await ledger.readContentUsage(100000, since);
       metricsLoop = buildLoopReport(prompts, usage, getCatalogVersion());
       roomManager.setUsageWeights(aggregateUsageWeights(usage));
       metricsCache = buildMetricsSnapshot({
@@ -83,8 +85,12 @@ async function startServer() {
     }
   };
 
-  setImmediate(refreshMetrics);
-  const metricsTimer = setInterval(refreshMetrics, 60_000);
+  setImmediate(() => {
+    void refreshMetrics();
+  });
+  const metricsTimer = setInterval(() => {
+    void refreshMetrics();
+  }, 60_000);
   metricsTimer.unref();
 
   if (process.env.CATALOG_WATCH !== 'false') {
@@ -98,7 +104,7 @@ async function startServer() {
       console.log(
         `[Catálogo] recarga manual: ${result.version} (${result.weapons} armas, ${result.events} eventos)`,
       );
-      refreshMetrics();
+      void refreshMetrics();
     } catch (err) {
       console.warn(
         `[Catálogo] recarga manual falhou; mantendo a versão anterior: ${(err as Error).message}`,
@@ -123,12 +129,12 @@ async function startServer() {
     });
   });
 
-  app.get('/api/metrics', (req, res) => {
+  app.get('/api/metrics', async (req, res) => {
     if (metricsToken && req.headers['x-metrics-token'] !== metricsToken) {
       res.status(401).json({ error: 'Métricas protegidas.' });
       return;
     }
-    if (!metricsLoop) refreshMetrics();
+    if (!metricsLoop) await refreshMetrics();
     const snapshot = metricsLoop
       ? buildMetricsSnapshot({
           loop: metricsLoop,
@@ -197,7 +203,7 @@ async function startServer() {
     clearInterval(metricsTimer);
     stopCatalogWatcher();
     process.removeListener('SIGHUP', reloadCatalogNow);
-    ledger.close();
+    void ledger.close();
     wss.close();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
