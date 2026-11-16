@@ -51,6 +51,8 @@ Tratadas em `RoomManager.handleClientMessage`:
 
 `DevActionPayload` aceita: `toggle_god_mode`, `toggle_infinite_sandbox`, `toggle_freeze_bots`, `unlock_forge`, `refill_player`, `quick_forge`, `win_event_raffle`, `trigger_event`, `clear_events`, `teleport_center`, `spawn_bot`, `kill_bots` e `force_restart`.
 
+`content:feedback` só aceita `itemId` existente no catálogo e do `kind` correspondente, com limite de 10 eventos por 10 s. `prompt:open` aceita no máximo 12 aberturas por 10 s por jogador.
+
 O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindicar e 20s de escrita; a forja tem 20s de escrita. Se o cliente travar, o servidor expira e limpa o estado sozinho. Enquanto escreve, o jogador fica parado e vulnerável; movimento e ações são rejeitados.
 
 ## Servidor → cliente
@@ -73,7 +75,7 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
 
-Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração.
+Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala.
 
 ## Códigos de erro
 

@@ -765,8 +765,8 @@ export default function App() {
           onSelectSlot={(slot) => arenaRef.current?.selectSlot(slot)}
           onOpenWeaponPrompt={() => openWeaponPrompt()}
           onOpenEventPrompt={() => openEventPrompt()}
-          onFeedback={(itemId, rating) =>
-            sendWs({ type: 'content:feedback', payload: { itemId, rating, kind: 'weapon' } })
+          onFeedback={(itemId, rating, kind = 'weapon') =>
+            sendWs({ type: 'content:feedback', payload: { itemId, rating, kind } })
           }
         />
       )}

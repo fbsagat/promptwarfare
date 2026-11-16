@@ -1,5 +1,6 @@
 {
-  "version": "2026-11-16.1",
+  "schemaVersion": 2,
+  "version": "2026-11-16.2",
   "weapons": [
     {
       "id": "wpn_pistol_standard",
@@ -22,6 +23,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_standard",
         "name": "Pistola Padrão",
@@ -336,6 +339,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_ice",
         "name": "Pistola de Gelo",
@@ -650,6 +655,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_fire",
         "name": "Pistola de Fogo",
@@ -964,6 +971,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_toxic",
         "name": "Pistola de Ácido",
@@ -1279,6 +1288,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_void",
         "name": "Pistola do Vazio",
@@ -1725,6 +1736,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_pistol_electric",
         "name": "Pistola de Choque",
@@ -2034,6 +2047,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_standard",
         "name": "Rifle Padrão",
@@ -2476,6 +2491,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_ice",
         "name": "Rifle de Gelo",
@@ -2918,6 +2935,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_fire",
         "name": "Rifle de Fogo",
@@ -3360,6 +3379,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_toxic",
         "name": "Rifle de Ácido",
@@ -3803,6 +3824,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_void",
         "name": "Rifle do Vazio",
@@ -4249,6 +4272,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_rifle_electric",
         "name": "Rifle de Choque",
@@ -4687,6 +4712,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_standard",
         "name": "Submetralhadora Padrão",
@@ -5002,6 +5029,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_ice",
         "name": "Submetralhadora de Gelo",
@@ -5317,6 +5346,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_fire",
         "name": "Submetralhadora de Fogo",
@@ -5632,6 +5663,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_toxic",
         "name": "Submetralhadora de Ácido",
@@ -5948,6 +5981,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_void",
         "name": "Submetralhadora do Vazio",
@@ -6395,6 +6430,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_smg_electric",
         "name": "Submetralhadora de Choque",
@@ -6705,6 +6742,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_standard",
         "name": "Escopeta Padrão",
@@ -7112,6 +7151,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_ice",
         "name": "Escopeta de Gelo",
@@ -7519,6 +7560,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_fire",
         "name": "Escopeta de Fogo",
@@ -7926,6 +7969,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_toxic",
         "name": "Escopeta de Ácido",
@@ -8334,6 +8379,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_void",
         "name": "Escopeta do Vazio",
@@ -8781,6 +8828,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_shotgun_electric",
         "name": "Escopeta de Choque",
@@ -9183,6 +9232,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_standard",
         "name": "Rifle de Precisão Padrão",
@@ -9658,6 +9709,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_ice",
         "name": "Rifle de Precisão de Gelo",
@@ -10133,6 +10186,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_fire",
         "name": "Rifle de Precisão de Fogo",
@@ -10608,6 +10663,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_toxic",
         "name": "Rifle de Precisão de Ácido",
@@ -11084,6 +11141,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_void",
         "name": "Rifle de Precisão do Vazio",
@@ -11531,6 +11590,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_sniper_electric",
         "name": "Rifle de Precisão de Choque",
@@ -12002,6 +12063,8 @@
         "fx:weapon:standard",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_standard",
         "name": "Lançador Padrão",
@@ -12652,6 +12715,8 @@
         "fx:weapon:ice",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_ice",
         "name": "Lançador de Gelo",
@@ -13302,6 +13367,8 @@
         "fx:weapon:fire",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_fire",
         "name": "Lançador de Fogo",
@@ -13952,6 +14019,8 @@
         "fx:weapon:toxic",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_toxic",
         "name": "Lançador de Ácido",
@@ -14603,6 +14672,8 @@
         "fx:weapon:void",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_void",
         "name": "Lançador do Vazio",
@@ -15053,6 +15124,8 @@
         "fx:weapon:electric",
         "sfx:forge"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "id": "wpn_launcher_electric",
         "name": "Lançador de Choque",
@@ -15698,6 +15771,8 @@
         "fx:event:weather",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
@@ -15734,6 +15809,8 @@
         "fx:event:weather",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
@@ -15770,6 +15847,8 @@
         "fx:event:weather",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
@@ -15806,6 +15885,8 @@
         "fx:event:weather",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
@@ -15842,6 +15923,8 @@
         "fx:event:weather",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
@@ -15878,6 +15961,8 @@
         "fx:event:terrain",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
@@ -15914,6 +15999,8 @@
         "fx:event:terrain",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
@@ -15950,6 +16037,8 @@
         "fx:event:terrain",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
@@ -15986,6 +16075,8 @@
         "fx:event:terrain",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
@@ -16023,6 +16114,8 @@
         "fx:event:entity",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
@@ -16407,6 +16500,8 @@
         "fx:event:entity",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
@@ -16783,6 +16878,8 @@
         "fx:event:entity",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
@@ -17167,6 +17264,8 @@
         "fx:event:entity",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
@@ -17551,6 +17650,8 @@
         "fx:event:supply",
         "waypoint:event"
       ],
+      "status": "approved",
+      "provenance": "procedural",
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {

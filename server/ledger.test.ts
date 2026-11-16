@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PromptLedger } from './ledger.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { PromptLedger, readPromptEvents } from './ledger.ts';
 import {
   buildDemandReport,
   renderDemandReportMarkdown,
@@ -119,6 +122,155 @@ test('PromptLedger records content usage separately from prompt events', () => {
     assert.equal(usage[1].target_ref, 'p2');
     assert.match(usage[0].metadata_json ?? '', /budgetUsed/);
     assert.equal(ledger.getEvents().length, 0);
+  } finally {
+    ledger.close();
+  }
+});
+
+test('readPromptEvents returns the newest rows, not the oldest window', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-ledger-'));
+  const dbPath = path.join(dir, 'ledger.db');
+  const ledger = new PromptLedger(dbPath);
+  try {
+    for (let i = 0; i < 3; i++) {
+      ledger.record({
+        sessionId: `s${i}`,
+        actorType: 'human',
+        actorRef: 'p1',
+        roomId: 'R1',
+        matchId: 'M1',
+        kind: 'weapon',
+        phase: 'opened',
+        catalogVersion: VERSION,
+      });
+    }
+    ledger.flush();
+  } finally {
+    ledger.close();
+  }
+
+  try {
+    const rows = readPromptEvents(dbPath, 2);
+    assert.equal(rows.length, 2);
+    assert.deepEqual(
+      rows.map((row) => row.session_id),
+      ['s1', 's2'],
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('demand report treats partial coverage as a gap', () => {
+  const ledger = new PromptLedger(':memory:');
+  try {
+    const base = {
+      actorType: 'human' as const,
+      actorRef: 'p1',
+      roomId: 'ROOM1',
+      matchId: 'm1',
+      catalogVersion: VERSION,
+      kind: 'weapon' as const,
+      phase: 'submitted' as const,
+      budgetUsed: 60,
+      wasClamped: false,
+    };
+    ledger.record({
+      ...base,
+      sessionId: 'ok',
+      prompt: 'Pistola de gelo',
+      itemId: 'wpn_pistol_ice',
+      strategy: 'alias',
+    });
+    ledger.record({
+      ...base,
+      sessionId: 'partial',
+      prompt: 'Arma de gelo e fogo',
+      itemId: 'wpn_pistol_ice',
+      strategy: 'partial',
+    });
+    ledger.flush();
+
+    const report = buildDemandReport(ledger.getEvents(), VERSION);
+    assert.equal(report.totals.submitted, 2);
+    assert.equal(report.totals.partial, 1);
+    assert.equal(report.totals.gaps, 1);
+    assert.equal(report.totals.coverageRate, 0.5);
+    assert.equal(report.gaps[0].strategy, 'partial');
+    assert.match(renderDemandReportMarkdown(report), /Cobertura duvidosa/);
+  } finally {
+    ledger.close();
+  }
+});
+
+test('PromptLedger records pool hash and pool misses separately', () => {
+  const ledger = new PromptLedger(':memory:');
+  try {
+    ledger.record({
+      sessionId: 's1',
+      actorType: 'human',
+      actorRef: 'p1',
+      roomId: 'R1',
+      matchId: 'M1',
+      kind: 'weapon',
+      phase: 'submitted',
+      prompt: 'Bazuca do Vazio',
+      itemId: 'wpn_launcher_fire',
+      strategy: 'partial',
+      catalogVersion: VERSION,
+      poolHash: 'pool-abc',
+      poolMiss: true,
+    });
+    ledger.flush();
+    const rows = ledger.getEvents();
+    assert.equal(rows[0].pool_hash, 'pool-abc');
+    assert.equal(rows[0].pool_miss, 1);
+  } finally {
+    ledger.close();
+  }
+});
+
+test('demand report separates pool misses from catalog gaps', () => {
+  const ledger = new PromptLedger(':memory:');
+  try {
+    const base = {
+      actorType: 'human' as const,
+      actorRef: 'p1',
+      roomId: 'ROOM1',
+      matchId: 'm1',
+      catalogVersion: VERSION,
+      kind: 'weapon' as const,
+      phase: 'submitted' as const,
+      budgetUsed: 60,
+      wasClamped: false,
+    };
+    ledger.record({
+      ...base,
+      sessionId: 'ok',
+      prompt: 'Pistola de gelo',
+      itemId: 'wpn_pistol_ice',
+      strategy: 'alias',
+    });
+    ledger.record({
+      ...base,
+      sessionId: 'pool',
+      prompt: 'Bazuca do Vazio',
+      itemId: 'wpn_launcher_fire',
+      strategy: 'partial',
+      poolHash: 'pool-abc',
+      poolMiss: true,
+    });
+    ledger.flush();
+
+    const report = buildDemandReport(ledger.getEvents(), VERSION);
+    assert.equal(report.totals.submitted, 2);
+    assert.equal(report.totals.covered, 2);
+    assert.equal(report.totals.gaps, 0);
+    assert.equal(report.totals.partial, 0);
+    assert.equal(report.totals.poolMisses, 1);
+    assert.equal(report.totals.poolMissRate, 0.5);
+    assert.equal(report.poolMisses[0].canonicalKey, 'bazuca|vazio');
+    assert.match(renderDemandReportMarkdown(report), /Fora do arsenal/);
   } finally {
     ledger.close();
   }

@@ -19,13 +19,15 @@ const dbPath =
   path.resolve(ROOT, 'data', 'prompt-ledger.db');
 const outDir = path.resolve(ROOT, argValue('--out') ?? path.join('content', 'reports'));
 const includeBots = process.argv.includes('--include-bots');
+const days = Math.max(0, Number(argValue('--days') ?? 0));
+const since = days > 0 ? Date.now() - days * 24 * 60 * 60 * 1000 : 0;
 
 if (!fs.existsSync(dbPath)) {
   console.error(`Ledger não encontrado em ${dbPath}.`);
   process.exit(1);
 }
 
-const rows = readContentUsage(dbPath);
+const rows = readContentUsage(dbPath, 100000, since);
 let catalogVersion = '';
 try {
   catalogVersion = getCatalogVersion();

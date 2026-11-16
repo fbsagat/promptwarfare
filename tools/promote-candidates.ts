@@ -59,6 +59,8 @@ fs.writeFileSync(
 console.log(`Catálogo publicado como ${version}.`);
 console.log(`Promovidos: ${result.promoted.length}`);
 for (const id of result.promoted) console.log(`  + ${id}`);
+console.log(`Aliases mesclados em itens existentes: ${result.merged.length}`);
+for (const id of result.merged) console.log(`  ~ ${id}`);
 if (result.skipped.length > 0) {
   console.log('Ignorados:');
   for (const skip of result.skipped) console.log(`  - ${skip.id}: ${skip.reason}`);

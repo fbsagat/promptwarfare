@@ -24,6 +24,8 @@ export interface PromptLedgerEvent {
   wasClamped?: boolean | null;
   elapsedMs?: number | null;
   reason?: LedgerReason;
+  poolHash?: string | null;
+  poolMiss?: boolean | null;
 }
 
 export interface PromptEventRow {
@@ -46,6 +48,8 @@ export interface PromptEventRow {
   was_clamped: number | null;
   elapsed_ms: number | null;
   reason: string | null;
+  pool_hash: string | null;
+  pool_miss: number | null;
 }
 
 export type ContentUsageRole = 'equip' | 'kill' | 'damage' | 'survival' | 'event' | 'feedback';
@@ -126,11 +130,14 @@ export class PromptLedger {
         budget_used REAL,
         was_clamped INTEGER,
         elapsed_ms INTEGER,
-        reason TEXT
+        reason TEXT,
+        pool_hash TEXT,
+        pool_miss INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_prompt_events_actor ON prompt_events(actor_type, phase, created_at);
       CREATE INDEX IF NOT EXISTS idx_prompt_events_canonical ON prompt_events(canonical_key);
       CREATE INDEX IF NOT EXISTS idx_prompt_events_item ON prompt_events(item_id);
+      CREATE INDEX IF NOT EXISTS idx_prompt_events_created ON prompt_events(created_at);
 
       CREATE TABLE IF NOT EXISTS content_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,7 +155,19 @@ export class PromptLedger {
       );
       CREATE INDEX IF NOT EXISTS idx_content_usage_item ON content_usage(item_id, role, created_at);
       CREATE INDEX IF NOT EXISTS idx_content_usage_match ON content_usage(match_id, actor_type);
+      CREATE INDEX IF NOT EXISTS idx_content_usage_created ON content_usage(created_at);
     `);
+    this.ensureColumn('prompt_events', 'pool_hash', 'TEXT');
+    this.ensureColumn('prompt_events', 'pool_miss', 'INTEGER');
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all() as Array<{ name: string }>;
+    if (!columns.some((entry) => entry.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   getPath(): string {
@@ -188,8 +207,8 @@ export class PromptLedger {
       INSERT INTO prompt_events
         (created_at, session_id, actor_type, actor_ref, room_id, match_id, kind, phase,
          prompt, normalized_prompt, canonical_key, item_id, strategy, catalog_version,
-         budget_used, was_clamped, elapsed_ms, reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         budget_used, was_clamped, elapsed_ms, reason, pool_hash, pool_miss)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const usageStmt = this.db.prepare(`
       INSERT INTO content_usage
@@ -225,6 +244,12 @@ export class PromptLedger {
               : 0,
           event.elapsedMs ?? null,
           event.reason ?? null,
+          event.poolHash ?? null,
+          event.poolMiss === null || event.poolMiss === undefined
+            ? null
+            : event.poolMiss
+              ? 1
+              : 0,
         );
       }
       for (const usage of usages) {
@@ -253,18 +278,24 @@ export class PromptLedger {
     }
   }
 
-  getEvents(limit = 5000): PromptEventRow[] {
+  getEvents(limit = 5000, since = 0): PromptEventRow[] {
     this.flush();
-    return this.db
-      .prepare('SELECT * FROM prompt_events ORDER BY id ASC LIMIT ?')
-      .all(limit) as unknown as PromptEventRow[];
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM prompt_events WHERE created_at >= ? ORDER BY id DESC LIMIT ?',
+      )
+      .all(since, limit) as unknown as PromptEventRow[];
+    return rows.reverse();
   }
 
-  getUsage(limit = 10000): ContentUsageRow[] {
+  getUsage(limit = 10000, since = 0): ContentUsageRow[] {
     this.flush();
-    return this.db
-      .prepare('SELECT * FROM content_usage ORDER BY id ASC LIMIT ?')
-      .all(limit) as unknown as ContentUsageRow[];
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM content_usage WHERE created_at >= ? ORDER BY id DESC LIMIT ?',
+      )
+      .all(since, limit) as unknown as ContentUsageRow[];
+    return rows.reverse();
   }
 
   close(): void {
@@ -286,23 +317,37 @@ export function getPromptLedger(): PromptLedger {
   return sharedLedger;
 }
 
-export function readPromptEvents(dbPath: string, limit = 100000): PromptEventRow[] {
+export function readPromptEvents(
+  dbPath: string,
+  limit = 100000,
+  since = 0,
+): PromptEventRow[] {
   const db = new DatabaseSync(dbPath);
   try {
-    return db
-      .prepare('SELECT * FROM prompt_events ORDER BY id ASC LIMIT ?')
-      .all(limit) as unknown as PromptEventRow[];
+    const rows = db
+      .prepare(
+        'SELECT * FROM prompt_events WHERE created_at >= ? ORDER BY id DESC LIMIT ?',
+      )
+      .all(since, limit) as unknown as PromptEventRow[];
+    return rows.reverse();
   } finally {
     db.close();
   }
 }
 
-export function readContentUsage(dbPath: string, limit = 100000): ContentUsageRow[] {
+export function readContentUsage(
+  dbPath: string,
+  limit = 100000,
+  since = 0,
+): ContentUsageRow[] {
   const db = new DatabaseSync(dbPath);
   try {
-    return db
-      .prepare('SELECT * FROM content_usage ORDER BY id ASC LIMIT ?')
-      .all(limit) as unknown as ContentUsageRow[];
+    const rows = db
+      .prepare(
+        'SELECT * FROM content_usage WHERE created_at >= ? ORDER BY id DESC LIMIT ?',
+      )
+      .all(since, limit) as unknown as ContentUsageRow[];
+    return rows.reverse();
   } finally {
     db.close();
   }

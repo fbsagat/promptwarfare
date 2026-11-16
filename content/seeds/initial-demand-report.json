@@ -1,76 +1,22 @@
 {
-  "generatedAt": 1794838655435,
-  "catalogVersion": "2026-11-16.1",
+  "generatedAt": 1794845855163,
+  "catalogVersion": "2026-11-16.2",
   "totals": {
     "submitted": 177,
-    "uniqueIntents": 40,
-    "gaps": 6,
+    "covered": 98,
+    "uniqueIntents": 70,
+    "gaps": 42,
     "opened": 177,
     "abandoned": 0,
     "cancelled": 0,
     "timedOut": 0,
+    "partial": 67,
+    "poolMisses": 0,
+    "poolMissRate": 0,
     "seed": 354,
-    "coverageRate": 0.932
+    "coverageRate": 0.554
   },
   "topIntents": [
-    {
-      "canonicalKey": "chuva|meteoros",
-      "kind": "event",
-      "examples": [
-        "chuva de meteoros",
-        "meteoros de gelo",
-        "tempestade de meteoros e terremotos"
-      ],
-      "count": 11,
-      "itemId": "evt_weather_meteor_shower",
-      "strategy": "tags",
-      "lastSeenAt": 1794243757900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "nevasca",
-      "kind": "event",
-      "examples": [
-        "nevasca",
-        "terremoto de gelo",
-        "neve eterna",
-        "oceano congelado",
-        "nevasca de cristal"
-      ],
-      "count": 10,
-      "itemId": "evt_weather_blizzard",
-      "strategy": "tags",
-      "lastSeenAt": 1794244177900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "erupcao|vulcanica",
-      "kind": "event",
-      "examples": [
-        "erupção vulcânica",
-        "chuva de lava",
-        "arena de lava",
-        "vulcões gêmeos"
-      ],
-      "count": 9,
-      "itemId": "evt_terrain_volcano",
-      "strategy": "tags",
-      "lastSeenAt": 1794243937900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "gelo|pistola",
-      "kind": "weapon",
-      "examples": [
-        "pistola de gelo",
-        "arma de fogo e gelo"
-      ],
-      "count": 9,
-      "itemId": "wpn_pistol_ice",
-      "strategy": "tags",
-      "lastSeenAt": 1794238477900,
-      "gap": false
-    },
     {
       "canonicalKey": "escopeta|explosiva",
       "kind": "weapon",
@@ -81,105 +27,66 @@
       "count": 9,
       "itemId": "wpn_shotgun_fire",
       "strategy": "alias",
-      "lastSeenAt": 1794238178400,
-      "gap": false
+      "lastSeenAt": 1794245378126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 15.9
     },
     {
-      "canonicalKey": "laser|sniper",
-      "kind": "weapon",
-      "examples": [
-        "sniper laser",
-        "rifle de precisão"
-      ],
-      "count": 9,
-      "itemId": "wpn_sniper_standard",
-      "strategy": "alias",
-      "lastSeenAt": 1794236978900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "caixa|suprimentos",
+      "canonicalKey": "chuva|meteoros",
       "kind": "event",
       "examples": [
-        "caixa de suprimentos",
-        "queda de suprimentos",
-        "caixa de armas",
-        "kit médico",
-        "munição infinita"
+        "chuva de meteoros"
       ],
       "count": 8,
-      "itemId": "evt_supply_supply",
-      "strategy": "tags",
-      "lastSeenAt": 1794244417900,
-      "gap": false
+      "itemId": "evt_weather_meteor_shower",
+      "strategy": "alias",
+      "lastSeenAt": 1794246881126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 14.2
+    },
+    {
+      "canonicalKey": "gelo|pistola",
+      "kind": "weapon",
+      "examples": [
+        "pistola de gelo"
+      ],
+      "count": 8,
+      "itemId": "wpn_pistol_ice",
+      "strategy": "alias",
+      "lastSeenAt": 1794241481126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 14.1
     },
     {
       "canonicalKey": "plasma|rifle",
       "kind": "weapon",
       "examples": [
-        "rifle de plasma",
-        "rifle de drones"
+        "rifle de plasma"
       ],
-      "count": 8,
+      "count": 7,
       "itemId": "wpn_rifle_standard",
-      "strategy": "tags",
-      "lastSeenAt": 1794238537900,
-      "gap": false
+      "strategy": "partial",
+      "lastSeenAt": 1794241900626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 18.6
     },
     {
-      "canonicalKey": "acida|chuva",
+      "canonicalKey": "nevasca",
       "kind": "event",
       "examples": [
-        "chuva ácida",
-        "nevoeiro tóxico",
-        "floresta tóxica"
-      ],
-      "count": 7,
-      "itemId": "evt_weather_acid_rain",
-      "strategy": "tags",
-      "lastSeenAt": 1794243637900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "lobos|matilha",
-      "kind": "event",
-      "examples": [
-        "matilha de lobos",
-        "criaturas do vazio",
-        "apocalipse zumbi"
-      ],
-      "count": 7,
-      "itemId": "evt_entity_aggressive_nearest",
-      "strategy": "tags",
-      "lastSeenAt": 1794243458400,
-      "gap": false
-    },
-    {
-      "canonicalKey": "bazuca|misseis",
-      "kind": "weapon",
-      "examples": [
-        "bazuca de mísseis",
-        "arma de meteoros",
-        "lançador de plasma"
-      ],
-      "count": 7,
-      "itemId": "wpn_launcher_standard",
-      "strategy": "tags",
-      "lastSeenAt": 1794238897900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "terremoto",
-      "kind": "event",
-      "examples": [
-        "terremoto",
-        "terremoto apocalíptico"
+        "nevasca"
       ],
       "count": 6,
-      "itemId": "evt_weather_earthquake",
-      "strategy": "tags",
-      "lastSeenAt": 1794243997900,
-      "gap": false
+      "itemId": "evt_weather_blizzard",
+      "strategy": "alias",
+      "lastSeenAt": 1794247240126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 10.6
     },
     {
       "canonicalKey": "fogo|metralhadora",
@@ -191,62 +98,94 @@
       "count": 6,
       "itemId": "wpn_smg_fire",
       "strategy": "tags",
-      "lastSeenAt": 1794239197900,
-      "gap": false
+      "lastSeenAt": 1794246397626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 10.6
     },
     {
-      "canonicalKey": "arma|raio",
+      "canonicalKey": "laser|sniper",
       "kind": "weapon",
       "examples": [
-        "arma de raio",
-        "pistola elétrica",
-        "arco elétrico"
+        "sniper laser"
       ],
       "count": 6,
-      "itemId": "wpn_pistol_electric",
-      "strategy": "tags",
-      "lastSeenAt": 1794239017900,
-      "gap": false
+      "itemId": "wpn_sniper_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794242680126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 15.9
+    },
+    {
+      "canonicalKey": "erupcao|vulcanica",
+      "kind": "event",
+      "examples": [
+        "erupção vulcânica"
+      ],
+      "count": 5,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "alias",
+      "lastSeenAt": 1794247839626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 8.8
+    },
+    {
+      "canonicalKey": "terremoto",
+      "kind": "event",
+      "examples": [
+        "terremoto"
+      ],
+      "count": 5,
+      "itemId": "evt_weather_earthquake",
+      "strategy": "alias",
+      "lastSeenAt": 1794247539626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 8.8
+    },
+    {
+      "canonicalKey": "bazuca|misseis",
+      "kind": "weapon",
+      "examples": [
+        "bazuca de mísseis"
+      ],
+      "count": 5,
+      "itemId": "wpn_launcher_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794243279626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 13.3
     },
     {
       "canonicalKey": "tsunami",
       "kind": "event",
       "examples": [
-        "tsunami",
-        "tsunami de fogo"
-      ],
-      "count": 5,
-      "itemId": "evt_terrain_rising_tide",
-      "strategy": "tags",
-      "lastSeenAt": 1794243577900,
-      "gap": false
-    },
-    {
-      "canonicalKey": "canhao|vortice",
-      "kind": "weapon",
-      "examples": [
-        "canhão de vórtice",
-        "lançador de gelo"
-      ],
-      "count": 5,
-      "itemId": "wpn_launcher_ice",
-      "strategy": "alias",
-      "lastSeenAt": 1794238298400,
-      "gap": false
-    },
-    {
-      "canonicalKey": "pistola|plasma",
-      "kind": "weapon",
-      "examples": [
-        "pistola de plasma",
-        "pistola de cristal",
-        "pistola de duas mãos"
+        "tsunami"
       ],
       "count": 4,
-      "itemId": "wpn_pistol_standard",
-      "strategy": "tags",
-      "lastSeenAt": 1794239077900,
-      "gap": false
+      "itemId": "evt_terrain_rising_tide",
+      "strategy": "alias",
+      "lastSeenAt": 1794248319126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 7.1
+    },
+    {
+      "canonicalKey": "acida|chuva",
+      "kind": "event",
+      "examples": [
+        "chuva ácida"
+      ],
+      "count": 4,
+      "itemId": "evt_weather_acid_rain",
+      "strategy": "alias",
+      "lastSeenAt": 1794248079126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 7.1
     },
     {
       "canonicalKey": "pistola|toxica",
@@ -257,8 +196,24 @@
       "count": 4,
       "itemId": "wpn_pistol_toxic",
       "strategy": "canonical",
-      "lastSeenAt": 1794236799400,
-      "gap": false
+      "lastSeenAt": 1794243999126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 7.1
+    },
+    {
+      "canonicalKey": "arma|raio",
+      "kind": "weapon",
+      "examples": [
+        "arma de raio"
+      ],
+      "count": 4,
+      "itemId": "wpn_pistol_electric",
+      "strategy": "partial",
+      "lastSeenAt": 1794243759126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 10.6
     },
     {
       "canonicalKey": "acido|lancador",
@@ -269,8 +224,10 @@
       "count": 4,
       "itemId": "wpn_launcher_toxic",
       "strategy": "alias",
-      "lastSeenAt": 1794236319400,
-      "gap": false
+      "lastSeenAt": 1794243519126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 7.1
     },
     {
       "canonicalKey": "areia|tempestade",
@@ -281,8 +238,24 @@
       "count": 3,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242378900,
-      "gap": true
+      "lastSeenAt": 1794249578626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
+    },
+    {
+      "canonicalKey": "lobos|matilha",
+      "kind": "event",
+      "examples": [
+        "matilha de lobos"
+      ],
+      "count": 3,
+      "itemId": "evt_entity_aggressive_nearest",
+      "strategy": "alias",
+      "lastSeenAt": 1794249038626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "baixa|gravidade",
@@ -293,8 +266,10 @@
       "count": 3,
       "itemId": "evt_weather_low_gravity",
       "strategy": "alias",
-      "lastSeenAt": 1794241658900,
-      "gap": false
+      "lastSeenAt": 1794248858626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "cristal|pilares",
@@ -305,8 +280,10 @@
       "count": 3,
       "itemId": "evt_terrain_crystal_spires",
       "strategy": "alias",
-      "lastSeenAt": 1794241478900,
-      "gap": false
+      "lastSeenAt": 1794248678626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "chao|fissura",
@@ -316,9 +293,11 @@
       ],
       "count": 3,
       "itemId": "evt_terrain_fissure",
-      "strategy": "tags",
-      "lastSeenAt": 1794241298900,
-      "gap": false
+      "strategy": "partial",
+      "lastSeenAt": 1794248498626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
     },
     {
       "canonicalKey": "gelo|rifle",
@@ -330,8 +309,24 @@
       "count": 3,
       "itemId": "wpn_rifle_ice",
       "strategy": "tags",
-      "lastSeenAt": 1794239137900,
-      "gap": false
+      "lastSeenAt": 1794246337626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "canhao|vortice",
+      "kind": "weapon",
+      "examples": [
+        "canhão de vórtice"
+      ],
+      "count": 3,
+      "itemId": "wpn_launcher_ice",
+      "strategy": "partial",
+      "lastSeenAt": 1794244538626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
     },
     {
       "canonicalKey": "eletrica|smg",
@@ -342,8 +337,24 @@
       "count": 3,
       "itemId": "wpn_smg_electric",
       "strategy": "tags",
-      "lastSeenAt": 1794237158900,
-      "gap": false
+      "lastSeenAt": 1794244358626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "precisao|rifle",
+      "kind": "weapon",
+      "examples": [
+        "rifle de precisão"
+      ],
+      "count": 3,
+      "itemId": "wpn_sniper_standard",
+      "strategy": "alias",
+      "lastSeenAt": 1794244178626,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "chuva|fogo",
@@ -354,8 +365,38 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794244118400,
-      "gap": true
+      "lastSeenAt": 1794251318126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "apocalipse|zumbi",
+      "kind": "event",
+      "examples": [
+        "apocalipse zumbi"
+      ],
+      "count": 2,
+      "itemId": "evt_entity_aggressive_nearest",
+      "strategy": "partial",
+      "lastSeenAt": 1794250658126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "criaturas|vazio",
+      "kind": "event",
+      "examples": [
+        "criaturas do vazio"
+      ],
+      "count": 2,
+      "itemId": "evt_entity_aggressive_nearest",
+      "strategy": "partial",
+      "lastSeenAt": 1794250538126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "drones|enxame",
@@ -366,8 +407,24 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794243218400,
-      "gap": true
+      "lastSeenAt": 1794250418126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "chuva|lava",
+      "kind": "event",
+      "examples": [
+        "chuva de lava"
+      ],
+      "count": 2,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "partial",
+      "lastSeenAt": 1794250298126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "eletrica|tempestade",
@@ -378,8 +435,38 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242978400,
-      "gap": true
+      "lastSeenAt": 1794250178126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "queda|suprimentos",
+      "kind": "event",
+      "examples": [
+        "queda de suprimentos"
+      ],
+      "count": 2,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794250058126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "gelo|meteoros",
+      "kind": "event",
+      "examples": [
+        "meteoros de gelo"
+      ],
+      "count": 2,
+      "itemId": "evt_weather_meteor_shower",
+      "strategy": "partial",
+      "lastSeenAt": 1794249938126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "invasao|robos",
@@ -390,8 +477,38 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242618400,
-      "gap": true
+      "lastSeenAt": 1794249818126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "nevoeiro|toxico",
+      "kind": "event",
+      "examples": [
+        "nevoeiro tóxico"
+      ],
+      "count": 2,
+      "itemId": "evt_weather_acid_rain",
+      "strategy": "partial",
+      "lastSeenAt": 1794249698126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "caixa|suprimentos",
+      "kind": "event",
+      "examples": [
+        "caixa de suprimentos"
+      ],
+      "count": 2,
+      "itemId": "evt_supply_supply",
+      "strategy": "alias",
+      "lastSeenAt": 1794249398126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
     },
     {
       "canonicalKey": "golem|territorial",
@@ -402,8 +519,10 @@
       "count": 2,
       "itemId": "evt_entity_territorial",
       "strategy": "alias",
-      "lastSeenAt": 1794242078400,
-      "gap": false
+      "lastSeenAt": 1794249278126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
     },
     {
       "canonicalKey": "enxame|kamikaze",
@@ -414,8 +533,24 @@
       "count": 2,
       "itemId": "evt_entity_explosive_kamikaze",
       "strategy": "alias",
-      "lastSeenAt": 1794241958400,
-      "gap": false
+      "lastSeenAt": 1794249158126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
+    },
+    {
+      "canonicalKey": "gelo|lancador",
+      "kind": "weapon",
+      "examples": [
+        "lançador de gelo"
+      ],
+      "count": 2,
+      "itemId": "wpn_launcher_ice",
+      "strategy": "alias",
+      "lastSeenAt": 1794245498126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
     },
     {
       "canonicalKey": "gelo|metralhadora",
@@ -426,8 +561,24 @@
       "count": 2,
       "itemId": "wpn_smg_ice",
       "strategy": "alias",
-      "lastSeenAt": 1794238058400,
-      "gap": false
+      "lastSeenAt": 1794245258126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
+    },
+    {
+      "canonicalKey": "pistola|plasma",
+      "kind": "weapon",
+      "examples": [
+        "pistola de plasma"
+      ],
+      "count": 2,
+      "itemId": "wpn_pistol_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794245018126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "fuzil|incendiario",
@@ -438,8 +589,10 @@
       "count": 2,
       "itemId": "wpn_rifle_fire",
       "strategy": "tags",
-      "lastSeenAt": 1794237698400,
-      "gap": false
+      "lastSeenAt": 1794244898126,
+      "gap": false,
+      "poolMiss": false,
+      "priority": 3.5
     },
     {
       "canonicalKey": "arma|gravitacional",
@@ -449,9 +602,11 @@
       ],
       "count": 2,
       "itemId": "wpn_pistol_void",
-      "strategy": "tags",
-      "lastSeenAt": 1794237578400,
-      "gap": false
+      "strategy": "partial",
+      "lastSeenAt": 1794244778126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "cristal|espingarda",
@@ -461,72 +616,168 @@
       ],
       "count": 2,
       "itemId": "wpn_shotgun_standard",
-      "strategy": "tags",
-      "lastSeenAt": 1794237458400,
-      "gap": false
+      "strategy": "partial",
+      "lastSeenAt": 1794244658126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
-      "canonicalKey": "energia|espada",
-      "kind": "weapon",
+      "canonicalKey": "dourado|tesouro",
+      "kind": "event",
       "examples": [
-        "espada de energia"
+        "tesouro dourado"
       ],
       "count": 1,
-      "itemId": "wpn_rifle_standard",
-      "strategy": "default",
-      "lastSeenAt": 1794238957900,
-      "gap": true
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251617626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     },
     {
-      "canonicalKey": "rifle|vazio",
-      "kind": "weapon",
+      "canonicalKey": "infinita|municao",
+      "kind": "event",
       "examples": [
-        "rifle do vazio"
+        "munição infinita"
       ],
       "count": 1,
-      "itemId": "wpn_rifle_void",
-      "strategy": "alias",
-      "lastSeenAt": 1794238837900,
-      "gap": false
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251557626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     },
     {
-      "canonicalKey": "submetralhadora|toxica",
-      "kind": "weapon",
+      "canonicalKey": "kit|medico",
+      "kind": "event",
       "examples": [
-        "submetralhadora tóxica"
+        "kit médico"
       ],
       "count": 1,
-      "itemId": "wpn_smg_toxic",
-      "strategy": "canonical",
-      "lastSeenAt": 1794238777900,
-      "gap": false
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251497626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     },
     {
-      "canonicalKey": "canhao|solar",
-      "kind": "weapon",
+      "canonicalKey": "armas|caixa",
+      "kind": "event",
       "examples": [
-        "canhão solar"
+        "caixa de armas"
       ],
       "count": 1,
-      "itemId": "wpn_launcher_fire",
-      "strategy": "tags",
-      "lastSeenAt": 1794238597900,
-      "gap": false
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251437626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     },
     {
-      "canonicalKey": "acido|rifle",
-      "kind": "weapon",
+      "canonicalKey": "cristal|nevasca",
+      "kind": "event",
       "examples": [
-        "rifle de ácido"
+        "nevasca de cristal"
       ],
       "count": 1,
-      "itemId": "wpn_rifle_toxic",
-      "strategy": "alias",
-      "lastSeenAt": 1794238357900,
-      "gap": false
+      "itemId": "evt_weather_blizzard",
+      "strategy": "partial",
+      "lastSeenAt": 1794251377626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "apocaliptico|terremoto",
+      "kind": "event",
+      "examples": [
+        "terremoto apocalíptico"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_earthquake",
+      "strategy": "partial",
+      "lastSeenAt": 1794251197626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "gemeos|vulcoes",
+      "kind": "event",
+      "examples": [
+        "vulcões gêmeos"
+      ],
+      "count": 1,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "partial",
+      "lastSeenAt": 1794251137626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     }
   ],
   "gaps": [
+    {
+      "canonicalKey": "plasma|rifle",
+      "kind": "weapon",
+      "examples": [
+        "rifle de plasma"
+      ],
+      "count": 7,
+      "itemId": "wpn_rifle_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794241900626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 18.6
+    },
+    {
+      "canonicalKey": "laser|sniper",
+      "kind": "weapon",
+      "examples": [
+        "sniper laser"
+      ],
+      "count": 6,
+      "itemId": "wpn_sniper_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794242680126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 15.9
+    },
+    {
+      "canonicalKey": "bazuca|misseis",
+      "kind": "weapon",
+      "examples": [
+        "bazuca de mísseis"
+      ],
+      "count": 5,
+      "itemId": "wpn_launcher_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794243279626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 13.3
+    },
+    {
+      "canonicalKey": "arma|raio",
+      "kind": "weapon",
+      "examples": [
+        "arma de raio"
+      ],
+      "count": 4,
+      "itemId": "wpn_pistol_electric",
+      "strategy": "partial",
+      "lastSeenAt": 1794243759126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 10.6
+    },
     {
       "canonicalKey": "areia|tempestade",
       "kind": "event",
@@ -536,8 +787,38 @@
       "count": 3,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242378900,
-      "gap": true
+      "lastSeenAt": 1794249578626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
+    },
+    {
+      "canonicalKey": "chao|fissura",
+      "kind": "event",
+      "examples": [
+        "fissura no chão"
+      ],
+      "count": 3,
+      "itemId": "evt_terrain_fissure",
+      "strategy": "partial",
+      "lastSeenAt": 1794248498626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
+    },
+    {
+      "canonicalKey": "canhao|vortice",
+      "kind": "weapon",
+      "examples": [
+        "canhão de vórtice"
+      ],
+      "count": 3,
+      "itemId": "wpn_launcher_ice",
+      "strategy": "partial",
+      "lastSeenAt": 1794244538626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 8
     },
     {
       "canonicalKey": "chuva|fogo",
@@ -548,8 +829,38 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794244118400,
-      "gap": true
+      "lastSeenAt": 1794251318126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "apocalipse|zumbi",
+      "kind": "event",
+      "examples": [
+        "apocalipse zumbi"
+      ],
+      "count": 2,
+      "itemId": "evt_entity_aggressive_nearest",
+      "strategy": "partial",
+      "lastSeenAt": 1794250658126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "criaturas|vazio",
+      "kind": "event",
+      "examples": [
+        "criaturas do vazio"
+      ],
+      "count": 2,
+      "itemId": "evt_entity_aggressive_nearest",
+      "strategy": "partial",
+      "lastSeenAt": 1794250538126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "drones|enxame",
@@ -560,8 +871,24 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794243218400,
-      "gap": true
+      "lastSeenAt": 1794250418126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "chuva|lava",
+      "kind": "event",
+      "examples": [
+        "chuva de lava"
+      ],
+      "count": 2,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "partial",
+      "lastSeenAt": 1794250298126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "eletrica|tempestade",
@@ -572,8 +899,38 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242978400,
-      "gap": true
+      "lastSeenAt": 1794250178126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "queda|suprimentos",
+      "kind": "event",
+      "examples": [
+        "queda de suprimentos"
+      ],
+      "count": 2,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794250058126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "gelo|meteoros",
+      "kind": "event",
+      "examples": [
+        "meteoros de gelo"
+      ],
+      "count": 2,
+      "itemId": "evt_weather_meteor_shower",
+      "strategy": "partial",
+      "lastSeenAt": 1794249938126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
     },
     {
       "canonicalKey": "invasao|robos",
@@ -584,8 +941,290 @@
       "count": 2,
       "itemId": "evt_weather_meteor_shower",
       "strategy": "default",
-      "lastSeenAt": 1794242618400,
-      "gap": true
+      "lastSeenAt": 1794249818126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "nevoeiro|toxico",
+      "kind": "event",
+      "examples": [
+        "nevoeiro tóxico"
+      ],
+      "count": 2,
+      "itemId": "evt_weather_acid_rain",
+      "strategy": "partial",
+      "lastSeenAt": 1794249698126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "pistola|plasma",
+      "kind": "weapon",
+      "examples": [
+        "pistola de plasma"
+      ],
+      "count": 2,
+      "itemId": "wpn_pistol_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794245018126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "arma|gravitacional",
+      "kind": "weapon",
+      "examples": [
+        "arma gravitacional"
+      ],
+      "count": 2,
+      "itemId": "wpn_pistol_void",
+      "strategy": "partial",
+      "lastSeenAt": 1794244778126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "cristal|espingarda",
+      "kind": "weapon",
+      "examples": [
+        "espingarda de cristal"
+      ],
+      "count": 2,
+      "itemId": "wpn_shotgun_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794244658126,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 5.3
+    },
+    {
+      "canonicalKey": "dourado|tesouro",
+      "kind": "event",
+      "examples": [
+        "tesouro dourado"
+      ],
+      "count": 1,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251617626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "infinita|municao",
+      "kind": "event",
+      "examples": [
+        "munição infinita"
+      ],
+      "count": 1,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251557626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "kit|medico",
+      "kind": "event",
+      "examples": [
+        "kit médico"
+      ],
+      "count": 1,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251497626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "armas|caixa",
+      "kind": "event",
+      "examples": [
+        "caixa de armas"
+      ],
+      "count": 1,
+      "itemId": "evt_supply_supply",
+      "strategy": "partial",
+      "lastSeenAt": 1794251437626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "cristal|nevasca",
+      "kind": "event",
+      "examples": [
+        "nevasca de cristal"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_blizzard",
+      "strategy": "partial",
+      "lastSeenAt": 1794251377626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "apocaliptico|terremoto",
+      "kind": "event",
+      "examples": [
+        "terremoto apocalíptico"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_earthquake",
+      "strategy": "partial",
+      "lastSeenAt": 1794251197626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "gemeos|vulcoes",
+      "kind": "event",
+      "examples": [
+        "vulcões gêmeos"
+      ],
+      "count": 1,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "partial",
+      "lastSeenAt": 1794251137626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "congelado|oceano",
+      "kind": "event",
+      "examples": [
+        "oceano congelado"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_blizzard",
+      "strategy": "partial",
+      "lastSeenAt": 1794251077626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "eterna|neve",
+      "kind": "event",
+      "examples": [
+        "neve eterna"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_blizzard",
+      "strategy": "partial",
+      "lastSeenAt": 1794251017626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "meteoros|tempestade|terremotos",
+      "kind": "event",
+      "examples": [
+        "tempestade de meteoros e terremotos"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_meteor_shower",
+      "strategy": "partial",
+      "lastSeenAt": 1794250957626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "arena|lava",
+      "kind": "event",
+      "examples": [
+        "arena de lava"
+      ],
+      "count": 1,
+      "itemId": "evt_terrain_volcano",
+      "strategy": "partial",
+      "lastSeenAt": 1794250897626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "floresta|toxica",
+      "kind": "event",
+      "examples": [
+        "floresta tóxica"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_acid_rain",
+      "strategy": "partial",
+      "lastSeenAt": 1794250837626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "fogo|tsunami",
+      "kind": "event",
+      "examples": [
+        "tsunami de fogo"
+      ],
+      "count": 1,
+      "itemId": "evt_terrain_rising_tide",
+      "strategy": "partial",
+      "lastSeenAt": 1794250777626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "gelo|terremoto",
+      "kind": "event",
+      "examples": [
+        "terremoto de gelo"
+      ],
+      "count": 1,
+      "itemId": "evt_weather_blizzard",
+      "strategy": "partial",
+      "lastSeenAt": 1794250717626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "duas|maos|pistola",
+      "kind": "weapon",
+      "examples": [
+        "pistola de duas mãos"
+      ],
+      "count": 1,
+      "itemId": "wpn_pistol_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794246277626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "arco|eletrico",
+      "kind": "weapon",
+      "examples": [
+        "arco elétrico"
+      ],
+      "count": 1,
+      "itemId": "wpn_pistol_electric",
+      "strategy": "partial",
+      "lastSeenAt": 1794246217626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     },
     {
       "canonicalKey": "energia|espada",
@@ -596,10 +1235,83 @@
       "count": 1,
       "itemId": "wpn_rifle_standard",
       "strategy": "default",
-      "lastSeenAt": 1794238957900,
-      "gap": true
+      "lastSeenAt": 1794246157626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "lancador|plasma",
+      "kind": "weapon",
+      "examples": [
+        "lançador de plasma"
+      ],
+      "count": 1,
+      "itemId": "wpn_launcher_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794246097626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "cristal|pistola",
+      "kind": "weapon",
+      "examples": [
+        "pistola de cristal"
+      ],
+      "count": 1,
+      "itemId": "wpn_pistol_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794245917626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "arma|meteoros",
+      "kind": "weapon",
+      "examples": [
+        "arma de meteoros"
+      ],
+      "count": 1,
+      "itemId": "wpn_launcher_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794245857626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "drones|rifle",
+      "kind": "weapon",
+      "examples": [
+        "rifle de drones"
+      ],
+      "count": 1,
+      "itemId": "wpn_rifle_standard",
+      "strategy": "partial",
+      "lastSeenAt": 1794245737626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
+    },
+    {
+      "canonicalKey": "arma|fogo|gelo",
+      "kind": "weapon",
+      "examples": [
+        "arma de fogo e gelo"
+      ],
+      "count": 1,
+      "itemId": "wpn_pistol_ice",
+      "strategy": "partial",
+      "lastSeenAt": 1794245677626,
+      "gap": true,
+      "poolMiss": false,
+      "priority": 2.7
     }
   ],
+  "poolMisses": [],
   "byItem": [
     {
       "itemId": "evt_weather_meteor_shower",

@@ -14,6 +14,7 @@
     "catalog:promote": "tsx tools/promote-candidates.ts",
     "demand:seed": "tsx tools/seed-demand.ts",
     "ledger:report": "tsx tools/ledger-report.ts",
+    "loop:report": "tsx tools/loop-report.ts",
     "ledger:prune": "tsx tools/ledger-prune.ts",
     "usage:report": "tsx tools/usage-report.ts",
     "build": "vite build",

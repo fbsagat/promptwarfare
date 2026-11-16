@@ -10,12 +10,51 @@ import {
   validateAndClampWeapon,
 } from '../src/shared/budget.ts';
 import type { WeaponBlueprint } from '../src/shared/types.ts';
+import { buildCanonicalKey, normalizePrompt } from '../src/shared/prompt.ts';
 
 export interface PromoteResult {
   catalog: CatalogFile;
   candidates: CatalogCandidate[];
   promoted: string[];
+  merged: string[];
   skipped: Array<{ id: string; reason: string }>;
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function aliasKeys(texts: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const text of texts) {
+    if (!text.trim()) continue;
+    keys.add(`n:${normalizePrompt(text)}`);
+    keys.add(`c:${buildCanonicalKey(text)}`);
+  }
+  return keys;
+}
+
+function findDuplicateIndex(next: CatalogFile, candidate: CatalogCandidate): number {
+  const pool = candidate.kind === 'weapon' ? next.weapons : next.events;
+  const candidateKeys = aliasKeys([candidate.prompt, ...candidate.aliases]);
+  for (let index = 0; index < pool.length; index++) {
+    const keys = aliasKeys([pool[index].name, ...pool[index].aliases]);
+    for (const key of keys) {
+      if (candidateKeys.has(key)) return index;
+    }
+  }
+  return -1;
+}
+
+function mergeAliases<T extends { aliases: string[]; tags: string[] }>(
+  item: T,
+  candidate: CatalogCandidate,
+): T {
+  return {
+    ...item,
+    aliases: unique([...item.aliases, ...candidate.aliases]),
+    tags: unique([...item.tags, ...candidate.tags]),
+  };
 }
 
 function uniqueId(base: string, used: Set<string>): string {
@@ -67,12 +106,14 @@ export function promoteCandidates(
 ): PromoteResult {
   const selected = new Set(ids);
   const promoted: string[] = [];
+  const merged: string[] = [];
   const skipped: Array<{ id: string; reason: string }> = [];
   const used = new Set([
     ...catalog.weapons.map((item) => item.id),
     ...catalog.events.map((item) => item.id),
   ]);
   const next: CatalogFile = {
+    schemaVersion: catalog.schemaVersion ?? 2,
     version,
     weapons: [...catalog.weapons],
     events: [...catalog.events],
@@ -99,6 +140,21 @@ export function promoteCandidates(
         skipped.push({ id: candidate.id, reason: 'volley direto > 48' });
         continue;
       }
+      if (blueprint.wasClamped) {
+        skipped.push({ id: candidate.id, reason: 'clamp aplicado — revisar manualmente' });
+        continue;
+      }
+      const duplicateIndex = findDuplicateIndex(next, candidate);
+      if (duplicateIndex !== -1) {
+        next.weapons[duplicateIndex] = mergeAliases(
+          next.weapons[duplicateIndex],
+          candidate,
+        );
+        candidate.status = 'approved';
+        candidate.approvedAt = Date.now();
+        merged.push(candidate.id);
+        continue;
+      }
       const id = uniqueId(catalogId(candidate), used);
       const item: CatalogWeaponItem = {
         id,
@@ -106,6 +162,8 @@ export function promoteCandidates(
         tags: candidate.tags,
         aliases: candidate.aliases,
         assets: candidateAssets(candidate),
+        status: 'approved',
+        provenance: candidate.provenance,
         payload: {
           ...blueprint,
           id,
@@ -131,6 +189,21 @@ export function promoteCandidates(
       skipped.push({ id: candidate.id, reason: 'orçamento > 100' });
       continue;
     }
+    if (validated.wasClamped) {
+      skipped.push({ id: candidate.id, reason: 'clamp aplicado — revisar manualmente' });
+      continue;
+    }
+    const duplicateIndex = findDuplicateIndex(next, candidate);
+    if (duplicateIndex !== -1) {
+      next.events[duplicateIndex] = mergeAliases(
+        next.events[duplicateIndex],
+        candidate,
+      );
+      candidate.status = 'approved';
+      candidate.approvedAt = Date.now();
+      merged.push(candidate.id);
+      continue;
+    }
     const id = uniqueId(catalogId(candidate), used);
     const item: CatalogEventItem = {
       id,
@@ -138,6 +211,8 @@ export function promoteCandidates(
       tags: candidate.tags,
       aliases: candidate.aliases,
       assets: candidateAssets(candidate),
+      status: 'approved',
+      provenance: candidate.provenance,
       payload: {
         archetype: payload.archetype,
         params: validated.params,
@@ -152,5 +227,5 @@ export function promoteCandidates(
     promoted.push(candidate.id);
   }
 
-  return { catalog: next, candidates: nextCandidates, promoted, skipped };
+  return { catalog: next, candidates: nextCandidates, promoted, merged, skipped };
 }

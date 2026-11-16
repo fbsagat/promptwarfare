@@ -109,6 +109,7 @@ export interface WeaponBlueprint {
   assets?: string[];
   fromDatabase?: boolean;
   fromCatalog?: boolean;
+  composed?: boolean;
 }
 
 export type PromptKind = 'weapon' | 'event';
@@ -357,6 +358,14 @@ export interface LobbyStatePayload {
   devMode?: boolean;
 }
 
+export interface ContentPoolNetInfo {
+  hash: string;
+  algorithmVersion: number;
+  catalogVersion: string;
+  weaponCount: number;
+  eventCount: number;
+}
+
 export interface RoomInitPayload {
   roomId: string;
   roomName: string;
@@ -377,6 +386,7 @@ export interface RoomInitPayload {
   event: EventCycleState;
   catalogVersion: string;
   assetVersion: string;
+  contentPool?: ContentPoolNetInfo | null;
   eventCooldownSec: number;
   rafflePlayerId: string | null;
   rafflePlayerName: string | null;
@@ -399,6 +409,7 @@ export interface RoomTickPayload {
   event: EventCycleState;
   catalogVersion: string;
   assetVersion: string;
+  contentPool?: ContentPoolNetInfo | null;
   eventCooldownSec: number;
   rafflePlayerId: string | null;
   rafflePlayerName: string | null;

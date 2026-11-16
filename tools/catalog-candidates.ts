@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizePrompt } from '../src/shared/prompt.ts';
+import { expandAliases } from './aliasExpansion.ts';
 import type {
   EntityBlueprint,
   EventArchetype,
@@ -19,6 +20,7 @@ interface DemandGap {
   itemId: string | null;
   strategy: string | null;
   gap: boolean;
+  priority?: number;
 }
 
 interface DemandReport {
@@ -156,7 +158,7 @@ for (let index = 0; index < gaps.length; index++) {
   const gap = gaps[index];
   const prompt = gap.examples[0] || gap.canonicalKey.replace(/\|/g, ' ');
   const id = `cand_${gap.kind}_${slugify(prompt)}_${index + 1}`;
-  const aliases = unique([prompt, ...gap.examples]);
+  const aliases = expandAliases(prompt, gap.canonicalKey, gap.examples);
 
   if (gap.kind === 'weapon') {
     const blueprint = await generateAiWeapon(prompt, { useLlm });

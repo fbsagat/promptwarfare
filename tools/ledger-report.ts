@@ -22,14 +22,16 @@ const dbPath =
   process.env.PROMPT_LEDGER_DB_PATH ??
   path.resolve(ROOT, 'data', 'prompt-ledger.db');
 const outDir = path.resolve(ROOT, argValue('--out') ?? path.join('content', 'reports'));
-const limit = Number(argValue('--limit') ?? 100000);
+const limit = Math.max(1, Number(argValue('--limit') ?? 100000));
+const days = Math.max(0, Number(argValue('--days') ?? 0));
+const since = days > 0 ? Date.now() - days * 24 * 60 * 60 * 1000 : 0;
 
 if (!fs.existsSync(dbPath)) {
   console.error(`Ledger não encontrado em ${dbPath}. Jogue algumas partidas ou defina --db.`);
   process.exit(1);
 }
 
-const rows = readPromptEvents(dbPath, limit);
+const rows = readPromptEvents(dbPath, limit, since);
 let catalogVersion = '';
 try {
   catalogVersion = getCatalogVersion();

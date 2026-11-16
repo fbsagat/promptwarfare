@@ -123,6 +123,38 @@ test('weapon prompt timeout applies the short cooldown', () => {
   }
 });
 
+test('prompt:open is rate limited to avoid ledger spam', () => {
+  const manager = new RoomManager({ devEnabled: true });
+  try {
+    const { ws, room, player } = startSoloRoom(manager, 'PROMPT4');
+    player.canForgeWeapon = true;
+    player.weaponCooldownSec = 0;
+
+    for (let i = 0; i < 12; i++) {
+      manager.handleClientMessage(room.id, player.id, {
+        type: 'prompt:open',
+        payload: { kind: 'weapon' },
+      });
+      assert.equal(player.prompt?.kind, 'weapon', `abertura ${i + 1} deveria funcionar`);
+      manager.handleClientMessage(room.id, player.id, {
+        type: 'prompt:cancel',
+        payload: { kind: 'weapon' },
+      });
+      assert.equal(player.prompt, null);
+    }
+
+    ws.clear();
+    manager.handleClientMessage(room.id, player.id, {
+      type: 'prompt:open',
+      payload: { kind: 'weapon' },
+    });
+    assert.equal(player.prompt, null);
+    assert.match(ws.last('ai:error')?.payload.message ?? '', /Muitas aberturas/);
+  } finally {
+    manager.disposeAll();
+  }
+});
+
 test('event raffle skips typing players and event priority blocks the forge', () => {
   const manager = new RoomManager({ devEnabled: true });
   try {

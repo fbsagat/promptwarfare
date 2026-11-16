@@ -92,6 +92,8 @@ for (const entry of seed.prompts) {
       was_clamped: null,
       elapsed_ms: null,
       reason: null,
+      pool_hash: null,
+      pool_miss: null,
     });
     rows.push({
       id: nextId++,
@@ -113,6 +115,8 @@ for (const entry of seed.prompts) {
       was_clamped: wasClamped ? 1 : 0,
       elapsed_ms: submittedAt - openedAt,
       reason: null,
+      pool_hash: null,
+      pool_miss: null,
     });
     nextTime += 60_000;
   }

@@ -51,7 +51,7 @@ interface GameHudProps {
   onSelectSlot: (slot: number) => void;
   onOpenWeaponPrompt: () => void;
   onOpenEventPrompt: () => void;
-  onFeedback: (itemId: string, rating: 1 | -1) => void;
+  onFeedback: (itemId: string, rating: 1 | -1, kind?: 'weapon' | 'event') => void;
 }
 
 const BEHAVIOR_LABELS: Record<string, string> = {
@@ -133,9 +133,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onFeedback,
 }) => {
   const [ghostHp, setGhostHp] = useState(100);
-  const [feedback, setFeedback] = useState<{ itemId: string; rating: 1 | -1 } | null>(
-    null,
-  );
+  const [feedback, setFeedback] = useState<Record<string, 1 | -1>>({});
   const currentHp = localPlayer?.hp ?? 0;
 
   useEffect(() => {
@@ -328,9 +326,46 @@ export const GameHud: React.FC<GameHudProps> = ({
                 .map((evt) => (
                   <div
                     key={evt.id}
-                    className="bg-[#0b101b]/82 border border-amber-400/30 rounded px-2.5 py-1 text-[11px] text-amber-200 font-mono-tabular"
+                    className="bg-[#0b101b]/82 border border-amber-400/30 rounded px-2.5 py-1 text-[11px] text-amber-200 font-mono-tabular flex items-center gap-1.5"
                   >
-                    {evt.prompt.slice(0, 26)} · {Math.ceil(evt.durationRemainingSec)}s
+                    <span>
+                      {evt.prompt.slice(0, 26)} · {Math.ceil(evt.durationRemainingSec)}s
+                    </span>
+                    {evt.catalogId &&
+                      (feedback[evt.catalogId] ? (
+                        <span className="text-emerald-300" aria-label="Feedback enviado">
+                          ✓
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 border-l border-white/10 pl-1.5">
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            aria-label="Gostei deste evento"
+                            onClick={(e) => {
+                              e.currentTarget.blur();
+                              onFeedback(evt.catalogId!, 1, 'event');
+                              setFeedback((prev) => ({ ...prev, [evt.catalogId!]: 1 }));
+                            }}
+                            className="pointer-events-auto text-slate-300 hover:text-emerald-300 cursor-pointer"
+                          >
+                            <ThumbsUp className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            aria-label="Não gostei deste evento"
+                            onClick={(e) => {
+                              e.currentTarget.blur();
+                              onFeedback(evt.catalogId!, -1, 'event');
+                              setFeedback((prev) => ({ ...prev, [evt.catalogId!]: -1 }));
+                            }}
+                            className="pointer-events-auto text-slate-300 hover:text-rose-300 cursor-pointer"
+                          >
+                            <ThumbsDown className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
                   </div>
                 ))}
             </div>
@@ -531,7 +566,7 @@ export const GameHud: React.FC<GameHudProps> = ({
               <span className="text-slate-400">[G] Descartar</span>
               {activeItem.weapon.catalogId && (
                 <span className="ml-1 flex items-center gap-1 border-l border-white/10 pl-2">
-                  {feedback?.itemId === activeItem.weapon.catalogId ? (
+                  {feedback[activeItem.weapon.catalogId] ? (
                     <span className="text-emerald-300">Obrigado!</span>
                   ) : (
                     <>
@@ -541,8 +576,11 @@ export const GameHud: React.FC<GameHudProps> = ({
                         aria-label="Gostei desta arma"
                         onClick={(e) => {
                           e.currentTarget.blur();
-                          onFeedback(activeItem.weapon!.catalogId!, 1);
-                          setFeedback({ itemId: activeItem.weapon!.catalogId!, rating: 1 });
+                          onFeedback(activeItem.weapon!.catalogId!, 1, 'weapon');
+                          setFeedback((prev) => ({
+                            ...prev,
+                            [activeItem.weapon!.catalogId!]: 1,
+                          }));
                         }}
                         className="pointer-events-auto text-slate-300 hover:text-emerald-300 cursor-pointer"
                       >
@@ -554,8 +592,11 @@ export const GameHud: React.FC<GameHudProps> = ({
                         aria-label="Não gostei desta arma"
                         onClick={(e) => {
                           e.currentTarget.blur();
-                          onFeedback(activeItem.weapon!.catalogId!, -1);
-                          setFeedback({ itemId: activeItem.weapon!.catalogId!, rating: -1 });
+                          onFeedback(activeItem.weapon!.catalogId!, -1, 'weapon');
+                          setFeedback((prev) => ({
+                            ...prev,
+                            [activeItem.weapon!.catalogId!]: -1,
+                          }));
                         }}
                         className="pointer-events-auto text-slate-300 hover:text-rose-300 cursor-pointer"
                       >

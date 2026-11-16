@@ -12,6 +12,7 @@ Arena battle royale 3D em micro-voxels destrutíveis. Os jogadores descrevem arm
 - Mecânicas anti-estagnação: sorteio de evento, limite de eventos simultâneos e catástrofes automáticas após longos períodos sem eliminações.
 - Bots com personalidades, mira com previsão de movimento, busca de recursos e fuga de água.
 - Catálogo versionado (`content/catalog/catalog.json`) e resolvedor determinístico por aliases/tags; a partida não depende de rede, chave de API ou quota.
+- Arsenal por sala: cada partida recebe um subconjunto determinístico do catálogo, ponderado por uso recente, com núcleo obrigatório e quota de novidade. Pedidos fora do pool são registrados separadamente de lacunas de catálogo.
 
 ## Stack
 
@@ -66,6 +67,9 @@ Copy-Item .env.example .env
 | `SERVE_CLIENT` | `true` | `false` deixa a VPS em modo API-only, sem entregar o frontend. |
 | `CORS_ORIGINS` | vazio | Origens permitidas, separadas por vírgula. Aceita `*` e curingas como `https://prompt-warfare-*.vercel.app`. Vazio = HTTP somente mesma origem. |
 | `PROMPT_LEDGER_DB_PATH` | `data/prompt-ledger.db` | Caminho do SQLite append-only de prompts. |
+| `CATALOG_WATCH` | `true` | Hot reload de `content/catalog/catalog.json`; `false` exige restart. |
+| `METRICS_WINDOW_DAYS` | `90` | Janela de agregação do snapshot de `/api/metrics`. |
+| `METRICS_TOKEN` | vazio | Token opcional exigido em `X-Metrics-Token`; vazio expõe apenas agregados públicos. |
 | `DISABLE_HMR` | `false` | `true` desativa HMR e file watching do Vite. |
 
 `GEMINI_API_KEY` e `VOXELFORGE_DB_PATH` são variáveis das ferramentas offline em `tools/`, não do servidor. O jogo sobe sem chave de API.
@@ -163,8 +167,8 @@ Passo a passo completo, proxy reverso e checklist em [docs/DEPLOY.md](docs/DEPLO
 npm run demand:seed
 
 # Jogar partidas: o servidor grava prompts em data/prompt-ledger.db
-# Exportar demanda, lacunas e briefs
-npm run ledger:report
+# Exportar demanda, lacunas e briefs (janela opcional de 90 dias)
+npm run ledger:report -- --days 90
 
 # Gerar candidatos offline a partir das lacunas (usa Gemini se houver chave)
 # Sem partidas reais, use o relatório da demanda inicial:
@@ -176,15 +180,21 @@ npm run catalog:candidates -- --report content/seeds/initial-demand-report.json 
 npm run catalog:promote -- --ids cand_weapon_exemplo_1 --version 2026-11-20.1
 
 # Telemetria de uso/qualidade (equipes, abates, dano, sobrevivência e feedback por item)
-npm run usage:report
+npm run usage:report -- --days 90
+
+# Fechamento do loop: demanda x uso x versão, lacunas fechadas/persistentes/regredidas
+npm run loop:report -- --days 90
 
 # Retenção do ledger: dry-run, remoção ou redação de prompts antigos
 npm run ledger:prune -- --days 90 --dry-run
 npm run ledger:prune -- --days 90 --redact-prompts
 
 # Regerar o catálogo procedural base, se necessário
+# (preserva itens promovidos; use --reset para descartar)
 npm run catalog:build -- 2026-11-20.1
 ```
+
+Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção.
 
 ## Estrutura
 
@@ -194,6 +204,9 @@ server.ts                 Entrada única: API REST, WebSocket e cliente opcional
 server/
   roomManager.ts          Estado autoritativo: salas, loop de 20 Hz, combate, bots, eventos
   catalog.ts              Catálogo read-only + resolvedor determinístico
+  contentPool.ts          Arsenal determinístico por sala (uso + novidade)
+  loopReport.ts           Demanda x uso x versão do catálogo
+  metrics.ts              Snapshot agregado para /api/metrics
   assets.ts               Manifesto de assets read-only
   ledger.ts               Ledger append-only de prompts (SQLite)
   ledgerReport.ts         Agregação de demanda/lacunas
@@ -208,6 +221,8 @@ tools/
   build-catalog.ts        Gera o catálogo procedural offline
   seed-demand.ts          Gera o relatório da demanda inicial
   ledger-report.ts        Exporta clusters, lacunas e briefs
+  loop-report.ts          Cruza demanda, uso e versões do catálogo
+  aliasExpansion.ts       Expande aliases dos candidatos
   ledger-prune.ts         Retenção/redação do ledger
   usage-report.ts         Exporta uso/qualidade por item
   catalog-candidates.ts   Gera candidatos a partir das lacunas

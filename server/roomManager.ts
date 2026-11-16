@@ -57,10 +57,18 @@ import {
 } from '../src/shared/voxelWorld.ts';
 import { getAssetVersion } from './assets.ts';
 import {
+  getCatalog,
+  getCatalogItem,
+  getCatalogItemName,
   getCatalogVersion,
   resolveEventFromCatalog,
   resolveWeaponFromCatalog,
 } from './catalog.ts';
+import {
+  buildContentPool,
+  summarizeContentPool,
+  type ContentPool,
+} from './contentPool.ts';
 import {
   PromptLedger,
   type LedgerPhase,
@@ -97,6 +105,10 @@ interface ServerPlayer extends PlayerNetState {
   grappleTargetId: string | null;
   promptSessionId: string | null;
   promptOpenedAt: number | null;
+  promptOpenWindowStart: number;
+  promptOpenCount: number;
+  feedbackWindowStart: number;
+  feedbackCount: number;
 }
 
 interface ServerProjectile extends ProjectileNetState {
@@ -115,6 +127,7 @@ interface GameRoom {
   password: string;
   createdAt: number;
   seed: number;
+  contentPool: ContentPool | null;
   dimX: number;
   dimY: number;
   dimZ: number;
@@ -148,6 +161,11 @@ interface GameRoom {
   devInfiniteSandbox: boolean;
   devBotsFrozen: boolean;
 }
+
+const PROMPT_OPEN_RATE_LIMIT = 12;
+const PROMPT_OPEN_RATE_WINDOW_MS = 10_000;
+const FEEDBACK_RATE_LIMIT = 10;
+const FEEDBACK_RATE_WINDOW_MS = 10_000;
 
 const PLAYER_COLORS = [
   '#38bdf8',
@@ -229,10 +247,15 @@ export class RoomManager {
   private rooms = new Map<string, GameRoom>();
   private readonly devEnabled: boolean;
   private readonly ledger: PromptLedger | null;
+  private usageWeights: Record<string, number> = {};
 
   constructor(opts: { devEnabled?: boolean; ledger?: PromptLedger | null } = {}) {
     this.devEnabled = opts.devEnabled ?? isServerDevEnabled();
     this.ledger = opts.ledger ?? null;
+  }
+
+  setUsageWeights(weights: Record<string, number>): void {
+    this.usageWeights = { ...weights };
   }
 
   isDevModeEnabled(): boolean {
@@ -275,6 +298,28 @@ export class RoomManager {
       type: 'room:error',
       payload: { code, message, ...extra },
     });
+  }
+
+  getRuntimeStats(): {
+    rooms: number;
+    playing: number;
+    lobby: number;
+    humans: number;
+    bots: number;
+  } {
+    let playing = 0;
+    let lobby = 0;
+    let humans = 0;
+    let bots = 0;
+    for (const room of this.rooms.values()) {
+      if (room.phase === 'playing') playing += 1;
+      else if (room.phase === 'lobby') lobby += 1;
+      for (const player of room.players.values()) {
+        if (player.isBot) bots += 1;
+        else if (player.ws !== null) humans += 1;
+      }
+    }
+    return { rooms: this.rooms.size, playing, lobby, humans, bots };
   }
 
   getRoomList(): RoomPublicSummary[] {
@@ -368,6 +413,7 @@ export class RoomManager {
       password: accessMode === 'password' ? password : '',
       createdAt: Date.now(),
       seed,
+      contentPool: null,
       dimX,
       dimY,
       dimZ,
@@ -612,6 +658,10 @@ export class RoomManager {
       grappleTargetId: null,
       promptSessionId: null,
       promptOpenedAt: null,
+      promptOpenWindowStart: 0,
+      promptOpenCount: 0,
+      feedbackWindowStart: 0,
+      feedbackCount: 0,
     };
   }
 
@@ -621,6 +671,17 @@ export class RoomManager {
     room.dimY = dimY;
     room.dimZ = dimZ;
     room.seed = Math.floor(Math.random() * 100000) + 1;
+    try {
+      room.contentPool = buildContentPool({
+        seed: room.seed,
+        targetPlayers: room.targetPlayers,
+        catalog: getCatalog(),
+        usage: this.usageWeights,
+      });
+    } catch (err) {
+      room.contentPool = null;
+      console.warn('[Pool] falha ao montar arsenal da sala:', (err as Error).message);
+    }
     room.grid = createProceduralIsland(room.seed, dimX, dimY, dimZ);
     room.deltas = [];
     room.pendingTickDeltas = [];
@@ -752,6 +813,10 @@ export class RoomManager {
       grappleTargetId: null,
       promptSessionId: null,
       promptOpenedAt: null,
+      promptOpenWindowStart: 0,
+      promptOpenCount: 0,
+      feedbackWindowStart: 0,
+      feedbackCount: 0,
     };
     room.players.set(botId, bot);
     return bot;
@@ -866,11 +931,21 @@ export class RoomManager {
       case 'content:feedback': {
         if (!player.alive || room.phase !== 'playing') return;
         const itemId = String(msg.payload?.itemId ?? '').slice(0, 80);
+        const kind = msg.payload?.kind === 'event' ? 'event' : 'weapon';
         const rating = msg.payload?.rating === 1 ? 1 : msg.payload?.rating === -1 ? -1 : 0;
         if (!itemId || rating === 0) return;
+        const catalogItem = getCatalogItem(itemId);
+        if (!catalogItem || catalogItem.kind !== kind) return;
+        const now = Date.now();
+        if (now - player.feedbackWindowStart > FEEDBACK_RATE_WINDOW_MS) {
+          player.feedbackWindowStart = now;
+          player.feedbackCount = 0;
+        }
+        if (player.feedbackCount >= FEEDBACK_RATE_LIMIT) return;
+        player.feedbackCount += 1;
         this.ledger?.recordUsage({
           itemId,
-          kind: msg.payload?.kind === 'event' ? 'event' : 'weapon',
+          kind,
           role: 'feedback',
           actorType: player.isBot ? 'bot' : 'human',
           actorRef: player.id,
@@ -909,7 +984,9 @@ export class RoomManager {
         }
         const prompt = String(msg.payload?.prompt ?? '').slice(0, 90);
         if (!prompt.trim()) return;
-        const resolution = resolveWeaponFromCatalog(prompt);
+        const resolution = resolveWeaponFromCatalog(prompt, {
+          allowedIds: room.contentPool?.weaponIds,
+        });
         const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
         this.recordPromptEvent(room, player, 'submitted', 'weapon', {
           prompt,
@@ -919,6 +996,8 @@ export class RoomManager {
           wasClamped: resolution.blueprint.wasClamped,
           elapsedMs,
           reason: null,
+          poolHash: room.contentPool?.hash ?? null,
+          poolMiss: resolution.poolMiss ?? false,
         });
         player.prompt = null;
         player.isTypingPrompt = false;
@@ -948,7 +1027,9 @@ export class RoomManager {
           10,
           (room.dimZ * VOXEL_SIZE) / 2,
         ];
-        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center);
+        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center, {
+          allowedIds: room.contentPool?.eventIds,
+        });
         const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
         this.recordPromptEvent(room, player, 'submitted', 'event', {
           prompt,
@@ -958,6 +1039,8 @@ export class RoomManager {
           wasClamped: resolution.event.wasClamped,
           elapsedMs,
           reason: null,
+          poolHash: room.contentPool?.hash ?? null,
+          poolMiss: resolution.poolMiss ?? false,
         });
         player.prompt = null;
         player.isTypingPrompt = false;
@@ -1311,9 +1394,12 @@ export class RoomManager {
       });
     }
 
+    const displayName = evt.catalogId
+      ? getCatalogItemName(evt.catalogId) ?? 'Evento do catálogo'
+      : 'Evento';
     this.broadcastKillfeed(room, {
       id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-      text: `⚠️ ${evt.authorName} ${evt.fromCatalog || evt.fromDatabase ? 'reutilizou' : 'invocou'}: "${evt.prompt}"${evt.fromCatalog ? ' [catálogo]' : ''} — Impacto em 5s!`,
+      text: `⚠️ ${evt.authorName} ${evt.fromCatalog || evt.fromDatabase ? 'reutilizou' : 'invocou'}: "${displayName}"${evt.fromCatalog ? ' [catálogo]' : ''} — Impacto em 5s!`,
       tone: 'event',
       ts: Date.now(),
     });
@@ -1944,6 +2030,7 @@ export class RoomManager {
               botWinner.id,
               botWinner.name,
               center,
+              { allowedIds: room.contentPool?.eventIds },
             );
             this.recordPromptEvent(room, botWinner, 'submitted', 'event', {
               prompt,
@@ -1953,6 +2040,8 @@ export class RoomManager {
               wasClamped: resolution.event.wasClamped,
               elapsedMs: null,
               reason: null,
+              poolHash: room.contentPool?.hash ?? null,
+              poolMiss: resolution.poolMiss ?? false,
             });
             this.enqueueMapEvent(room, resolution.event);
           }
@@ -2195,6 +2284,7 @@ export class RoomManager {
       event: this.buildEventCycleState(room),
       catalogVersion: getCatalogVersion(),
       assetVersion: getAssetVersion(),
+      contentPool: summarizeContentPool(room.contentPool),
       eventCooldownSec: Math.round(room.eventCooldownSec),
       rafflePlayerId: room.rafflePlayerId,
       rafflePlayerName: room.rafflePlayerName,
@@ -2416,6 +2506,19 @@ export class RoomManager {
   private openPrompt(room: GameRoom, player: ServerPlayer, kind: PromptKind): void {
     if (player.prompt) return;
     const now = Date.now();
+
+    if (now - player.promptOpenWindowStart > PROMPT_OPEN_RATE_WINDOW_MS) {
+      player.promptOpenWindowStart = now;
+      player.promptOpenCount = 0;
+    }
+    if (player.promptOpenCount >= PROMPT_OPEN_RATE_LIMIT) {
+      this.sendToPlayer(player, {
+        type: 'ai:error',
+        payload: { message: 'Muitas aberturas de prompt. Aguarde alguns segundos.' },
+      });
+      return;
+    }
+    player.promptOpenCount += 1;
 
     if (kind === 'event') {
       if (
@@ -3108,7 +3211,9 @@ export class RoomManager {
       bot.weaponCooldownSec = WEAPON_CYCLE_COOLDOWN_SEC + 1 + Math.random() * 2;
       const prompts = brain.personality.weaponPrompts;
       const prompt = prompts[Math.floor(Math.random() * prompts.length)];
-      const resolution = resolveWeaponFromCatalog(prompt);
+      const resolution = resolveWeaponFromCatalog(prompt, {
+        allowedIds: room.contentPool?.weaponIds,
+      });
       this.recordPromptEvent(room, bot, 'submitted', 'weapon', {
         prompt,
         itemId: resolution.itemId,
@@ -3117,6 +3222,8 @@ export class RoomManager {
         wasClamped: resolution.blueprint.wasClamped,
         elapsedMs: null,
         reason: null,
+        poolHash: room.contentPool?.hash ?? null,
+        poolMiss: resolution.poolMiss ?? false,
       });
       this.equipForgedWeapon(room, bot, resolution.blueprint);
       bot.botForgePrompted = false;
@@ -3263,6 +3370,7 @@ export class RoomManager {
       event: this.buildEventCycleState(room),
       catalogVersion: getCatalogVersion(),
       assetVersion: getAssetVersion(),
+      contentPool: summarizeContentPool(room.contentPool),
       eventCooldownSec: Math.round(room.eventCooldownSec),
       rafflePlayerId: room.rafflePlayerId,
       rafflePlayerName: room.rafflePlayerName,

@@ -42,6 +42,9 @@ HOST=127.0.0.1
 SERVE_CLIENT=false
 CORS_ORIGINS=https://promptwarfare.vercel.app
 PROMPT_LEDGER_DB_PATH=/var/lib/prompt-warfare/prompt-ledger.db
+CATALOG_WATCH=true
+METRICS_WINDOW_DAYS=90
+# METRICS_TOKEN=troque-por-um-segredo
 ```
 
 - `HOST=127.0.0.1` expõe a porta apenas para o proxy reverso.
@@ -49,6 +52,8 @@ PROMPT_LEDGER_DB_PATH=/var/lib/prompt-warfare/prompt-ledger.db
 - `CORS_ORIGINS` aceita vírgula, `*` e curingas como `https://prompt-warfare-*.vercel.app` para previews.
 - Em desenvolvimento, deixe `CORS_ORIGINS` vazio ou inclua `http://localhost:3000`; com a lista preenchida, o handshake WebSocket de uma origem não listada é rejeitado.
 - Não defina `VITE_*` na VPS: essas variáveis são embutidas no build do frontend.
+- `CATALOG_WATCH=false` desliga o hot reload do catálogo; o padrão é observar `content/catalog/catalog.json`.
+- `METRICS_TOKEN` protege `/api/metrics` via header `X-Metrics-Token`; sem ele, o endpoint expõe apenas agregados públicos (sem prompts).
 - `GEMINI_API_KEY` e `VOXELFORGE_DB_PATH` pertencem às ferramentas offline, não à VPS.
 
 ### Catálogo, ledger e permissões
@@ -70,6 +75,37 @@ npm run ledger:prune -- --db /var/lib/prompt-warfare/prompt-ledger.db --days 90 
 ```
 
 `--redact-prompts` preserva os agregados (item, estratégia, cobertura) e apaga o texto bruto; sem ele, as linhas antigas de prompt e uso são removidas.
+
+### Hot reload do catálogo
+
+Com `CATALOG_WATCH=true` (padrão), o servidor observa `content/catalog/catalog.json` e troca o cache de forma atômica quando o arquivo muda. Se o JSON estiver inválido, a versão anterior continua em memória e o erro vai para o log.
+
+- Para forçar a recarga sem esperar o polling: `kill -HUP <pid>`.
+- A recarga não reinicia partidas; armas/eventos já resolvidos permanecem como estão, e os próximos prompts usam a nova versão.
+- Em releases imutáveis/symlink, prefira `kill -HUP` ou reinicie o serviço.
+- `CATALOG_WATCH=false` desliga o watcher.
+
+### Loop report agendado
+
+Rode o fechamento do loop diariamente e mantenha o ledger dentro da política de retenção:
+
+```bash
+# /etc/cron.d/prompt-warfare-loop
+0 4 * * * promptwarfare cd /opt/prompt-warfare && npm run loop:report -- --days 90 >> /var/lib/prompt-warfare/loop-report.log 2>&1
+30 4 * * * promptwarfare cd /opt/prompt-warfare && npm run ledger:prune -- --db /var/lib/prompt-warfare/prompt-ledger.db --days 90 --redact-prompts >> /var/lib/prompt-warfare/prune.log 2>&1
+```
+
+Os relatórios saem em `content/reports/loop-*.json/.md`. Use `--include-bots` apenas para auditoria; a demanda padrão é humana.
+
+### Métricas
+
+`GET /api/metrics` expõe um snapshot agregado (salas, jogadores, cobertura, lacunas fechadas/persistentes/regredidas, pool misses e itens com demanda/uso), sem texto de prompt. O snapshot é atualizado a cada 60 s; salas e uptime são lidos ao vivo.
+
+```bash
+curl -H "X-Metrics-Token: $METRICS_TOKEN" https://api.promptwarfare.com/api/metrics
+```
+
+`GET /api/health` continua sendo o health check barato, agora com `playing`, `lobby`, `humans`, `bots`, `uptimeSec` e as versões atuais.
 
 O servidor deve rodar como uma única instância: salas ficam em memória e não há suporte a múltiplos processos compartilhando estado.
 

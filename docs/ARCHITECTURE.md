@@ -66,14 +66,30 @@ Novas mensagens de cliente devem ser adicionadas ao `switch` de `handleClientMes
 
 ### `server/catalog.ts`
 
-O runtime não gera conteúdo. Ele carrega `content/catalog/catalog.json` no boot e resolve o prompt contra itens aprovados:
+O runtime não gera conteúdo. Ele carrega `content/catalog/catalog.json` no boot e resolve o prompt contra itens **não depreciados**:
 
 1. Normaliza o prompt e a chave canônica (`src/shared/prompt.ts`).
 2. Tenta alias exato, depois chave canônica, depois tokens/tags e palavras-chave de arquétipo/elemento.
-3. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
-4. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
+3. Se o pedido combina uma capacidade já presente no item-base com outra existente em outro item, tenta uma **composição** validada pelo orçamento. Combinações impossíveis (dois status ou dois comportamentos) não são compostas.
+4. Match fraco (< 120 pontos), ambíguo ou composição que estourou o orçamento vira `partial`: o item mais próximo é servido, mas o pedido é registrado como lacuna duvidosa.
+5. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
+6. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
 
-O catálogo é read-only e versionado. `getCatalogVersion()` aparece em `room:init`/`room:tick`. Para atualizar, regenere o JSON e faça deploy. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
+O catálogo é read-only, usa `schemaVersion: 2` e versionamento por release. Cada item carrega `status` (`approved`/`deprecated`) e `provenance` (`procedural`, `ai_assisted`, `authored`, `template` ou `seed`). `getCatalogVersion()` aparece em `room:init`/`room:tick`. Com `CATALOG_WATCH` ligado (padrão), o arquivo é recarregado de forma atômica quando muda; `SIGHUP` força a recarga. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
+
+O estado do evento transmitido à sala usa o **nome do item do catálogo**, não o texto cru do jogador; o prompt original fica apenas no ledger.
+
+### `server/contentPool.ts`
+
+Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalogVersion`, versão do algoritmo e snapshot de uso:
+
+- núcleo obrigatório: defaults, um item por elemento, um por arquétipo, um por categoria de evento;
+- tamanho entre 16–26 armas e 7–11 eventos, conforme `targetPlayers`;
+- peso inverso ao uso humano recente (`equip`/`event`) e quota de novidade para `ai_assisted`/`authored`;
+- `hash` e contagem de itens aparecem em `room:init`/`room:tick` (`contentPool`);
+- itens `deprecated` e pools vazios caem para o catálogo completo.
+
+O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. Se o item ideal existe no catálogo mas não no pool, o ledger grava `pool_miss = 1` e `pool_hash`; isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
 
 ### `server/ledger.ts`
 
@@ -81,7 +97,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`):
 
 - tabela `prompt_events` com uma linha por fase (`opened`, `submitted`, `cancelled`, `timed_out`);
 - `session_id` correlaciona abertura, envio e abandono;
-- guarda ator (`human`, `bot`, `dev`, `preview`, `system`), sala, partida, prompt normalizado/canônico, item servido, estratégia, orçamento, `catalog_version`, tempo de escrita e motivo;
+- guarda ator (`human`, `bot`, `dev`, `preview`, `system`), sala, partida, prompt normalizado/canônico, item servido, estratégia, orçamento, `catalog_version`, tempo de escrita, motivo, `pool_hash` e `pool_miss`;
 - não guarda nomes de jogador, apenas `actor_ref` pseudônimo;
 - grava em lote a cada ~100 ms para não bloquear o tick;
 - caminho padrão `data/prompt-ledger.db` (`PROMPT_LEDGER_DB_PATH`).
@@ -97,16 +113,24 @@ Ledger append-only de prompts em SQLite (`node:sqlite`):
 
 - `content_usage` registra `equip`, `kill` e `event` por item, jogador/partida e versão do catálogo.
 - `server/usageReport.ts` + `tools/usage-report.ts` geram `content/reports/usage-*.json/.md` com equipes, abates, eventos e abates/equipe por item.
+- `server/loopReport.ts` + `tools/loop-report.ts` cruzam `prompt_events` com `content_usage`: cobertura por versão, lacunas fechadas/persistentes/regredidas e qualidade por item.
 - Bots são excluídos por padrão; use `--include-bots` para auditá-los.
+
+### Observabilidade
+
+- `GET /api/health` expõe salas, jogadores humanos/bots, uptime e versões atuais.
+- `GET /api/metrics` expõe um snapshot agregado de cobertura, lacunas e itens com demanda/uso; não inclui texto de prompt. O snapshot do ledger é atualizado a cada 60 s, enquanto salas e uptime são lidos ao vivo.
+- `METRICS_TOKEN` (opcional) exige o header `X-Metrics-Token`; `METRICS_WINDOW_DAYS` controla a janela (padrão 90).
 
 ### Ferramentas offline (`tools/`)
 
-- `tools/build-catalog.ts` gera o catálogo procedural determinístico (`npx tsx tools/build-catalog.ts`).
+- `tools/build-catalog.ts` gera o catálogo procedural determinístico e **preserva** itens promovidos/artesanais fora da base; use `--reset` para descartá-los (`npx tsx tools/build-catalog.ts [versão]`).
 - `tools/seed-demand.ts` gera `content/seeds/initial-demand-report.json/.md` a partir da demanda sintética inicial.
-- `tools/ledger-report.ts` lê o ledger e gera `content/reports/demand-*.json/.md` com intenções, lacunas, abandono e cobertura.
+- `tools/ledger-report.ts` lê o ledger e gera `content/reports/demand-*.json/.md` com intenções, lacunas, abandono e cobertura; use `--days N` para limitar a janela.
 - `tools/usage-report.ts` lê `content_usage` e gera o relatório de qualidade.
-- `tools/catalog-candidates.ts` transforma lacunas em candidatos usando a ferramenta Gemini offline.
-- `tools/promote-candidates.ts` valida candidatos aprovados e publica uma nova versão do catálogo.
+- `tools/loop-report.ts` cruza demanda, uso e versões para verificar se a publicação fechou a lacuna.
+- `tools/catalog-candidates.ts` transforma lacunas em candidatos usando a ferramenta Gemini offline e expande aliases (`tools/aliasExpansion.ts`).
+- `tools/promote-candidates.ts` valida candidatos aprovados, mescla aliases em itens existentes e publica uma nova versão do catálogo.
 - `tools/aiGenerator.ts` é a ferramenta Gemini para produzir candidatos; não é importada pelo servidor.
 - `tools/blueprintDb.ts` é o cache SQLite (`node:sqlite`) da ferramenta offline, em `data/voxelforge-blueprints.db` (`VOXELFORGE_DB_PATH`).
 - Todo candidato passa por `src/shared/budget.ts` e por curadoria humana antes de entrar no catálogo.

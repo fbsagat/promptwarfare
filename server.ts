@@ -8,10 +8,16 @@ import { getAssetManifest, getAssetVersion } from './server/assets.ts';
 import {
   getCatalogSummary,
   getCatalogVersion,
+  reloadCatalog,
   resolveWeaponFromCatalog,
+  startCatalogWatcher,
+  stopCatalogWatcher,
 } from './server/catalog.ts';
 import { isOriginAllowed, parseAllowedOrigins } from './server/httpCors.ts';
-import { PromptLedger } from './server/ledger.ts';
+import { PromptLedger, readContentUsage, readPromptEvents } from './server/ledger.ts';
+import { buildLoopReport } from './server/loopReport.ts';
+import { buildMetricsSnapshot, type MetricsSnapshot } from './server/metrics.ts';
+import { aggregateUsageWeights } from './server/contentPool.ts';
 import { RoomManager } from './server/roomManager.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,7 +38,7 @@ async function startServer() {
     if (allowed && origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Metrics-Token');
       res.setHeader('Access-Control-Max-Age', '86400');
     }
 
@@ -48,18 +54,92 @@ async function startServer() {
 
   const ledger = new PromptLedger();
   const roomManager = new RoomManager({ ledger });
-  const catalogVersion = getCatalogVersion();
-  const assetVersion = getAssetVersion();
   process.once('exit', () => ledger.close());
 
+  const metricsWindowDays = Math.max(
+    1,
+    Number(process.env.METRICS_WINDOW_DAYS) || 90,
+  );
+  const metricsToken = process.env.METRICS_TOKEN?.trim() || '';
+  let metricsLoop: ReturnType<typeof buildLoopReport> | null = null;
+  let metricsCache: MetricsSnapshot | null = null;
+
+  const refreshMetrics = (): void => {
+    try {
+      const since = Date.now() - metricsWindowDays * 24 * 60 * 60 * 1000;
+      const prompts = readPromptEvents(ledger.getPath(), 100000, since);
+      const usage = readContentUsage(ledger.getPath(), 100000, since);
+      metricsLoop = buildLoopReport(prompts, usage, getCatalogVersion());
+      roomManager.setUsageWeights(aggregateUsageWeights(usage));
+      metricsCache = buildMetricsSnapshot({
+        loop: metricsLoop,
+        rooms: roomManager.getRuntimeStats(),
+        uptimeSec: process.uptime(),
+        catalogVersion: getCatalogVersion(),
+        assetVersion: getAssetVersion(),
+      });
+    } catch (err) {
+      console.warn('[Métricas] falha ao atualizar snapshot:', (err as Error).message);
+    }
+  };
+
+  setImmediate(refreshMetrics);
+  const metricsTimer = setInterval(refreshMetrics, 60_000);
+  metricsTimer.unref();
+
+  if (process.env.CATALOG_WATCH !== 'false') {
+    startCatalogWatcher();
+    console.log('[Catálogo] hot reload ativo (CATALOG_WATCH=false para desligar)');
+  }
+
+  const reloadCatalogNow = (): void => {
+    try {
+      const result = reloadCatalog();
+      console.log(
+        `[Catálogo] recarga manual: ${result.version} (${result.weapons} armas, ${result.events} eventos)`,
+      );
+      refreshMetrics();
+    } catch (err) {
+      console.warn(
+        `[Catálogo] recarga manual falhou; mantendo a versão anterior: ${(err as Error).message}`,
+      );
+    }
+  };
+  process.on('SIGHUP', reloadCatalogNow);
+
   app.get('/api/health', (_req, res) => {
+    const stats = roomManager.getRuntimeStats();
     res.json({
       ok: true,
-      rooms: roomManager.getRoomList().length,
+      rooms: stats.rooms,
+      playing: stats.playing,
+      lobby: stats.lobby,
+      humans: stats.humans,
+      bots: stats.bots,
+      uptimeSec: Math.round(process.uptime()),
       devMode: roomManager.isDevModeEnabled(),
-      catalogVersion,
-      assetVersion,
+      catalogVersion: getCatalogVersion(),
+      assetVersion: getAssetVersion(),
     });
+  });
+
+  app.get('/api/metrics', (req, res) => {
+    if (metricsToken && req.headers['x-metrics-token'] !== metricsToken) {
+      res.status(401).json({ error: 'Métricas protegidas.' });
+      return;
+    }
+    if (!metricsLoop) refreshMetrics();
+    const snapshot = metricsLoop
+      ? buildMetricsSnapshot({
+          loop: metricsLoop,
+          rooms: roomManager.getRuntimeStats(),
+          uptimeSec: process.uptime(),
+          catalogVersion: getCatalogVersion(),
+          assetVersion: getAssetVersion(),
+        })
+      : metricsCache;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(snapshot ?? { error: 'Métricas indisponíveis.' });
   });
 
   app.get('/api/rooms', (_req, res) => {
@@ -82,6 +162,7 @@ async function startServer() {
         return;
       }
       const resolution = resolveWeaponFromCatalog(prompt);
+      const catalogVersion = getCatalogVersion();
       ledger.record({
         sessionId: `preview_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         actorType: 'preview',
@@ -113,6 +194,9 @@ async function startServer() {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   const shutdown = () => {
+    clearInterval(metricsTimer);
+    stopCatalogWatcher();
+    process.removeListener('SIGHUP', reloadCatalogNow);
     ledger.close();
     wss.close();
     server.close(() => process.exit(0));

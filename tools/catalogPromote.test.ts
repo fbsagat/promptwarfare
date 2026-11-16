@@ -8,6 +8,7 @@ import {
 import type { CatalogFile } from '../server/catalog.ts';
 import type { CatalogCandidate } from './catalog-candidates.ts';
 import { promoteCandidates } from './catalogPromote.ts';
+import type { WeaponBlueprint } from '../src/shared/types.ts';
 
 const emptyCatalog: CatalogFile = { version: '1', weapons: [], events: [] };
 
@@ -83,9 +84,14 @@ test('promoteCandidates validates, publishes, and skips approved candidates', ()
   );
 
   assert.equal(first.catalog.version, '2');
+  assert.equal(first.catalog.schemaVersion, 2);
   assert.equal(first.catalog.weapons.length, 1);
   assert.equal(first.catalog.events.length, 1);
   assert.equal(first.catalog.weapons[0].id, 'wpn_teste_1');
+  assert.equal(first.catalog.weapons[0].status, 'approved');
+  assert.equal(first.catalog.weapons[0].provenance, 'ai_assisted');
+  assert.equal(first.catalog.events[0].status, 'approved');
+  assert.equal(first.catalog.events[0].provenance, 'ai_assisted');
   assert.equal(first.catalog.events[0].id, 'evt_teste_1');
   assert.equal(first.promoted.length, 2);
   assert.equal(first.candidates[0].status, 'approved');
@@ -102,4 +108,81 @@ test('promoteCandidates validates, publishes, and skips approved candidates', ()
   assert.equal(second.skipped.length, 2);
   assert.equal(second.catalog.weapons.length, 1);
   assert.equal(second.catalog.version, '3');
+});
+
+test('promoteCandidates merges aliases into an existing item instead of duplicating', () => {
+  const base = weaponCandidate();
+  const existing: CatalogFile = {
+    schemaVersion: 2,
+    version: '1',
+    weapons: [
+      {
+        id: 'wpn_pistola_existente',
+        name: 'Pistola de Teste',
+        tags: ['weapon', 'pistol'],
+        aliases: ['Pistola de teste'],
+        assets: [],
+        status: 'approved',
+        provenance: 'procedural',
+        payload: base.payload as WeaponBlueprint,
+      },
+    ],
+    events: [],
+  };
+  const candidate: CatalogCandidate = {
+    ...base,
+    id: 'cand_weapon_alias_1',
+    aliases: ['Pistola de teste', 'pistola de teste turbinada'],
+  };
+
+  const result = promoteCandidates(existing, [candidate], [candidate.id], '2');
+  assert.equal(result.promoted.length, 0);
+  assert.equal(result.merged.length, 1);
+  assert.equal(result.catalog.weapons.length, 1);
+  assert.equal(result.catalog.weapons[0].id, 'wpn_pistola_existente');
+  assert.ok(
+    result.catalog.weapons[0].aliases.includes('pistola de teste turbinada'),
+  );
+  assert.equal(result.candidates[0].status, 'approved');
+});
+
+test('promoteCandidates rejects clamped candidates until they are reviewed', () => {
+  const prompt = 'instakill infinito';
+  const blueprint = validateAndClampWeapon(
+    {
+      name: 'Arma Instável',
+      stats: {
+        damage: 999,
+        fireRate: 20,
+        projectiles: 8,
+        spreadDeg: 0,
+        rangeMeters: 500,
+        ammoMax: 999,
+        cooling: 20,
+        massKg: 1,
+      },
+      modifiers: { voxelCraterRadius: 9, projectileBehavior: 'standard', statusEffect: 'none' },
+      selfRisk: [],
+      palette: [
+        { hex: '#38bdf8', emissive: true },
+        { hex: '#334155', emissive: false },
+      ],
+      rleVoxels: encodeRleVoxels(buildFallbackWeaponVoxels(prompt, 2)),
+      gripPos: [6, 3, 6],
+      muzzlePos: [6, 7, 22],
+    },
+    prompt,
+  );
+  assert.equal(blueprint.wasClamped, true);
+
+  const candidate: CatalogCandidate = {
+    ...weaponCandidate(),
+    id: 'cand_weapon_clamped_1',
+    prompt,
+    payload: blueprint,
+  };
+  const result = promoteCandidates(emptyCatalog, [candidate], [candidate.id], '2');
+  assert.equal(result.promoted.length, 0);
+  assert.equal(result.skipped[0].reason.includes('clamp'), true);
+  assert.equal(result.catalog.weapons.length, 0);
 });

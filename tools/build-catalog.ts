@@ -18,11 +18,28 @@ import type {
   StatusEffect,
   WeaponStats,
 } from '../src/shared/types.ts';
+import type { CatalogFile, CatalogWeaponItem, CatalogEventItem } from '../server/catalog.ts';
+import { mergeCatalog } from './catalogMerge.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(__dirname, '..', 'content', 'catalog');
 const OUT_FILE = path.join(OUT_DIR, 'catalog.json');
-const CATALOG_VERSION = process.argv[2]?.trim() || '2026-11-16.1';
+const RESET = process.argv.includes('--reset');
+
+function readExistingCatalog(): CatalogFile | null {
+  if (RESET || !fs.existsSync(OUT_FILE)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(OUT_FILE, 'utf8')) as CatalogFile;
+  } catch {
+    return null;
+  }
+}
+
+const existingCatalog = readExistingCatalog();
+const positionalVersion =
+  process.argv.slice(2).find((arg) => !arg.startsWith('-'))?.trim() ?? '';
+const CATALOG_VERSION =
+  positionalVersion || existingCatalog?.version || '2026-11-16.1';
 
 interface Archetype {
   key: string;
@@ -457,7 +474,7 @@ function unique(values: string[]): string[] {
   return Array.from(new Set(values.map((v) => v.trim()).filter(Boolean)));
 }
 
-function buildWeapons() {
+function buildWeapons(): CatalogWeaponItem[] {
   const weapons = [];
   for (const archetype of ARCHETYPES) {
     for (const element of ELEMENTS) {
@@ -514,6 +531,8 @@ function buildWeapons() {
           `fx:weapon:${element.key}`,
           'sfx:forge',
         ],
+        status: 'approved' as const,
+        provenance: 'procedural' as const,
         payload: {
           ...blueprint,
           id: `wpn_${archetype.key}_${element.key}`,
@@ -525,7 +544,7 @@ function buildWeapons() {
   return weapons;
 }
 
-function buildEvents() {
+function buildEvents(): CatalogEventItem[] {
   const events = [];
   for (const def of EVENTS) {
     const prompt = def.label;
@@ -556,6 +575,8 @@ function buildEvents() {
         `fx:event:${def.category}`,
         'waypoint:event',
       ],
+      status: 'approved' as const,
+      provenance: 'procedural' as const,
       payload: {
         archetype: def.archetype,
         params,
@@ -568,9 +589,15 @@ function buildEvents() {
   return events;
 }
 
-const weapons = buildWeapons();
-const events = buildEvents();
-const catalog = { version: CATALOG_VERSION, weapons, events };
+const generatedWeapons = buildWeapons();
+const generatedEvents = buildEvents();
+const { catalog, keptWeapons, keptEvents } = mergeCatalog(
+  existingCatalog,
+  generatedWeapons,
+  generatedEvents,
+  CATALOG_VERSION,
+);
+const { weapons, events } = catalog;
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.writeFileSync(OUT_FILE, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
@@ -578,6 +605,7 @@ fs.writeFileSync(OUT_FILE, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
 const clampedWeapons = weapons.filter((w) => w.payload.wasClamped);
 const clampedEvents = events.filter((e) => e.payload.wasClamped);
 console.log(`Catálogo ${CATALOG_VERSION}: ${weapons.length} armas, ${events.length} eventos`);
+console.log(`Itens preservados fora da base: ${keptWeapons.length} armas, ${keptEvents.length} eventos`);
 console.log(`Armas com clamp: ${clampedWeapons.length}`, clampedWeapons.map((w) => `${w.id}:${w.payload.budgetUsed}`));
 console.log(`Eventos com clamp: ${clampedEvents.length}`, clampedEvents.map((e) => `${e.id}:${e.payload.budgetUsed}`));
 console.log(`Maior orçamento de arma: ${Math.max(...weapons.map((w) => w.payload.budgetUsed))}`);
