@@ -77,7 +77,15 @@ function weightedPick<T>(
   return items[items.length - 1];
 }
 
-function isNovel(item: CatalogWeaponItem | CatalogEventItem): boolean {
+function compareCatalogVersions(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true });
+}
+
+function isNovel(
+  item: CatalogWeaponItem | CatalogEventItem,
+  recentVersions: Set<string>,
+): boolean {
+  if (item.introducedIn) return recentVersions.has(item.introducedIn);
   return item.provenance === 'ai_assisted' || item.provenance === 'authored';
 }
 
@@ -165,6 +173,7 @@ function fillWeapons(
   catalog: CatalogWeaponItem[],
   target: number,
   usage: Record<string, number> | undefined,
+  recentVersions: Set<string>,
   rng: () => number,
 ): void {
   const maxPerElement = Math.max(3, Math.ceil((target / WEAPON_ELEMENTS.length) * 1.5));
@@ -186,11 +195,11 @@ function fillWeapons(
     const pick =
       weightedPick(
         eligible,
-        (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item) ? 1.5 : 1),
+        (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item, recentVersions) ? 1.5 : 1),
         rng,
       ) ?? weightedPick(
         catalog.filter((item) => !selected.has(item.id)),
-        (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item) ? 1.5 : 1),
+        (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item, recentVersions) ? 1.5 : 1),
         rng,
       );
     if (!pick) break;
@@ -203,12 +212,13 @@ function fillEvents(
   catalog: CatalogEventItem[],
   target: number,
   usage: Record<string, number> | undefined,
+  recentVersions: Set<string>,
   rng: () => number,
 ): void {
   while (selected.size < target) {
     const pick = weightedPick(
       catalog.filter((item) => !selected.has(item.id)),
-      (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item) ? 1.5 : 1),
+      (item) => poolUsageFactor(item.id, usage, catalog.length) * (isNovel(item, recentVersions) ? 1.5 : 1),
       rng,
     );
     if (!pick) break;
@@ -236,6 +246,15 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
         Object.entries(options.usage).filter(([id]) => eventIdSet.has(id)),
       )
     : undefined;
+  const introducedVersions = new Set<string>([options.catalog.version]);
+  for (const item of [...catalogWeapons, ...catalogEvents]) {
+    if (item.introducedIn) introducedVersions.add(item.introducedIn);
+  }
+  const recentVersions = new Set(
+    Array.from(introducedVersions)
+      .sort(compareCatalogVersions)
+      .slice(-2),
+  );
   const rng = mulberry32(
     fnv1a(
       `${options.seed}|${options.catalog.version}|${POOL_ALGORITHM_VERSION}|${options.targetPlayers}`,
@@ -297,13 +316,13 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
 
   const noveltyWeaponsNeeded = Math.min(
     3,
-    catalogWeapons.filter((item) => isNovel(item) && !selectedWeapons.has(item.id)).length,
+    catalogWeapons.filter((item) => isNovel(item, recentVersions) && !selectedWeapons.has(item.id)).length,
   );
   for (let i = 0; i < noveltyWeaponsNeeded; i++) {
     addWeapon(
       selectedWeapons,
       weightedPick(
-        catalogWeapons.filter((item) => isNovel(item) && !selectedWeapons.has(item.id)),
+        catalogWeapons.filter((item) => isNovel(item, recentVersions) && !selectedWeapons.has(item.id)),
         () => 1,
         rng,
       ),
@@ -311,21 +330,35 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
   }
   const noveltyEventNeeded = Math.min(
     1,
-    catalogEvents.filter((item) => isNovel(item) && !selectedEvents.has(item.id)).length,
+    catalogEvents.filter((item) => isNovel(item, recentVersions) && !selectedEvents.has(item.id)).length,
   );
   for (let i = 0; i < noveltyEventNeeded; i++) {
     addEvent(
       selectedEvents,
       weightedPick(
-        catalogEvents.filter((item) => isNovel(item) && !selectedEvents.has(item.id)),
+        catalogEvents.filter((item) => isNovel(item, recentVersions) && !selectedEvents.has(item.id)),
         () => 1,
         rng,
       ),
     );
   }
 
-  fillWeapons(selectedWeapons, catalogWeapons, weaponTarget, weaponUsage, rng);
-  fillEvents(selectedEvents, catalogEvents, eventTarget, eventUsage, rng);
+  fillWeapons(
+    selectedWeapons,
+    catalogWeapons,
+    weaponTarget,
+    weaponUsage,
+    recentVersions,
+    rng,
+  );
+  fillEvents(
+    selectedEvents,
+    catalogEvents,
+    eventTarget,
+    eventUsage,
+    recentVersions,
+    rng,
+  );
 
   const weaponIds = Array.from(selectedWeapons.keys()).sort();
   const eventIds = Array.from(selectedEvents.keys()).sort();

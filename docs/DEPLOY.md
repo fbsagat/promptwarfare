@@ -99,7 +99,7 @@ Os relatórios saem em `content/reports/loop-*.json/.md`. Use `--include-bots` a
 
 ### Métricas
 
-`GET /api/metrics` expõe um snapshot agregado (salas, jogadores, cobertura, lacunas fechadas/persistentes/regredidas, pool misses e itens com demanda/uso), sem texto de prompt. O snapshot é atualizado a cada 60 s; salas e uptime são lidos ao vivo.
+`GET /api/metrics` expõe um snapshot agregado (salas, jogadores, cobertura, lacunas fechadas/persistentes/regredidas, pool misses e itens com demanda/uso), sem texto de prompt. O snapshot é atualizado a cada 60 s; salas e uptime são lidos ao vivo. O campo `alerts` sinaliza baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa excessiva e ausência de uso.
 
 ```bash
 curl -H "X-Metrics-Token: $METRICS_TOKEN" https://api.promptwarfare.com/api/metrics

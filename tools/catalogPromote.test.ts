@@ -84,14 +84,16 @@ test('promoteCandidates validates, publishes, and skips approved candidates', ()
   );
 
   assert.equal(first.catalog.version, '2');
-  assert.equal(first.catalog.schemaVersion, 2);
+  assert.equal(first.catalog.schemaVersion, 3);
   assert.equal(first.catalog.weapons.length, 1);
   assert.equal(first.catalog.events.length, 1);
   assert.equal(first.catalog.weapons[0].id, 'wpn_teste_1');
   assert.equal(first.catalog.weapons[0].status, 'approved');
   assert.equal(first.catalog.weapons[0].provenance, 'ai_assisted');
+  assert.equal(first.catalog.weapons[0].introducedIn, '2');
   assert.equal(first.catalog.events[0].status, 'approved');
   assert.equal(first.catalog.events[0].provenance, 'ai_assisted');
+  assert.equal(first.catalog.events[0].introducedIn, '2');
   assert.equal(first.catalog.events[0].id, 'evt_teste_1');
   assert.equal(first.promoted.length, 2);
   assert.equal(first.candidates[0].status, 'approved');
@@ -113,7 +115,7 @@ test('promoteCandidates validates, publishes, and skips approved candidates', ()
 test('promoteCandidates merges aliases into an existing item instead of duplicating', () => {
   const base = weaponCandidate();
   const existing: CatalogFile = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     version: '1',
     weapons: [
       {
@@ -124,6 +126,7 @@ test('promoteCandidates merges aliases into an existing item instead of duplicat
         assets: [],
         status: 'approved',
         provenance: 'procedural',
+        introducedIn: '1',
         payload: base.payload as WeaponBlueprint,
       },
     ],
@@ -140,6 +143,7 @@ test('promoteCandidates merges aliases into an existing item instead of duplicat
   assert.equal(result.merged.length, 1);
   assert.equal(result.catalog.weapons.length, 1);
   assert.equal(result.catalog.weapons[0].id, 'wpn_pistola_existente');
+  assert.equal(result.catalog.weapons[0].introducedIn, '1');
   assert.ok(
     result.catalog.weapons[0].aliases.includes('pistola de teste turbinada'),
   );

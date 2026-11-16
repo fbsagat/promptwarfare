@@ -73,7 +73,7 @@ function makeCatalog(): CatalogFile {
     event('entity', 'kamikaze'),
     event('supply', 'supply'),
   ];
-  return { schemaVersion: 2, version: 'test-1', weapons, events };
+  return { schemaVersion: 3, version: 'test-1', weapons, events };
 }
 
 function usage(
@@ -146,16 +146,29 @@ test('pool usage factor penalizes used items and boosts unused ones', () => {
   assert.equal(poolUsageFactor('wpn_sniper_void', undefined, 36), 1);
 });
 
-test('pool includes a novelty item outside the core', () => {
+test('pool includes introducedIn novelty outside the core', () => {
   const catalog = makeCatalog();
   catalog.weapons.push({
     ...weapon('pistol', 'ice'),
     id: 'wpn_novidade_especial',
     tags: ['weapon', 'especial'],
-    provenance: 'ai_assisted',
+    provenance: 'procedural',
+    introducedIn: catalog.version,
   });
   const pool = buildContentPool({ seed: 7, targetPlayers: 6, catalog });
   assert.ok(pool.weaponIds.includes('wpn_novidade_especial'));
+});
+
+test('pool includes legacy ai_assisted novelty outside the core', () => {
+  const catalog = makeCatalog();
+  catalog.weapons.push({
+    ...weapon('pistol', 'ice'),
+    id: 'wpn_novidade_legacy',
+    tags: ['weapon', 'especial'],
+    provenance: 'ai_assisted',
+  });
+  const pool = buildContentPool({ seed: 8, targetPlayers: 6, catalog });
+  assert.ok(pool.weaponIds.includes('wpn_novidade_legacy'));
 });
 
 test('pool skips deprecated items', () => {

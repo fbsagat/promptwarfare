@@ -8,12 +8,27 @@ export interface RuntimeStats {
   bots: number;
 }
 
+export type MetricsAlertCode =
+  | 'LOW_COVERAGE'
+  | 'HIGH_POOL_MISS'
+  | 'REGRESSED_GAPS'
+  | 'HIGH_PARTIAL'
+  | 'NO_USAGE';
+
+export interface MetricsAlert {
+  code: MetricsAlertCode;
+  severity: 'warning' | 'critical';
+  message: string;
+  value: number;
+}
+
 export interface MetricsSnapshot {
   generatedAt: number;
   uptimeSec: number;
   catalogVersion: string;
   assetVersion: string;
   rooms: RuntimeStats;
+  alerts: MetricsAlert[];
   loop: {
     versions: number;
     submitted: number;
@@ -32,6 +47,54 @@ export interface MetricsSnapshot {
   };
 }
 
+export function buildMetricsAlerts(loop: LoopReport): MetricsAlert[] {
+  const alerts: MetricsAlert[] = [];
+  const minSample = 20;
+  if (loop.totals.submitted < minSample) return alerts;
+
+  if (loop.totals.coverageRate < 0.35) {
+    alerts.push({
+      code: 'LOW_COVERAGE',
+      severity: 'warning',
+      message: 'Cobertura de catálogo abaixo de 35%.',
+      value: loop.totals.coverageRate,
+    });
+  }
+  if (loop.totals.poolMissRate > 0.35) {
+    alerts.push({
+      code: 'HIGH_POOL_MISS',
+      severity: 'warning',
+      message: 'Muitos pedidos caem fora do arsenal da sala; revisar tamanho/núcleo do pool.',
+      value: loop.totals.poolMissRate,
+    });
+  }
+  if (loop.totals.regressedGaps > 0) {
+    alerts.push({
+      code: 'REGRESSED_GAPS',
+      severity: 'critical',
+      message: 'Lacunas que estavam cobertas voltaram a aparecer.',
+      value: loop.totals.regressedGaps,
+    });
+  }
+  if (loop.totals.partial > loop.totals.covered) {
+    alerts.push({
+      code: 'HIGH_PARTIAL',
+      severity: 'warning',
+      message: 'Cobertura duvidosa supera a cobertura confiável.',
+      value: loop.totals.partial,
+    });
+  }
+  if (loop.totals.itemsWithUsage === 0) {
+    alerts.push({
+      code: 'NO_USAGE',
+      severity: 'warning',
+      message: 'Há demanda registrada, mas nenhum uso de item no período.',
+      value: 0,
+    });
+  }
+  return alerts;
+}
+
 export function buildMetricsSnapshot(input: {
   loop: LoopReport;
   rooms: RuntimeStats;
@@ -46,6 +109,7 @@ export function buildMetricsSnapshot(input: {
     catalogVersion: input.catalogVersion,
     assetVersion: input.assetVersion,
     rooms: input.rooms,
+    alerts: buildMetricsAlerts(input.loop),
     loop: {
       versions: input.loop.totals.versions,
       submitted: input.loop.totals.submitted,

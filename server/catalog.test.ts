@@ -15,7 +15,7 @@ import {
 test('catalog version and budgets are valid', () => {
   const catalog = getCatalog();
   assert.ok(catalog.version.length > 0);
-  assert.equal(catalog.schemaVersion, 2);
+  assert.equal(catalog.schemaVersion, 3);
   assert.equal(getCatalogVersion(), catalog.version);
   assert.ok(catalog.weapons.length >= 30);
   assert.ok(catalog.events.length >= 10);

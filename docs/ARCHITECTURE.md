@@ -75,7 +75,7 @@ O runtime não gera conteúdo. Ele carrega `content/catalog/catalog.json` no boo
 5. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
 6. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
 
-O catálogo é read-only, usa `schemaVersion: 2` e versionamento por release. Cada item carrega `status` (`approved`/`deprecated`) e `provenance` (`procedural`, `ai_assisted`, `authored`, `template` ou `seed`). `getCatalogVersion()` aparece em `room:init`/`room:tick`. Com `CATALOG_WATCH` ligado (padrão), o arquivo é recarregado de forma atômica quando muda; `SIGHUP` força a recarga. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
+O catálogo é read-only, usa `schemaVersion: 3` e versionamento por release. Cada item carrega `status` (`approved`/`deprecated`), `provenance` (`procedural`, `ai_assisted`, `authored`, `template` ou `seed`) e `introducedIn` (versão de entrada, usada para novidade). `getCatalogVersion()` aparece em `room:init`/`room:tick`. Com `CATALOG_WATCH` ligado (padrão), o arquivo é recarregado de forma atômica quando muda; `SIGHUP` força a recarga. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
 
 O estado do evento transmitido à sala usa o **nome do item do catálogo**, não o texto cru do jogador; o prompt original fica apenas no ledger.
 
@@ -85,7 +85,7 @@ Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalog
 
 - núcleo obrigatório: defaults, um item por elemento, um por arquétipo, um por categoria de evento;
 - tamanho entre 16–26 armas e 7–11 eventos, conforme `targetPlayers`;
-- peso inverso ao uso humano recente (`equip`/`event`) e quota de novidade para `ai_assisted`/`authored`;
+- peso inverso ao uso humano recente (`equip`/`event`) e quota de novidade para `introducedIn` recente ou `provenance` `ai_assisted`/`authored`;
 - `hash` e contagem de itens aparecem em `room:init`/`room:tick` (`contentPool`);
 - itens `deprecated` e pools vazios caem para o catálogo completo.
 
@@ -119,7 +119,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`):
 ### Observabilidade
 
 - `GET /api/health` expõe salas, jogadores humanos/bots, uptime e versões atuais.
-- `GET /api/metrics` expõe um snapshot agregado de cobertura, lacunas e itens com demanda/uso; não inclui texto de prompt. O snapshot do ledger é atualizado a cada 60 s, enquanto salas e uptime são lidos ao vivo.
+- `GET /api/metrics` expõe um snapshot agregado de cobertura, lacunas e itens com demanda/uso; não inclui texto de prompt. O snapshot do ledger é atualizado a cada 60 s, enquanto salas e uptime são lidos ao vivo. Também inclui `alerts` para baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa excessiva e ausência de uso.
 - `METRICS_TOKEN` (opcional) exige o header `X-Metrics-Token`; `METRICS_WINDOW_DAYS` controla a janela (padrão 90).
 
 ### Ferramentas offline (`tools/`)

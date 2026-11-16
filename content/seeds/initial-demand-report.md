@@ -1,7 +1,7 @@
 # Relatório de demanda
 
-- **Gerado em:** 2026-11-16T16:17:35.163Z
-- **Versão do catálogo:** 2026-11-16.2
+- **Gerado em:** 2026-11-16T16:26:36.994Z
+- **Versão do catálogo:** 2026-11-16.3
 - **Prompts enviados:** 177
 - **Intenções únicas:** 70
 - **Lacunas:** 42

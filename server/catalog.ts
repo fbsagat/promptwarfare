@@ -31,6 +31,7 @@ export type CatalogResolutionStrategy =
 export interface CatalogItemMeta {
   status?: CatalogItemStatus;
   provenance?: CatalogProvenance;
+  introducedIn?: string;
 }
 
 export interface CatalogWeaponItem extends CatalogItemMeta {
@@ -248,7 +249,7 @@ function assertCatalogShape(raw: unknown): CatalogFile {
   if (!data || typeof data.version !== 'string') {
     throw new Error('Catálogo inválido: versão ausente.');
   }
-  if (data.schemaVersion !== undefined && data.schemaVersion !== 2) {
+  if (data.schemaVersion !== undefined && data.schemaVersion !== 2 && data.schemaVersion !== 3) {
     throw new Error(`Catálogo inválido: schemaVersion não suportada (${data.schemaVersion}).`);
   }
   if (!Array.isArray(data.weapons) || data.weapons.length === 0) {
@@ -281,6 +282,9 @@ function assertCatalogShape(raw: unknown): CatalogFile {
       !['authored', 'ai_assisted', 'procedural', 'template', 'seed'].includes(item.provenance)
     ) {
       throw new Error(`Catálogo inválido: provenance desconhecida em ${item.id}.`);
+    }
+    if (item.introducedIn !== undefined && typeof item.introducedIn !== 'string') {
+      throw new Error(`Catálogo inválido: introducedIn inválido em ${item.id}.`);
     }
   }
   return data as CatalogFile;

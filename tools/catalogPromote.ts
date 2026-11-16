@@ -113,7 +113,7 @@ export function promoteCandidates(
     ...catalog.events.map((item) => item.id),
   ]);
   const next: CatalogFile = {
-    schemaVersion: catalog.schemaVersion ?? 2,
+    schemaVersion: 3,
     version,
     weapons: [...catalog.weapons],
     events: [...catalog.events],
@@ -164,6 +164,7 @@ export function promoteCandidates(
         assets: candidateAssets(candidate),
         status: 'approved',
         provenance: candidate.provenance,
+        introducedIn: version,
         payload: {
           ...blueprint,
           id,
@@ -213,6 +214,7 @@ export function promoteCandidates(
       assets: candidateAssets(candidate),
       status: 'approved',
       provenance: candidate.provenance,
+      introducedIn: version,
       payload: {
         archetype: payload.archetype,
         params: validated.params,

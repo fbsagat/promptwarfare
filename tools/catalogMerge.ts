@@ -37,6 +37,7 @@ export function mergeCatalog(
     const prior = existingById.get(item.id);
     if (prior?.status === 'deprecated') item.status = 'deprecated';
     if (prior?.provenance) item.provenance = prior.provenance;
+    if (prior?.introducedIn) item.introducedIn = prior.introducedIn;
   }
 
   const keptWeapons = existing
@@ -48,7 +49,7 @@ export function mergeCatalog(
 
   return {
     catalog: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       version,
       weapons: [...generatedWeapons, ...keptWeapons],
       events: [...generatedEvents, ...keptEvents],

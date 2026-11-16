@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 2,
-  "version": "2026-11-16.2",
+  "schemaVersion": 3,
+  "version": "2026-11-16.3",
   "weapons": [
     {
       "id": "wpn_pistol_standard",

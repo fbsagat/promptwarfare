@@ -39,7 +39,7 @@ function event(
 
 test('mergeCatalog preserves promoted items and deprecated state', () => {
   const existing: CatalogFile = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     version: 'old',
     weapons: [
       weapon('wpn_base', { status: 'deprecated', provenance: 'authored' }),
@@ -56,7 +56,7 @@ test('mergeCatalog preserves promoted items and deprecated state', () => {
   );
 
   assert.equal(result.catalog.version, 'new');
-  assert.equal(result.catalog.schemaVersion, 2);
+  assert.equal(result.catalog.schemaVersion, 3);
   assert.deepEqual(
     result.catalog.weapons.map((item) => item.id),
     ['wpn_base', 'wpn_extra'],
@@ -79,7 +79,7 @@ test('mergeCatalog with no existing catalog rebuilds only the procedural base', 
   );
 
   assert.equal(result.catalog.version, 'first');
-  assert.equal(result.catalog.schemaVersion, 2);
+  assert.equal(result.catalog.schemaVersion, 3);
   assert.deepEqual(result.catalog.weapons.map((item) => item.id), ['wpn_base']);
   assert.deepEqual(result.catalog.events.map((item) => item.id), ['evt_base']);
   assert.equal(result.keptWeapons.length, 0);
