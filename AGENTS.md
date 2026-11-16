@@ -31,7 +31,7 @@ Production topology: the static client is hosted on Vercel and the API + WebSock
 - `tools/aiGenerator.ts` is the offline Gemini tool (`gemini-4-hydrogen`, structured JSON). It is not imported by `server.ts` or `server/roomManager.ts`; the server boots without `GEMINI_API_KEY`. AI output is untrusted and must pass through `src/shared/budget.ts` validation/clamping.
 - `tools/blueprintDb.ts` is the offline SQLite cache for the AI tool (`node:sqlite`) at `data/voxelforge-blueprints.db` (override with `VOXELFORGE_DB_PATH`). It is not part of the runtime.
 - `src/shared/` is the shared layer used by the browser and/or server: `budget.ts` (100-point balance, RLE, fallbacks), `prompt.ts` (normalização/canonical key), `voxelWorld.ts` (deterministic island generation, raycast, movement, destruction), `botBrain.ts` (server-driven bots), `controls.ts`, and protocol types in `types.ts`. Keep it free of DOM/Node-only APIs. `src/engine/` is browser-only Babylon rendering; voxel meshing runs in `greedyMesher.worker.ts`.
-- Human-facing docs live in `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOY.md`, `docs/PROTOCOL.md`, and `docs/CONTENT_PLAN.md`. Keep them in pt-BR and update the protocol table when adding WS message types.
+- Human-facing docs live in `README.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOY.md`, `docs/MONITORING.md`, `docs/PROTOCOL.md`, and `docs/CONTENT_PLAN.md`. Keep them in pt-BR and update the protocol table when adding WS message types.
 
 ## Invariants and gotchas
 

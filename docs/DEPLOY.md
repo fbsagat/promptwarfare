@@ -11,6 +11,8 @@ Navegador
 
 A Vercel **não** faz proxy do WebSocket. O navegador conecta direto na VPS, por isso a API precisa de TLS válido e a origem da Vercel precisa estar liberada.
 
+Para Docker, Prometheus, Grafana e Uptime Kuma, veja [MONITORING.md](MONITORING.md).
+
 ## 0. Container Docker (recomendado com a stack de monitoramento)
 
 O repositório inclui `Dockerfile`, `docker-entrypoint.sh` e `docker-compose.prod.yml`. O container `pw_api` entra na rede Docker da stack de monitoramento, sem publicar portas no host:
@@ -194,26 +196,39 @@ Resposta esperada: `{"ok":true,"rooms":0,"devMode":false}`.
 
 ### Caddy
 
+Com Caddy no host e a porta publicada em `127.0.0.1:3000`:
+
 ```caddyfile
 api.promptwarfare.com {
     reverse_proxy 127.0.0.1:3000
 }
 ```
 
-O Caddy emite o certificado e encaminha upgrades de WebSocket automaticamente.
+Se o Caddy estiver na mesma rede Docker do `pw_api`, use `reverse_proxy pw_api:3000`. O Caddy emite o certificado e encaminha upgrades de WebSocket automaticamente.
 
 ### Nginx
+
+No `mt_gateway` da stack principal (mesma rede Docker), use resolução dinâmica para o container recriado não deixar IP velho em cache:
 
 ```nginx
 server {
     listen 443 ssl;
+    http2 on;
     server_name api.promptwarfare.com;
 
-    ssl_certificate     /etc/letsencrypt/live/api.promptwarfare.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.promptwarfare.com/privkey.pem;
+    ssl_certificate     /etc/nginx/certs/promptwarfare-fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/promptwarfare-privkey.pem;
+
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # /metrics é interno; nunca publique.
+    location = /metrics {
+        return 404;
+    }
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        set $pw_upstream http://pw_api:3000;
+        proxy_pass $pw_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -225,7 +240,15 @@ server {
 }
 ```
 
-Libere apenas 80/443 no firewall; a porta 3000 deve ficar em `127.0.0.1`.
+A stack MemeTrigger usa Cloudflare Origin Certificate; o certificado acima precisa existir em `nginx/certs/` com o nome do domínio do Prompt Warfare. Se preferir Caddy/Let's Encrypt fora da rede Docker, publique a porta apenas em loopback:
+
+```yaml
+# docker-compose.prod.yml
+ports:
+  - "127.0.0.1:3000:3000"
+```
+
+Nunca publique `0.0.0.0:3000`; o WebSocket e a API devem passar pelo proxy com TLS.
 
 ## 2. Vercel (frontend)
 

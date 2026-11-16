@@ -261,6 +261,7 @@ Os testes usam o runner nativo do Node, rodam offline e cobrem orçamento de arm
 
 - [Arquitetura](docs/ARCHITECTURE.md)
 - [Deploy Vercel + VPS](docs/DEPLOY.md)
+- [Monitoramento Docker/Prometheus/Grafana](docs/MONITORING.md)
 - [Protocolo WebSocket](docs/PROTOCOL.md)
 - [Plano do ciclo de conteúdo por prompts](docs/CONTENT_PLAN.md)
 - [Instruções para agentes](AGENTS.md)
