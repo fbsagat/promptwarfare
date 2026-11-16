@@ -9,8 +9,9 @@ Vercel (HTTPS)                          VPS (HTTPS/WSS)
 React + Babylon.js  ── /api/* ────────▶ server.ts (Express + ws)
                     ── /ws (wss) ─────▶   └── RoomManager (20 Hz)
                                               ├── VoxelGrid / física / combate / bots
-                                              ├── aiGenerator (Gemini + fallback)
-                                              └── blueprintDb (SQLite)
+                                              ├── catalog (JSON versionado)
+                                              ├── ledger (SQLite append-only)
+                                              └── resolvedor local (sem IA)
 ```
 
 Em desenvolvimento, o `server.ts` monta o Vite em modo middleware e serve o frontend na mesma origem. Em produção, o build do cliente fica na Vercel e a VPS roda apenas a API/WebSocket (`SERVE_CLIENT=false`). O `server.ts` ainda consegue servir `dist/`, o que é útil para um deploy all-in-one ou para testes locais de produção.
@@ -29,7 +30,7 @@ Em desenvolvimento, o `server.ts` monta o Vite em modo middleware e serve o fron
 - O cliente envia entradas (`player:input`) com throttle de 45 ms e ações pontuais; nunca calcula dano, colisão ou destruição.
 - O `RoomManager` executa `tickRoom(room, 0.05)` a cada 50 ms (20 Hz): atualiza timers, eventos, jogadores, bots, projéteis, entidades e envia `room:tick` + `voxel:deltas`.
 - Colisão e movimento usam a mesma implementação de `src/shared/voxelWorld.ts` nos dois lados, mas só o resultado do servidor é autoritativo.
-- Reiniciar o processo apaga salas e partidas. Apenas os blueprints de IA persistem em SQLite.
+- Reiniciar o processo apaga salas e partidas. O catálogo é um arquivo versionado e permanece entre reinícios.
 
 ## Fases da sala
 
@@ -63,24 +64,52 @@ Núcleo do jogo. Concentra:
 
 Novas mensagens de cliente devem ser adicionadas ao `switch` de `handleClientMessage`.
 
-### `server/aiGenerator.ts`
+### `server/catalog.ts`
 
-Pipeline de geração:
+O runtime não gera conteúdo. Ele carrega `content/catalog/catalog.json` no boot e resolve o prompt contra itens aprovados:
 
-1. Normaliza o prompt e consulta o cache por chave canônica (ignora acentos, pontuação e ordem das palavras) e pela alocação de pontos.
-2. Com `GEMINI_API_KEY` válida, chama `gemini-4-hydrogen` com `responseSchema` estrito e `ThinkingLevel.LOW`.
-3. Valida e limita a resposta com as regras de `src/shared/budget.ts` (orçamento, faixas de atributos, riscos, paleta e RLE).
-4. Persiste o blueprint e devolve uma cópia com ID novo.
-5. Sem chave, em erro ou durante cooldown de quota, usa o gerador procedural e salva o resultado como `procedural`.
+1. Normaliza o prompt e a chave canônica (`src/shared/prompt.ts`).
+2. Tenta alias exato, depois chave canônica, depois tokens/tags e palavras-chave de arquétipo/elemento.
+3. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
+4. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
 
-Armas usam malha RLE `12×12×24`; entidades de evento usam `16×16×16`. O cliente monta as malhas a partir desses dados.
+O catálogo é read-only e versionado. `getCatalogVersion()` aparece em `room:init`/`room:tick`. Para atualizar, regenere o JSON e faça deploy. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
 
-### `server/blueprintDb.ts`
+### `server/ledger.ts`
 
-- SQLite via `node:sqlite`, com WAL e `synchronous = NORMAL`.
-- Caminho padrão `data/voxelforge-blueprints.db`; pode ser trocado por `VOXELFORGE_DB_PATH`.
-- Tabelas `weapon_blueprints`, `event_blueprints` e `schema_meta`; o schema é criado no startup, sem migrations.
-- A versão de balanceamento atual fica em `schema_meta.balance_version`. Quando muda, blueprints `procedural` são apagados para forçar regeneração; blueprints de IA são preservados.
+Ledger append-only de prompts em SQLite (`node:sqlite`):
+
+- tabela `prompt_events` com uma linha por fase (`opened`, `submitted`, `cancelled`, `timed_out`);
+- `session_id` correlaciona abertura, envio e abandono;
+- guarda ator (`human`, `bot`, `dev`, `preview`, `system`), sala, partida, prompt normalizado/canônico, item servido, estratégia, orçamento, `catalog_version`, tempo de escrita e motivo;
+- não guarda nomes de jogador, apenas `actor_ref` pseudônimo;
+- grava em lote a cada ~100 ms para não bloquear o tick;
+- caminho padrão `data/prompt-ledger.db` (`PROMPT_LEDGER_DB_PATH`).
+
+### `server/assets.ts`
+
+- Lê `content/assets/manifest.json` no boot; runtime read-only.
+- IDs lógicos para `texture`, `sound`, `effect` e `waypoint`, com `status` e `params`.
+- `assetVersion` aparece em `room:init`/`room:tick`; o catálogo referencia IDs de assets.
+- O manifesto é validado por `server/assets.test.ts`; a ligação do cliente por ID ainda é a próxima etapa.
+
+### Telemetria de uso
+
+- `content_usage` registra `equip`, `kill` e `event` por item, jogador/partida e versão do catálogo.
+- `server/usageReport.ts` + `tools/usage-report.ts` geram `content/reports/usage-*.json/.md` com equipes, abates, eventos e abates/equipe por item.
+- Bots são excluídos por padrão; use `--include-bots` para auditá-los.
+
+### Ferramentas offline (`tools/`)
+
+- `tools/build-catalog.ts` gera o catálogo procedural determinístico (`npx tsx tools/build-catalog.ts`).
+- `tools/seed-demand.ts` gera `content/seeds/initial-demand-report.json/.md` a partir da demanda sintética inicial.
+- `tools/ledger-report.ts` lê o ledger e gera `content/reports/demand-*.json/.md` com intenções, lacunas, abandono e cobertura.
+- `tools/usage-report.ts` lê `content_usage` e gera o relatório de qualidade.
+- `tools/catalog-candidates.ts` transforma lacunas em candidatos usando a ferramenta Gemini offline.
+- `tools/promote-candidates.ts` valida candidatos aprovados e publica uma nova versão do catálogo.
+- `tools/aiGenerator.ts` é a ferramenta Gemini para produzir candidatos; não é importada pelo servidor.
+- `tools/blueprintDb.ts` é o cache SQLite (`node:sqlite`) da ferramenta offline, em `data/voxelforge-blueprints.db` (`VOXELFORGE_DB_PATH`).
+- Todo candidato passa por `src/shared/budget.ts` e por curadoria humana antes de entrar no catálogo.
 
 ## Código compartilhado (`src/shared`)
 
@@ -88,6 +117,7 @@ Armas usam malha RLE `12×12×24`; entidades de evento usam `16×16×16`. O clie
 | --- | --- |
 | `types.ts` | Protocolo, constantes de voxel e tipos de domínio. Fonte da verdade dos payloads. |
 | `budget.ts` | Orçamento de 100 pontos, normalização, clamps, RLE e geradores de fallback. |
+| `prompt.ts` | Normalização de prompt e chave canônica usadas pelo resolvedor e pelo cache offline. |
 | `voxelWorld.ts` | Ilha procedural determinística, raycast, movimento, carving e colapso de estruturas. |
 | `botBrain.ts` | Personalidades, seleção de alvo, mira com previsão e decisões dos bots (executado no servidor). |
 | `controls.ts` | Cálculo de look/edge turn compartilhado com o cliente. |
@@ -99,7 +129,7 @@ Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 ## Cliente (`src`)
 
 - `App.tsx` mantém o WebSocket, o estado da UI, o roteamento das mensagens e os overlays.
-- `components/` contém lobby, sala de espera, HUD, prompt de arma/evento, pausa e fim de partida.
+- `components/` contém lobby, sala de espera, HUD, barra mínima de prompt (`PromptBar`), pausa e fim de partida.
 - `engine/babylonArena.ts` monta a cena, câmera, iluminação, projéteis, avatares e aplica deltas de voxels.
 - `engine/greedyMesher.worker.ts` faz greedy meshing por chunk em Web Worker; os chunks têm 16³ voxels e são enviados com padding para consulta O(1) de vizinhos.
 - `engine/voxelMeshBuilder.ts` converte RLE em malhas de armas, criaturas e avatares.
@@ -108,10 +138,10 @@ Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 ## Regras de balanceamento
 
 - Armas e eventos têm orçamento fixo de **100 pontos**.
-- A alocação de arma distribui pontos entre poder de fogo, cadência/munição, precisão/alcance e destruição.
+- O orçamento é interno: o jogador descreve a arma/evento, mas não distribui pontos manualmente. Bots podem usar perfis internos de estilo.
 - O servidor sempre revalida e aplica clamp no que vem do cliente ou da IA; `wasClamped` indica correção.
 - Prompts com padrões de abuso (vida infinita, one-shot, "mate todos") são tratados como suspeitos e normalizados.
-- Forja inicial: 10 s de espera. Após criar uma arma: 30 s. Prompt de arma: 20 s. Ciclo de evento: 24 s. Máximo de 3 eventos ativos.
+- Forja inicial: 10 s de espera. Após criar uma arma: 30 s. Escrita da arma: 20 s. Evento global: 24 s de ciclo, 10 s para o sorteado reivindicar e 20 s de escrita. Máximo de 3 eventos ativos.
 - Sem eliminações por muito tempo, o servidor escala catástrofes automáticas (120 s + 45 s por nível de estagnação).
 
 ## Dev mode
@@ -129,5 +159,5 @@ O servidor pode ser instanciado com `new RoomManager({ devEnabled })` e expõe f
 - `src/shared/logic.test.ts` cobre orçamento, RLE, voxels, geração de ilha, física e bots.
 - `src/shared/endpoints.test.ts` cobre mesma origem, API externa, derivação `https → wss` e URL explícita de WebSocket.
 - `server/httpCors.test.ts` cobre origens exatas, wildcard global, curingas de preview e lista vazia.
-- `server/aiGenerator.test.ts` usa SQLite `:memory:` e zera `GEMINI_API_KEY` para nunca acessar a rede.
+- `tools/aiGenerator.test.ts` usa SQLite `:memory:` e zera `GEMINI_API_KEY` para nunca acessar a rede. `server/catalog.test.ts` valida o catálogo e o resolvedor.
 - `server/roomManager.test.ts` e `server/devMode.test.ts` usam `MockSocket` e o parâmetro `{ devEnabled }` para simular clientes e ambientes.

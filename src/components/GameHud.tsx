@@ -1,6 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { Volume2, VolumeX, Pause, Sparkles, AlertTriangle, Wrench } from 'lucide-react';
+import {
+  Volume2,
+  VolumeX,
+  Pause,
+  Sparkles,
+  AlertTriangle,
+  Wrench,
+  ThumbsUp,
+  ThumbsDown,
+} from 'lucide-react';
+import {
+  BOT_EVENT_WINDOW_SEC,
+  EVENT_CYCLE_COOLDOWN_SEC,
+  EVENT_RAFFLE_WINDOW_SEC,
+  EVENT_WRITE_WINDOW_SEC,
+  WEAPON_CYCLE_COOLDOWN_SEC,
+} from '../shared/budget.ts';
 import type {
+  EventCycleState,
   InventorySlotItem,
   KillfeedEntry,
   LootDropState,
@@ -16,10 +33,9 @@ interface GameHudProps {
   entities: SpawnedEntityNetState[];
   islandSizeMeters: number;
   activeEvents: MapEventState[];
+  eventCycle: EventCycleState;
+  serverNow: number;
   eventCooldownSec: number;
-  rafflePlayerId: string | null;
-  rafflePlayerName: string | null;
-  raffleRemainingSec: number;
   killfeed: KillfeedEntry[];
   zoomMeters: number;
   muted: boolean;
@@ -35,6 +51,7 @@ interface GameHudProps {
   onSelectSlot: (slot: number) => void;
   onOpenWeaponPrompt: () => void;
   onOpenEventPrompt: () => void;
+  onFeedback: (itemId: string, rating: 1 | -1) => void;
 }
 
 const BEHAVIOR_LABELS: Record<string, string> = {
@@ -95,10 +112,9 @@ export const GameHud: React.FC<GameHudProps> = ({
   entities,
   islandSizeMeters,
   activeEvents,
+  eventCycle,
+  serverNow,
   eventCooldownSec,
-  rafflePlayerId,
-  rafflePlayerName,
-  raffleRemainingSec,
   killfeed,
   zoomMeters,
   muted,
@@ -114,8 +130,12 @@ export const GameHud: React.FC<GameHudProps> = ({
   onSelectSlot,
   onOpenWeaponPrompt,
   onOpenEventPrompt,
+  onFeedback,
 }) => {
   const [ghostHp, setGhostHp] = useState(100);
+  const [feedback, setFeedback] = useState<{ itemId: string; rating: 1 | -1 } | null>(
+    null,
+  );
   const currentHp = localPlayer?.hp ?? 0;
 
   useEffect(() => {
@@ -125,7 +145,27 @@ export const GameHud: React.FC<GameHudProps> = ({
 
   const aliveCount = allPlayers.filter((p) => p.alive).length;
   const totalCount = allPlayers.length;
-  const isRaffled = rafflePlayerId !== null && rafflePlayerId === localPlayer?.id;
+  const eventRemainingSec = eventCycle.endsAt
+    ? Math.max(0, Math.ceil((eventCycle.endsAt - serverNow) / 1000))
+    : Math.max(0, eventCooldownSec);
+  const eventWindowSec =
+    eventCycle.phase === 'cooldown'
+      ? EVENT_CYCLE_COOLDOWN_SEC
+      : eventCycle.phase === 'raffle'
+        ? EVENT_RAFFLE_WINDOW_SEC
+        : eventCycle.phase === 'writing'
+          ? EVENT_WRITE_WINDOW_SEC
+          : BOT_EVENT_WINDOW_SEC;
+  const isRaffled =
+    eventCycle.rafflePlayerId !== null &&
+    eventCycle.rafflePlayerId === localPlayer?.id &&
+    eventCycle.phase !== 'cooldown';
+  const raffledName = eventCycle.rafflePlayerName;
+  const forgePhase =
+    localPlayer?.forge?.phase ?? (localPlayer?.canForgeWeapon ? 'ready' : 'cooling');
+  const forgeRemainingSec = localPlayer?.forge?.endsAt
+    ? Math.max(0, Math.ceil((localPlayer.forge.endsAt - serverNow) / 1000))
+    : Math.max(0, localPlayer?.weaponCooldownSec ?? 0);
   const warningEvent = activeEvents.find((e) => e.warningRemainingSec > 0);
   const activeItem = localPlayer?.slots[localPlayer.activeSlot] ?? null;
   const inWater = (localPlayer?.oxygen ?? 100) < 99.5;
@@ -225,23 +265,45 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onOpenEventPrompt();
               }}
-              className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm shadow-lg cursor-pointer whitespace-nowrap"
+              className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm shadow-lg cursor-pointer whitespace-nowrap animate-pulse"
             >
               <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>Você foi sorteado! Evento Global [Y] ({raffleRemainingSec}s)</span>
+              <span>
+                Você foi sorteado — Enter para escrever ({eventRemainingSec}s)
+              </span>
             </button>
           ) : (
             <div
               data-testid="event-timer"
-              className="bg-[#0b101b]/84 border border-amber-400/25 rounded-lg px-3.5 py-1.5 text-xs text-slate-200 font-mono-tabular"
+              className="w-full bg-[#0b101b]/84 border border-amber-400/25 rounded-lg px-3.5 py-1.5 text-xs text-slate-200 font-mono-tabular"
             >
-              {rafflePlayerId ? (
-                <span className="text-amber-300">
-                  🎲 Sorteado: {rafflePlayerName || 'Jogador'} ({raffleRemainingSec}s)
-                </span>
+              {eventCycle.rafflePlayerId ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-amber-300 truncate">
+                    🎲 {raffledName || 'Jogador'}
+                    {eventCycle.phase === 'writing' || eventCycle.phase === 'bot'
+                      ? ' · preparando'
+                      : ' · sorteado'}
+                  </span>
+                  <span className="text-amber-200">{eventRemainingSec}s</span>
+                </div>
               ) : (
-                <span>Sorteio Evento Global: {eventCooldownSec}s</span>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Evento global em</span>
+                  <span className="text-amber-200">{eventRemainingSec}s</span>
+                </div>
               )}
+              <div className="mt-1 h-1 rounded bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-amber-400 transition-all duration-100"
+                  style={{
+                    width: `${Math.max(
+                      3,
+                      Math.min(100, (eventRemainingSec / eventWindowSec) * 100),
+                    )}%`,
+                  }}
+                />
+              </div>
             </div>
           )}
 
@@ -402,7 +464,7 @@ export const GameHud: React.FC<GameHudProps> = ({
         )}
 
         <div className="flex flex-wrap items-center justify-center gap-2.5">
-          {localPlayer?.canForgeWeapon ? (
+          {forgePhase === 'ready' && (
             <button
               type="button"
               tabIndex={-1}
@@ -411,22 +473,32 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onOpenWeaponPrompt();
               }}
-              className="pointer-events-auto flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-display font-bold text-xs shadow cursor-pointer whitespace-nowrap"
+              className="pointer-events-auto flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-display font-bold text-xs shadow cursor-pointer whitespace-nowrap animate-pulse"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>Arma IA Pronta · Forjar [T]</span>
+              <span>Forja pronta — Enter para escrever</span>
             </button>
-          ) : (
+          )}
+
+          {forgePhase === 'cooling' && (
             <div
               data-testid="weapon-timer"
               className="bg-[#0b101b]/84 border border-sky-400/25 rounded-lg px-3 py-1.5 text-xs text-sky-200 font-mono-tabular flex items-center gap-2"
             >
-              <span>Timer de Arma: {localPlayer?.weaponCooldownSec ?? 0}s</span>
+              <span>Forja em {forgeRemainingSec}s</span>
               <span className="w-12 h-1.5 rounded bg-slate-800 overflow-hidden inline-block">
                 <span
                   className="block h-full bg-sky-400 transition-all duration-150"
                   style={{
-                    width: `${Math.max(4, Math.min(100, ((30 - (localPlayer?.weaponCooldownSec ?? 30)) / 30) * 100))}%`,
+                    width: `${Math.max(
+                      4,
+                      Math.min(
+                        100,
+                        ((WEAPON_CYCLE_COOLDOWN_SEC - forgeRemainingSec) /
+                          WEAPON_CYCLE_COOLDOWN_SEC) *
+                          100,
+                      ),
+                    )}%`,
                   }}
                 />
               </span>
@@ -457,6 +529,42 @@ export const GameHud: React.FC<GameHudProps> = ({
                 </span>
               )}
               <span className="text-slate-400">[G] Descartar</span>
+              {activeItem.weapon.catalogId && (
+                <span className="ml-1 flex items-center gap-1 border-l border-white/10 pl-2">
+                  {feedback?.itemId === activeItem.weapon.catalogId ? (
+                    <span className="text-emerald-300">Obrigado!</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-label="Gostei desta arma"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onFeedback(activeItem.weapon!.catalogId!, 1);
+                          setFeedback({ itemId: activeItem.weapon!.catalogId!, rating: 1 });
+                        }}
+                        className="pointer-events-auto text-slate-300 hover:text-emerald-300 cursor-pointer"
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-label="Não gostei desta arma"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onFeedback(activeItem.weapon!.catalogId!, -1);
+                          setFeedback({ itemId: activeItem.weapon!.catalogId!, rating: -1 });
+                        }}
+                        className="pointer-events-auto text-slate-300 hover:text-rose-300 cursor-pointer"
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </span>
+              )}
             </div>
           )}
         </div>

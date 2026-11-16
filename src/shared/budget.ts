@@ -18,6 +18,11 @@ export const EVENT_POINT_BUDGET = 100;
 export const WEAPON_INITIAL_COOLDOWN_SEC = 10;
 export const WEAPON_CYCLE_COOLDOWN_SEC = 30;
 export const EVENT_CYCLE_COOLDOWN_SEC = 24;
+export const EVENT_RAFFLE_WINDOW_SEC = 10;
+export const EVENT_WRITE_WINDOW_SEC = 20;
+export const WEAPON_WRITE_WINDOW_SEC = 20;
+export const WEAPON_TIMEOUT_COOLDOWN_SEC = 8;
+export const BOT_EVENT_WINDOW_SEC = 3;
 
 export const BASE_PLAYER_MASS_KG = 70;
 export const SHOVEL_MASS_KG = 3;
@@ -324,7 +329,6 @@ export function validateAndClampWeapon(
       rleVoxels: encodeRleVoxels(fb).slice(0, expectedVoxelCount * 2),
       gripPos: clampVec3Tuple(raw.gripPos, [6, 3, 6], [11, 11, 23]),
       muzzlePos: clampVec3Tuple(raw.muzzlePos, [6, 7, 22], [11, 11, 23]),
-      allocation: normalizedAlloc,
     };
   }
 
@@ -341,7 +345,6 @@ export function validateAndClampWeapon(
     rleVoxels: finalRle,
     gripPos: clampVec3Tuple(raw.gripPos, [6, 3, 6], [11, 11, 23]),
     muzzlePos: clampVec3Tuple(raw.muzzlePos, [6, 7, 22], [11, 11, 23]),
-    allocation: normalizedAlloc,
   };
 }
 

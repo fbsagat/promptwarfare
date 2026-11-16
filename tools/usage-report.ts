@@ -1,0 +1,52 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { getCatalogVersion } from '../server/catalog.ts';
+import { readContentUsage } from '../server/ledger.ts';
+import { buildUsageReport, renderUsageReportMarkdown } from '../server/usageReport.ts';
+
+function argValue(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return undefined;
+  return process.argv[index + 1];
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const dbPath =
+  argValue('--db') ??
+  process.env.PROMPT_LEDGER_DB_PATH ??
+  path.resolve(ROOT, 'data', 'prompt-ledger.db');
+const outDir = path.resolve(ROOT, argValue('--out') ?? path.join('content', 'reports'));
+const includeBots = process.argv.includes('--include-bots');
+
+if (!fs.existsSync(dbPath)) {
+  console.error(`Ledger não encontrado em ${dbPath}.`);
+  process.exit(1);
+}
+
+const rows = readContentUsage(dbPath);
+let catalogVersion = '';
+try {
+  catalogVersion = getCatalogVersion();
+} catch {
+  catalogVersion = rows[rows.length - 1]?.catalog_version ?? '';
+}
+const report = buildUsageReport(rows, catalogVersion, { includeBots });
+fs.mkdirSync(outDir, { recursive: true });
+const stamp = new Date(report.generatedAt)
+  .toISOString()
+  .replace(/[:.]/g, '-')
+  .replace('T', '_')
+  .slice(0, 19);
+const jsonPath = path.join(outDir, `usage-${stamp}.json`);
+const mdPath = path.join(outDir, `usage-${stamp}.md`);
+fs.writeFileSync(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+fs.writeFileSync(mdPath, renderUsageReportMarkdown(report), 'utf8');
+
+console.log('Relatório de uso gerado:');
+console.log(`  ${jsonPath}`);
+console.log(`  ${mdPath}`);
+console.log(
+  `Equipes: ${report.totals.equips} · abates: ${report.totals.kills} · eventos: ${report.totals.events} · itens: ${report.totals.uniqueItems}`,
+);

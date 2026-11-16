@@ -1,32 +1,39 @@
 import { WebSocket } from 'ws';
 import {
+  BOT_EVENT_WINDOW_SEC,
   computeGrappleOutcome,
   computeIslandDimensions,
   computePlayerMassKg,
   EVENT_CYCLE_COOLDOWN_SEC,
+  EVENT_RAFFLE_WINDOW_SEC,
+  EVENT_WRITE_WINDOW_SEC,
   GRAPPLE_MASS_KG,
   SHOVEL_MASS_KG,
   WEAPON_CYCLE_COOLDOWN_SEC,
   WEAPON_INITIAL_COOLDOWN_SEC,
+  WEAPON_TIMEOUT_COOLDOWN_SEC,
+  WEAPON_WRITE_WINDOW_SEC,
 } from '../src/shared/budget.ts';
 import {
   MAT,
   VOXEL_SIZE,
   WATER_LEVEL_WORLD,
   type ClientInputPacket,
+  type EventCyclePhase,
+  type EventCycleState,
   type InventorySlotItem,
   type KillfeedEntry,
   type LootDropState,
   type MapEventState,
   type PlayerNetState,
   type ProjectileNetState,
+  type PromptKind,
   type RoomInitPayload,
   type RoomMatchSummary,
   type RoomTickPayload,
   type SpawnedEntityNetState,
   type Vec3,
   type VoxelDelta,
-  type WeaponAllocation,
   type WeaponBlueprint,
 } from '../src/shared/types.ts';
 import type {
@@ -48,7 +55,18 @@ import {
   resolvePlayerMovement,
   VoxelGrid,
 } from '../src/shared/voxelWorld.ts';
-import { generateAiMapEvent, generateAiWeapon } from './aiGenerator.ts';
+import { getAssetVersion } from './assets.ts';
+import {
+  getCatalogVersion,
+  resolveEventFromCatalog,
+  resolveWeaponFromCatalog,
+} from './catalog.ts';
+import {
+  PromptLedger,
+  type LedgerPhase,
+  type LedgerPromptKind,
+  type PromptLedgerEvent,
+} from './ledger.ts';
 import {
   createBotBrainState,
   createBotPersonality,
@@ -77,6 +95,8 @@ interface ServerPlayer extends PlayerNetState {
   grappleTimerSec: number;
   grappleMode: 'pull_self' | 'pull_target' | null;
   grappleTargetId: string | null;
+  promptSessionId: string | null;
+  promptOpenedAt: number | null;
 }
 
 interface ServerProjectile extends ProjectileNetState {
@@ -90,6 +110,7 @@ interface GameRoom {
   id: string;
   name: string;
   hostId: string;
+  matchId: string;
   accessMode: RoomAccessMode;
   password: string;
   createdAt: number;
@@ -107,6 +128,8 @@ interface GameRoom {
   lootDrops: LootDropState[];
   entities: SpawnedEntityNetState[];
   activeEvents: MapEventState[];
+  eventPhase: EventCyclePhase;
+  eventEndsAt: number;
   eventCooldownSec: number;
   rafflePlayerId: string | null;
   rafflePlayerName: string | null;
@@ -205,9 +228,11 @@ function closestPointOnSegmentT(
 export class RoomManager {
   private rooms = new Map<string, GameRoom>();
   private readonly devEnabled: boolean;
+  private readonly ledger: PromptLedger | null;
 
-  constructor(opts: { devEnabled?: boolean } = {}) {
+  constructor(opts: { devEnabled?: boolean; ledger?: PromptLedger | null } = {}) {
     this.devEnabled = opts.devEnabled ?? isServerDevEnabled();
+    this.ledger = opts.ledger ?? null;
   }
 
   isDevModeEnabled(): boolean {
@@ -338,6 +363,7 @@ export class RoomManager {
       id: roomId,
       name: cleanRoomName,
       hostId: playerId,
+      matchId: '',
       accessMode,
       password: accessMode === 'password' ? password : '',
       createdAt: Date.now(),
@@ -355,6 +381,8 @@ export class RoomManager {
       lootDrops: [],
       entities: [],
       activeEvents: [],
+      eventPhase: 'cooldown',
+      eventEndsAt: Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000,
       eventCooldownSec: EVENT_CYCLE_COOLDOWN_SEC,
       rafflePlayerId: null,
       rafflePlayerName: null,
@@ -562,6 +590,8 @@ export class RoomManager {
       isTypingPrompt: false,
       canForgeWeapon: false,
       weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
+      prompt: null,
+      forge: { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 },
       kills: 0,
       weaponsCreated: 0,
       grappleTarget: null,
@@ -580,6 +610,8 @@ export class RoomManager {
       grappleTimerSec: 0,
       grappleMode: null,
       grappleTargetId: null,
+      promptSessionId: null,
+      promptOpenedAt: null,
     };
   }
 
@@ -596,12 +628,15 @@ export class RoomManager {
     room.lootDrops = [];
     room.entities = [];
     room.activeEvents = [];
+    room.eventPhase = 'cooldown';
+    room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
     room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
     room.rafflePlayerId = null;
     room.rafflePlayerName = null;
     room.rafflePendingIsBot = false;
     room.raffleRemainingSec = 0;
     room.phase = 'playing';
+    room.matchId = `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     room.elapsedSec = 0;
     room.lastKillElapsedSec = 0;
     room.stagnationLevel = 0;
@@ -631,6 +666,8 @@ export class RoomManager {
       p.isTypingPrompt = false;
       p.canForgeWeapon = false;
       p.weaponCooldownSec = WEAPON_INITIAL_COOLDOWN_SEC;
+      p.prompt = null;
+      p.forge = { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 };
       p.kills = 0;
       p.weaponsCreated = 0;
       p.grappleTarget = null;
@@ -692,6 +729,8 @@ export class RoomManager {
       isTypingPrompt: false,
       canForgeWeapon: false,
       weaponCooldownSec: 6 + Math.random() * 5,
+      prompt: null,
+      forge: { phase: 'cooling', endsAt: Date.now() + (6 + Math.random() * 5) * 1000 },
       kills: 0,
       weaponsCreated: 0,
       grappleTarget: null,
@@ -711,6 +750,8 @@ export class RoomManager {
       grappleTimerSec: 0,
       grappleMode: null,
       grappleTargetId: null,
+      promptSessionId: null,
+      promptOpenedAt: null,
     };
     room.players.set(botId, bot);
     return bot;
@@ -785,72 +826,115 @@ export class RoomManager {
       case 'player:input': {
         const p = msg.payload as ClientInputPacket;
         if (!player.alive) return;
+        if (player.prompt) {
+          player.moveX = 0;
+          player.moveZ = 0;
+          player.jumpQueued = false;
+          player.isTypingPrompt = true;
+          break;
+        }
+        player.yaw = Number(p.yaw) || 0;
+        player.pitch = Math.max(-1.48, Math.min(1.48, Number(p.pitch) || 0));
         player.moveX = Math.max(-1, Math.min(1, Number(p.moveX) || 0));
         player.moveZ = Math.max(-1, Math.min(1, Number(p.moveZ) || 0));
         if (p.jump) player.jumpQueued = true;
-        player.yaw = Number(p.yaw) || 0;
-        player.pitch = Math.max(-1.48, Math.min(1.48, Number(p.pitch) || 0));
         if (Number.isInteger(p.activeSlot) && p.activeSlot >= 0 && p.activeSlot < 4) {
           player.activeSlot = p.activeSlot;
         }
-        player.isTypingPrompt = Boolean(p.isTypingPrompt);
+        player.isTypingPrompt = false;
         break;
       }
 
       case 'player:action': {
-        if (!player.alive || room.phase !== 'playing') return;
+        if (!player.alive || room.phase !== 'playing' || player.prompt) return;
         this.performActiveItem(room, player, msg.payload?.origin, msg.payload?.dir);
         break;
       }
 
       case 'player:drop': {
-        if (!player.alive || room.phase !== 'playing') return;
+        if (!player.alive || room.phase !== 'playing' || player.prompt) return;
         this.dropActiveItem(room, player);
         break;
       }
 
       case 'player:pickup': {
-        if (!player.alive || room.phase !== 'playing') return;
+        if (!player.alive || room.phase !== 'playing' || player.prompt) return;
         this.pickupNearestItem(room, player);
+        break;
+      }
+
+      case 'content:feedback': {
+        if (!player.alive || room.phase !== 'playing') return;
+        const itemId = String(msg.payload?.itemId ?? '').slice(0, 80);
+        const rating = msg.payload?.rating === 1 ? 1 : msg.payload?.rating === -1 ? -1 : 0;
+        if (!itemId || rating === 0) return;
+        this.ledger?.recordUsage({
+          itemId,
+          kind: msg.payload?.kind === 'event' ? 'event' : 'weapon',
+          role: 'feedback',
+          actorType: player.isBot ? 'bot' : 'human',
+          actorRef: player.id,
+          roomId: room.id,
+          matchId: room.matchId,
+          catalogVersion: getCatalogVersion(),
+          metadata: { rating },
+        });
+        break;
+      }
+
+      case 'prompt:open': {
+        if (!player.alive || room.phase !== 'playing') return;
+        const kind = msg.payload?.kind as PromptKind | undefined;
+        if (kind !== 'weapon' && kind !== 'event') return;
+        this.openPrompt(room, player, kind);
+        break;
+      }
+
+      case 'prompt:cancel': {
+        if (!player.alive || room.phase !== 'playing') return;
+        const kind = msg.payload?.kind as PromptKind | undefined;
+        if (!player.prompt || player.prompt.kind !== kind) return;
+        this.cancelPrompt(room, player, false);
         break;
       }
 
       case 'ai:forge_weapon': {
         if (!player.alive || room.phase !== 'playing') return;
-        if (!player.canForgeWeapon) {
+        if (player.prompt?.kind !== 'weapon') {
           this.sendToPlayer(player, {
             type: 'ai:error',
-            payload: { message: 'Contador da arma ainda está recarregando.' },
+            payload: { message: 'Abra a forja com Enter antes de enviar o texto.' },
           });
           return;
         }
         const prompt = String(msg.payload?.prompt ?? '').slice(0, 90);
         if (!prompt.trim()) return;
-        const allocation = msg.payload?.allocation as Partial<WeaponAllocation> | undefined;
+        const resolution = resolveWeaponFromCatalog(prompt);
+        const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
+        this.recordPromptEvent(room, player, 'submitted', 'weapon', {
+          prompt,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.blueprint.budgetUsed,
+          wasClamped: resolution.blueprint.wasClamped,
+          elapsedMs,
+          reason: null,
+        });
+        player.prompt = null;
+        player.isTypingPrompt = false;
+        player.promptSessionId = null;
+        player.promptOpenedAt = null;
         player.canForgeWeapon = false;
         player.weaponCooldownSec = WEAPON_CYCLE_COOLDOWN_SEC;
-        player.isTypingPrompt = false;
+        player.forge = { phase: 'cooling', endsAt: Date.now() + WEAPON_CYCLE_COOLDOWN_SEC * 1000 };
 
-        void generateAiWeapon(prompt, { useLlm: true, allocation }).then((bp) => {
-          if (!player.alive || room.phase !== 'playing') return;
-          this.equipForgedWeapon(room, player, bp);
-        });
-        break;
-      }
-
-      case 'ai:weapon_prompt_timeout': {
-        if (!player.alive || room.phase !== 'playing') return;
-        player.isTypingPrompt = false;
-        if (player.canForgeWeapon) {
-          player.canForgeWeapon = false;
-          player.weaponCooldownSec = 8;
-        }
+        this.equipForgedWeapon(room, player, resolution.blueprint);
         break;
       }
 
       case 'ai:trigger_event': {
         if (!player.alive || room.phase !== 'playing') return;
-        if (room.rafflePlayerId !== player.id) {
+        if (room.rafflePlayerId !== player.id || player.prompt?.kind !== 'event') {
           this.sendToPlayer(player, {
             type: 'ai:error',
             payload: { message: 'Você não é o jogador sorteado para o evento atual.' },
@@ -859,24 +943,28 @@ export class RoomManager {
         }
         const prompt = String(msg.payload?.prompt ?? '').slice(0, 90);
         if (!prompt.trim()) return;
-        room.rafflePlayerId = null;
-        room.rafflePlayerName = null;
-        room.rafflePendingIsBot = false;
-        room.raffleRemainingSec = 0;
-        room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
-        player.isTypingPrompt = false;
-
         const center: [number, number, number] = [
           (room.dimX * VOXEL_SIZE) / 2,
           10,
           (room.dimZ * VOXEL_SIZE) / 2,
         ];
-        void generateAiMapEvent(prompt, player.id, player.name, center, { useLlm: true }).then(
-          (evt) => {
-            if (room.phase !== 'playing') return;
-            this.enqueueMapEvent(room, evt);
-          },
-        );
+        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center);
+        const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
+        this.recordPromptEvent(room, player, 'submitted', 'event', {
+          prompt,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.event.budgetUsed,
+          wasClamped: resolution.event.wasClamped,
+          elapsedMs,
+          reason: null,
+        });
+        player.prompt = null;
+        player.isTypingPrompt = false;
+        player.promptSessionId = null;
+        player.promptOpenedAt = null;
+        this.resetEventCycle(room);
+        this.enqueueMapEvent(room, resolution.event);
         break;
       }
 
@@ -1065,12 +1153,15 @@ export class RoomManager {
     room.lootDrops = [];
     room.entities = [];
     room.activeEvents = [];
+    room.eventPhase = 'cooldown';
+    room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
     room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
     room.rafflePlayerId = null;
     room.rafflePlayerName = null;
     room.rafflePendingIsBot = false;
     room.raffleRemainingSec = 0;
     room.phase = 'playing';
+    room.matchId = `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     room.elapsedSec = 0;
     room.lastKillElapsedSec = 0;
     room.stagnationLevel = 0;
@@ -1099,6 +1190,8 @@ export class RoomManager {
       p.isTypingPrompt = false;
       p.canForgeWeapon = false;
       p.weaponCooldownSec = p.isBot ? 6 + Math.random() * 5 : WEAPON_INITIAL_COOLDOWN_SEC;
+      p.prompt = null;
+      p.forge = { phase: 'cooling', endsAt: Date.now() + p.weaponCooldownSec * 1000 };
       p.kills = 0;
       p.weaponsCreated = 0;
       p.grappleTarget = null;
@@ -1166,12 +1259,28 @@ export class RoomManager {
       payload: { weapon: bp, slotIndex: targetIdx },
     });
 
-    this.broadcastKillfeed(room, {
-      id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-      text: `${player.name} ${bp.fromDatabase ? 'reutilizou' : 'forjou'} "${bp.name}" (${bp.budgetUsed}/100 pts${bp.fromDatabase ? ' · banco' : ''}${bp.wasClamped ? ' · instável!' : ''})`,
-      tone: bp.wasClamped ? 'risk' : 'forge',
-      ts: Date.now(),
-    });
+    if (bp.catalogId) {
+      this.ledger?.recordUsage({
+        itemId: bp.catalogId,
+        kind: 'weapon',
+        role: 'equip',
+        actorType: player.isBot ? 'bot' : 'human',
+        actorRef: player.id,
+        roomId: room.id,
+        matchId: room.matchId,
+        catalogVersion: getCatalogVersion(),
+        metadata: { name: bp.name, budgetUsed: bp.budgetUsed },
+      });
+    }
+
+    if (!player.isBot) {
+      this.broadcastKillfeed(room, {
+        id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        text: `${player.name} ${bp.fromCatalog || bp.fromDatabase ? 'reutilizou' : 'forjou'} "${bp.name}" (${bp.budgetUsed}/100 pts${bp.fromCatalog ? ' · catálogo' : ''}${bp.wasClamped ? ' · instável!' : ''})`,
+        tone: bp.wasClamped ? 'risk' : 'forge',
+        ts: Date.now(),
+      });
+    }
   }
 
   private enqueueMapEvent(room: GameRoom, evt: MapEventState): void {
@@ -1181,9 +1290,30 @@ export class RoomManager {
     room.activeEvents.push(evt);
     room.eventsTriggered += 1;
 
+    if (evt.catalogId) {
+      const author = room.players.get(evt.authorId);
+      this.ledger?.recordUsage({
+        itemId: evt.catalogId,
+        kind: 'event',
+        role: 'event',
+        actorType:
+          evt.authorId === 'server' ? 'system' : author?.isBot ? 'bot' : 'human',
+        actorRef: evt.authorId,
+        roomId: room.id,
+        matchId: room.matchId,
+        catalogVersion: getCatalogVersion(),
+        metadata: {
+          archetype: evt.archetype,
+          durationSec: evt.params.durationSec,
+          lethality: evt.params.lethality,
+          quantity: evt.params.quantity,
+        },
+      });
+    }
+
     this.broadcastKillfeed(room, {
       id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
-      text: `⚠️ ${evt.authorName} ${evt.fromDatabase ? 'reutilizou' : 'invocou'}: "${evt.prompt}"${evt.fromDatabase ? ' [banco]' : ''} — Impacto em 5s!`,
+      text: `⚠️ ${evt.authorName} ${evt.fromCatalog || evt.fromDatabase ? 'reutilizou' : 'invocou'}: "${evt.prompt}"${evt.fromCatalog ? ' [catálogo]' : ''} — Impacto em 5s!`,
       tone: 'event',
       ts: Date.now(),
     });
@@ -1460,6 +1590,7 @@ export class RoomManager {
         room.projectiles.push({
           id: `prj_${now}_${Math.random().toString(36).slice(2, 6)}`,
           ownerId: player.id,
+          catalogId: wp.catalogId,
           position: {
             x: origin.x + dir.x * spawnDist,
             y: origin.y + dir.y * spawnDist,
@@ -1635,11 +1766,63 @@ export class RoomManager {
     victim.alive = false;
     victim.hp = 0;
     victim.isTypingPrompt = false;
+    if (victim.prompt) {
+      this.recordPromptEvent(room, victim, 'cancelled', victim.prompt.kind, {
+        elapsedMs: victim.promptOpenedAt ? Date.now() - victim.promptOpenedAt : null,
+        reason: 'death',
+      });
+    } else if (room.rafflePlayerId === victim.id) {
+      this.recordPromptEvent(room, victim, 'cancelled', 'event', {
+        elapsedMs: null,
+        reason: 'death',
+      });
+    }
+    victim.prompt = null;
+    victim.promptSessionId = null;
+    victim.promptOpenedAt = null;
+    victim.forge = { phase: 'dead', endsAt: null };
+    if (room.rafflePlayerId === victim.id) {
+      this.resetEventCycle(room, 1);
+    }
     room.totalKills += 1;
     room.lastKillElapsedSec = room.elapsedSec;
 
     if (attacker && attacker.id !== victim.id) {
       attacker.kills += 1;
+      const activeWeapon = attacker.slots[attacker.activeSlot]?.weapon;
+      if (activeWeapon?.catalogId) {
+        this.ledger?.recordUsage({
+          itemId: activeWeapon.catalogId,
+          kind: 'weapon',
+          role: 'kill',
+          actorType: attacker.isBot ? 'bot' : 'human',
+          actorRef: attacker.id,
+          roomId: room.id,
+          matchId: room.matchId,
+          targetRef: victim.id,
+          catalogVersion: getCatalogVersion(),
+          metadata: { name: activeWeapon.name, reason },
+        });
+      }
+    }
+
+    const victimWeapon = victim.slots[victim.activeSlot]?.weapon;
+    if (victimWeapon?.catalogId) {
+      this.ledger?.recordUsage({
+        itemId: victimWeapon.catalogId,
+        kind: 'weapon',
+        role: 'survival',
+        actorType: victim.isBot ? 'bot' : 'human',
+        actorRef: victim.id,
+        roomId: room.id,
+        matchId: room.matchId,
+        catalogVersion: getCatalogVersion(),
+        metadata: {
+          survivedSec: Math.round(room.elapsedSec),
+          won: false,
+          reason,
+        },
+      });
     }
 
     // Drop entire inventory physically on death
@@ -1689,6 +1872,23 @@ export class RoomManager {
             personalityLabel: p.personalityLabel,
           })),
       };
+      const winnerWeapon = winner?.slots[winner.activeSlot]?.weapon;
+      if (winnerWeapon?.catalogId) {
+        this.ledger?.recordUsage({
+          itemId: winnerWeapon.catalogId,
+          kind: 'weapon',
+          role: 'survival',
+          actorType: winner.isBot ? 'bot' : 'human',
+          actorRef: winner.id,
+          roomId: room.id,
+          matchId: room.matchId,
+          catalogVersion: getCatalogVersion(),
+          metadata: {
+            survivedSec: Math.round(room.elapsedSec),
+            won: true,
+          },
+        });
+      }
     }
   }
 
@@ -1720,9 +1920,15 @@ export class RoomManager {
     }
 
     // 1. Update timers & anti-stagnation catastrophes
+    for (const player of room.players.values()) {
+      if (player.prompt && now >= player.prompt.endsAt) {
+        this.cancelPrompt(room, player, true);
+      }
+    }
+
     if (room.rafflePlayerId) {
-      room.raffleRemainingSec = Math.max(0, room.raffleRemainingSec - dt);
-      if (room.raffleRemainingSec <= 0) {
+      room.raffleRemainingSec = Math.max(0, Math.ceil((room.eventEndsAt - now) / 1000));
+      if (room.eventEndsAt <= now) {
         if (room.rafflePendingIsBot) {
           const botWinner = room.players.get(room.rafflePlayerId);
           if (botWinner && botWinner.alive) {
@@ -1733,21 +1939,37 @@ export class RoomManager {
               10,
               (room.dimZ * VOXEL_SIZE) / 2,
             ];
-            void generateAiMapEvent(prompt, botWinner.id, botWinner.name, center, { useLlm: false }).then(
-              (evt) => {
-                if (room.phase === 'playing') this.enqueueMapEvent(room, evt);
-              },
+            const resolution = resolveEventFromCatalog(
+              prompt,
+              botWinner.id,
+              botWinner.name,
+              center,
             );
+            this.recordPromptEvent(room, botWinner, 'submitted', 'event', {
+              prompt,
+              itemId: resolution.itemId,
+              strategy: resolution.strategy,
+              budgetUsed: resolution.event.budgetUsed,
+              wasClamped: resolution.event.wasClamped,
+              elapsedMs: null,
+              reason: null,
+            });
+            this.enqueueMapEvent(room, resolution.event);
+          }
+        } else {
+          const raffled = room.players.get(room.rafflePlayerId);
+          if (raffled && !raffled.prompt) {
+            this.recordPromptEvent(room, raffled, 'timed_out', 'event', {
+              elapsedMs: null,
+              reason: 'timeout',
+            });
           }
         }
-        room.rafflePlayerId = null;
-        room.rafflePlayerName = null;
-        room.rafflePendingIsBot = false;
-        room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
+        this.resetEventCycle(room);
       }
     } else {
-      room.eventCooldownSec -= dt;
-      if (room.eventCooldownSec <= 0) {
+      room.eventCooldownSec = Math.max(0, Math.ceil((room.eventEndsAt - now) / 1000));
+      if (room.eventEndsAt <= now) {
         this.raffleEventPlayer(room);
       }
     }
@@ -1759,15 +1981,24 @@ export class RoomManager {
         10,
         (room.dimZ * VOXEL_SIZE) / 2,
       ];
-      void generateAiMapEvent(
+      const resolution = resolveEventFromCatalog(
         'Tempestade apocaliptica de meteoros e terremotos',
         'server',
         'Tempestade da Ilha',
         center,
-        { useLlm: false },
-      ).then((evt) => {
-        if (room.phase === 'playing') this.enqueueMapEvent(room, evt);
+      );
+      this.recordPromptEvent(room, null, 'submitted', 'event', {
+        actorType: 'system',
+        actorRef: 'server',
+        prompt: 'Tempestade apocaliptica de meteoros e terremotos',
+        itemId: resolution.itemId,
+        strategy: resolution.strategy,
+        budgetUsed: resolution.event.budgetUsed,
+        wasClamped: resolution.event.wasClamped,
+        elapsedMs: null,
+        reason: null,
       });
+      this.enqueueMapEvent(room, resolution.event);
     }
 
     // 2. Tick active events
@@ -1947,6 +2178,7 @@ export class RoomManager {
       projectiles: room.projectiles.map((pr) => ({
         id: pr.id,
         ownerId: pr.ownerId,
+        catalogId: pr.catalogId,
         position: pr.position,
         velocity: pr.velocity,
         color: pr.color,
@@ -1959,6 +2191,10 @@ export class RoomManager {
       lootDrops: room.lootDrops,
       entities: room.entities,
       activeEvents: room.activeEvents,
+      serverNow: now,
+      event: this.buildEventCycleState(room),
+      catalogVersion: getCatalogVersion(),
+      assetVersion: getAssetVersion(),
       eventCooldownSec: Math.round(room.eventCooldownSec),
       rafflePlayerId: room.rafflePlayerId,
       rafflePlayerName: room.rafflePlayerName,
@@ -2038,11 +2274,18 @@ export class RoomManager {
       case 'quick_forge': {
         const prompt = String(payload.prompt || 'Rifle laser azul').slice(0, 90);
         if (room.phase !== 'playing') return;
-        void generateAiWeapon(prompt, { useLlm: false }).then((bp) => {
-          if (room.phase === 'playing') {
-            this.equipForgedWeapon(room, player, bp);
-          }
+        const resolution = resolveWeaponFromCatalog(prompt);
+        this.recordPromptEvent(room, player, 'submitted', 'weapon', {
+          actorType: 'dev',
+          prompt,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.blueprint.budgetUsed,
+          wasClamped: resolution.blueprint.wasClamped,
+          elapsedMs: null,
+          reason: null,
         });
+        this.equipForgedWeapon(room, player, resolution.blueprint);
         break;
       }
 
@@ -2051,8 +2294,10 @@ export class RoomManager {
         room.rafflePlayerId = player.id;
         room.rafflePlayerName = player.name;
         room.rafflePendingIsBot = false;
+        room.eventPhase = 'raffle';
+        room.eventEndsAt = Date.now() + 30_000;
         room.raffleRemainingSec = 30;
-        room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
+        room.eventCooldownSec = 0;
         this.sendToPlayer(player, {
           type: 'ai:event_raffle_won',
           payload: { remainingSec: 30 },
@@ -2068,13 +2313,19 @@ export class RoomManager {
           10,
           (room.dimZ * VOXEL_SIZE) / 2,
         ];
-        void generateAiMapEvent(prompt, player.id, player.name, center, { useLlm: false }).then(
-          (evt) => {
-            if (room.phase !== 'playing') return;
-            evt.warningRemainingSec = 1;
-            this.enqueueMapEvent(room, evt);
-          },
-        );
+        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center);
+        this.recordPromptEvent(room, player, 'submitted', 'event', {
+          actorType: 'dev',
+          prompt,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.event.budgetUsed,
+          wasClamped: resolution.event.wasClamped,
+          elapsedMs: null,
+          reason: null,
+        });
+        resolution.event.warningRemainingSec = 1;
+        this.enqueueMapEvent(room, resolution.event);
         break;
       }
 
@@ -2127,19 +2378,146 @@ export class RoomManager {
     }
   }
 
-  private raffleEventPlayer(room: GameRoom): void {
-    const aliveHumans = Array.from(room.players.values()).filter((p) => p.alive && !p.isBot);
-    const aliveAll = Array.from(room.players.values()).filter((p) => p.alive);
-    if (aliveAll.length === 0) {
-      room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
+  private newPromptSessionId(): string {
+    return `ps_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  private recordPromptEvent(
+    room: GameRoom,
+    player: ServerPlayer | null,
+    phase: LedgerPhase,
+    kind: LedgerPromptKind,
+    extra: Partial<PromptLedgerEvent> = {},
+  ): void {
+    if (!this.ledger) return;
+    this.ledger.record({
+      sessionId: extra.sessionId ?? player?.promptSessionId ?? this.newPromptSessionId(),
+      actorType: extra.actorType ?? (player?.isBot ? 'bot' : 'human'),
+      actorRef: extra.actorRef ?? player?.id ?? null,
+      roomId: room.id,
+      matchId: room.matchId,
+      kind,
+      phase,
+      catalogVersion: getCatalogVersion(),
+      ...extra,
+    });
+  }
+
+  private resetEventCycle(room: GameRoom, delaySec = EVENT_CYCLE_COOLDOWN_SEC): void {
+    room.eventPhase = 'cooldown';
+    room.eventEndsAt = Date.now() + delaySec * 1000;
+    room.eventCooldownSec = delaySec;
+    room.rafflePlayerId = null;
+    room.rafflePlayerName = null;
+    room.rafflePendingIsBot = false;
+    room.raffleRemainingSec = 0;
+  }
+
+  private openPrompt(room: GameRoom, player: ServerPlayer, kind: PromptKind): void {
+    if (player.prompt) return;
+    const now = Date.now();
+
+    if (kind === 'event') {
+      if (
+        room.rafflePlayerId !== player.id ||
+        room.rafflePendingIsBot ||
+        room.eventPhase !== 'raffle'
+      ) {
+        this.sendToPlayer(player, {
+          type: 'ai:error',
+          payload: { message: 'Você não é o jogador sorteado para o evento atual.' },
+        });
+        return;
+      }
+      player.prompt = { kind, endsAt: now + EVENT_WRITE_WINDOW_SEC * 1000 };
+      player.isTypingPrompt = true;
+      player.promptSessionId = this.newPromptSessionId();
+      player.promptOpenedAt = now;
+      room.eventPhase = 'writing';
+      room.eventEndsAt = player.prompt.endsAt;
+      room.raffleRemainingSec = EVENT_WRITE_WINDOW_SEC;
+      this.recordPromptEvent(room, player, 'opened', 'event');
       return;
     }
 
-    const pool = aliveHumans.length > 0 && Math.random() < 0.78 ? aliveHumans : aliveAll;
+    if (room.rafflePlayerId === player.id) {
+      this.sendToPlayer(player, {
+        type: 'ai:error',
+        payload: { message: 'Resolva o Evento Global antes de forjar.' },
+      });
+      return;
+    }
+    if (!player.canForgeWeapon) {
+      this.sendToPlayer(player, {
+        type: 'ai:error',
+        payload: { message: 'Contador da arma ainda está recarregando.' },
+      });
+      return;
+    }
+    player.prompt = { kind, endsAt: now + WEAPON_WRITE_WINDOW_SEC * 1000 };
+    player.isTypingPrompt = true;
+    player.promptSessionId = this.newPromptSessionId();
+    player.promptOpenedAt = now;
+    this.recordPromptEvent(room, player, 'opened', 'weapon');
+  }
+
+  private cancelPrompt(room: GameRoom, player: ServerPlayer, timedOut: boolean): void {
+    const kind = player.prompt?.kind;
+    const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
+    player.prompt = null;
+    player.isTypingPrompt = false;
+
+    if (kind) {
+      this.recordPromptEvent(room, player, timedOut ? 'timed_out' : 'cancelled', kind, {
+        elapsedMs,
+        reason: timedOut ? 'timeout' : 'user',
+      });
+    }
+    player.promptSessionId = null;
+    player.promptOpenedAt = null;
+
+    if (kind === 'event') {
+      this.resetEventCycle(room);
+      this.broadcastKillfeed(room, {
+        id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        text: timedOut
+          ? `⌛ ${player.name} não invocou o Evento Global a tempo.`
+          : `✖️ ${player.name} desistiu do Evento Global.`,
+        tone: 'event',
+        ts: Date.now(),
+      });
+      return;
+    }
+
+    if (kind === 'weapon' && timedOut) {
+      player.canForgeWeapon = false;
+      player.weaponCooldownSec = WEAPON_TIMEOUT_COOLDOWN_SEC;
+      player.forge = {
+        phase: 'cooling',
+        endsAt: Date.now() + WEAPON_TIMEOUT_COOLDOWN_SEC * 1000,
+      };
+    }
+  }
+
+  private raffleEventPlayer(room: GameRoom): void {
+    const available = Array.from(room.players.values()).filter((p) => p.alive && !p.prompt);
+    const availableHumans = available.filter((p) => !p.isBot);
+    const pool = availableHumans.length > 0 ? availableHumans : available;
+    if (pool.length === 0) {
+      this.resetEventCycle(room);
+      return;
+    }
+
     const chosen = pool[Math.floor(Math.random() * pool.length)];
+    const windowSec = chosen.isBot ? BOT_EVENT_WINDOW_SEC : EVENT_RAFFLE_WINDOW_SEC;
 
     room.rafflePlayerId = chosen.id;
     room.rafflePlayerName = chosen.name;
+    room.rafflePendingIsBot = chosen.isBot;
+    room.eventPhase = chosen.isBot ? 'bot' : 'raffle';
+    room.eventEndsAt = Date.now() + windowSec * 1000;
+    room.eventCooldownSec = 0;
+    room.raffleRemainingSec = windowSec;
 
     this.broadcastKillfeed(room, {
       id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
@@ -2148,18 +2526,12 @@ export class RoomManager {
       ts: Date.now(),
     });
 
-    if (chosen.isBot) {
-      room.raffleRemainingSec = 3;
-      room.rafflePendingIsBot = true;
-      return;
+    if (!chosen.isBot) {
+      this.sendToPlayer(chosen, {
+        type: 'ai:event_raffle_won',
+        payload: { remainingSec: windowSec },
+      });
     }
-
-    room.raffleRemainingSec = 15;
-    room.rafflePendingIsBot = false;
-    this.sendToPlayer(chosen, {
-      type: 'ai:event_raffle_won',
-      payload: { remainingSec: 15 },
-    });
   }
 
   private tickEvents(room: GameRoom, dt: number): void {
@@ -2472,6 +2844,24 @@ export class RoomManager {
         pr.position.z = pr.position.z + (endZ - pr.position.z) * bestT;
         const attacker = room.players.get(pr.ownerId) ?? null;
         this.damagePlayer(room, hitPlayer, pr.damage, attacker, 'tiro de arma IA');
+        if (pr.catalogId) {
+          this.ledger?.recordUsage({
+            itemId: pr.catalogId,
+            kind: 'weapon',
+            role: 'damage',
+            actorType: attacker?.isBot ? 'bot' : 'human',
+            actorRef: pr.ownerId,
+            roomId: room.id,
+            matchId: room.matchId,
+            targetRef: hitPlayer.id,
+            catalogVersion: getCatalogVersion(),
+            metadata: {
+              damage: pr.damage,
+              behavior: pr.behavior,
+              status: pr.statusEffect,
+            },
+          });
+        }
         this.applyStatusEffect(room, hitPlayer, pr, now);
         if (pr.craterRadius > 0) this.explodeProjectile(room, pr, hitPlayer.id);
         room.projectiles.splice(i, 1);
@@ -2485,6 +2875,20 @@ export class RoomManager {
         const ent = room.entities[hitCreatureIdx];
         ent.hp -= pr.damage;
         const attacker = room.players.get(pr.ownerId) ?? null;
+        if (pr.catalogId) {
+          this.ledger?.recordUsage({
+            itemId: pr.catalogId,
+            kind: 'weapon',
+            role: 'damage',
+            actorType: attacker?.isBot ? 'bot' : 'human',
+            actorRef: pr.ownerId,
+            roomId: room.id,
+            matchId: room.matchId,
+            targetRef: ent.id,
+            catalogVersion: getCatalogVersion(),
+            metadata: { damage: pr.damage, target: 'entity' },
+          });
+        }
         if (attacker && !attacker.isBot && attacker.ws) {
           this.sendToPlayer(attacker, {
             type: 'fx:hit',
@@ -2704,15 +3108,18 @@ export class RoomManager {
       bot.weaponCooldownSec = WEAPON_CYCLE_COOLDOWN_SEC + 1 + Math.random() * 2;
       const prompts = brain.personality.weaponPrompts;
       const prompt = prompts[Math.floor(Math.random() * prompts.length)];
-      void generateAiWeapon(prompt, {
-        useLlm: false,
-        allocation: brain.personality.weaponAllocation,
-      }).then((bp) => {
-        bot.botForgePrompted = false;
-        if (bot.alive && room.phase === 'playing') {
-          this.equipForgedWeapon(room, bot, bp);
-        }
+      const resolution = resolveWeaponFromCatalog(prompt);
+      this.recordPromptEvent(room, bot, 'submitted', 'weapon', {
+        prompt,
+        itemId: resolution.itemId,
+        strategy: resolution.strategy,
+        budgetUsed: resolution.blueprint.budgetUsed,
+        wasClamped: resolution.blueprint.wasClamped,
+        elapsedMs: null,
+        reason: null,
       });
+      this.equipForgedWeapon(room, bot, resolution.blueprint);
+      bot.botForgePrompted = false;
     } else if (!brain.typingQueued && bot.isTypingPrompt) {
       bot.isTypingPrompt = false;
     }
@@ -2739,7 +3146,31 @@ export class RoomManager {
     }
   }
 
+  private buildEventCycleState(room: GameRoom): EventCycleState {
+    return {
+      phase: room.eventPhase,
+      endsAt: room.eventEndsAt,
+      rafflePlayerId: room.rafflePlayerId,
+      rafflePlayerName: room.rafflePlayerName,
+    };
+  }
+
   private stripPlayer(p: ServerPlayer): PlayerNetState {
+    const now = Date.now();
+    const forgePhase: 'cooling' | 'ready' | 'writing' | 'dead' = !p.alive
+      ? 'dead'
+      : p.prompt?.kind === 'weapon'
+        ? 'writing'
+        : p.canForgeWeapon
+          ? 'ready'
+          : 'cooling';
+    const forgeEndsAt =
+      forgePhase === 'writing'
+        ? p.prompt?.endsAt ?? null
+        : forgePhase === 'cooling'
+          ? now + Math.max(0, p.weaponCooldownSec) * 1000
+          : null;
+
     return {
       id: p.id,
       name: p.name,
@@ -2757,9 +3188,11 @@ export class RoomManager {
       activeSlot: p.activeSlot,
       heat: p.heat,
       overheatedUntil: p.overheatedUntil,
-      isTypingPrompt: p.isTypingPrompt,
+      isTypingPrompt: p.prompt !== null,
       canForgeWeapon: p.canForgeWeapon,
       weaponCooldownSec: Math.ceil(p.weaponCooldownSec),
+      prompt: p.prompt ? { ...p.prompt } : null,
+      forge: { phase: forgePhase, endsAt: forgeEndsAt },
       kills: p.kills,
       weaponsCreated: p.weaponsCreated,
       grappleTarget: p.grappleTarget,
@@ -2826,6 +3259,10 @@ export class RoomManager {
       activeEvents: room.activeEvents,
       lootDrops: room.lootDrops,
       entities: room.entities,
+      serverNow: Date.now(),
+      event: this.buildEventCycleState(room),
+      catalogVersion: getCatalogVersion(),
+      assetVersion: getAssetVersion(),
       eventCooldownSec: Math.round(room.eventCooldownSec),
       rafflePlayerId: room.rafflePlayerId,
       rafflePlayerName: room.rafflePlayerName,

@@ -2,22 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { DevPanel } from './components/DevPanel.tsx';
 import { GameHud } from './components/GameHud.tsx';
 import { LobbyOverlay } from './components/LobbyOverlay.tsx';
-import { PromptOverlay } from './components/PromptOverlay.tsx';
+import { PromptBar } from './components/PromptBar.tsx';
 import { StatusModal } from './components/StatusModal.tsx';
 import { WaitingRoomOverlay } from './components/WaitingRoomOverlay.tsx';
 import { BabylonVoxelArena } from './engine/babylonArena.ts';
 import { soundSynth } from './engine/soundSynth.ts';
+import type { AssetManifest } from './shared/assets.ts';
 import { isClientDevEnabled } from './shared/devMode.ts';
 import { buildHttpUrl, buildWsUrl } from './shared/endpoints.ts';
 import {
   VOXEL_SIZE,
   type DevActionPayload,
   type DevRoomState,
+  type EventCycleState,
   type KillfeedEntry,
   type LobbyStatePayload,
   type LootDropState,
   type MapEventState,
   type PlayerNetState,
+  type PromptKind,
   type RoomAccessMode,
   type RoomInitPayload,
   type RoomMatchSummary,
@@ -26,7 +29,6 @@ import {
   type SpawnedEntityNetState,
   type Vec3,
   type VoxelDelta,
-  type WeaponAllocation,
 } from './shared/types.ts';
 
 type GamePhaseState = 'title' | 'waiting' | 'playing' | 'paused' | 'gameover';
@@ -69,16 +71,23 @@ export default function App() {
   const localPlayerIdRef = useRef<string | null>(null);
 
   const [players, setPlayers] = useState<PlayerNetState[]>([]);
+  const assetManifestRef = useRef<AssetManifest | null>(null);
   const [activeEvents, setActiveEvents] = useState<MapEventState[]>([]);
+  const [serverNow, setServerNow] = useState(() => Date.now());
+  const [eventCycle, setEventCycle] = useState<EventCycleState>({
+    phase: 'cooldown',
+    endsAt: null,
+    rafflePlayerId: null,
+    rafflePlayerName: null,
+  });
   const [eventCooldownSec, setEventCooldownSec] = useState(24);
-  const [rafflePlayerId, setRafflePlayerId] = useState<string | null>(null);
-  const [rafflePlayerName, setRafflePlayerName] = useState<string | null>(null);
-  const [raffleRemainingSec, setRaffleRemainingSec] = useState(0);
   const [killfeed, setKillfeed] = useState<KillfeedEntry[]>([]);
   const [summary, setSummary] = useState<RoomMatchSummary | null>(null);
 
   const [promptMode, setPromptMode] = useState<'weapon' | 'event' | null>(null);
   const promptModeRef = useRef<'weapon' | 'event' | null>(null);
+  const promptAckedRef = useRef(false);
+  const promptRequestAtRef = useRef(0);
   const [zoomMeters, setZoomMeters] = useState(0);
   const [muted, setMuted] = useState(false);
   const [damageFlash, setDamageFlash] = useState(false);
@@ -141,7 +150,25 @@ export default function App() {
   }, [fetchRooms, gameState]);
 
   useEffect(() => {
+    let cancelled = false;
+    void fetch(buildHttpUrl('/api/assets', API_URL))
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: AssetManifest | null) => {
+        if (cancelled || !data?.assets) return;
+        assetManifestRef.current = data;
+        arenaRef.current?.setAssetManifest(data);
+      })
+      .catch(() => {
+        // Manifesto é opcional no cliente; o jogo segue com fallback visual.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     promptModeRef.current = promptMode;
+    if (promptMode === null) promptAckedRef.current = false;
     arenaRef.current?.setPromptOpen(promptMode !== null);
   }, [promptMode]);
 
@@ -154,18 +181,35 @@ export default function App() {
   const openWeaponPrompt = useCallback(() => {
     if (gameStateRef.current !== 'playing') return;
     const local = playersRef.current.find((p) => p.id === localPlayerIdRef.current);
-    if (!local || !local.alive || !local.canForgeWeapon) return;
+    if (!local || !local.alive || local.prompt) return;
+    if (rafflePlayerIdRef.current === local.id) return;
+    if (!local.canForgeWeapon && local.forge?.phase !== 'ready') return;
+    promptAckedRef.current = false;
+    promptRequestAtRef.current = Date.now();
+    sendWs({ type: 'prompt:open', payload: { kind: 'weapon' } });
     setPromptMode('weapon');
-  }, []);
+  }, [sendWs]);
 
   const openEventPrompt = useCallback(() => {
     if (gameStateRef.current !== 'playing') return;
     const local = playersRef.current.find((p) => p.id === localPlayerIdRef.current);
+    if (!local || !local.alive || local.prompt) return;
+    if (rafflePlayerIdRef.current !== local.id) return;
+    promptAckedRef.current = false;
+    promptRequestAtRef.current = Date.now();
+    sendWs({ type: 'prompt:open', payload: { kind: 'event' } });
+    setPromptMode('event');
+  }, [sendWs]);
+
+  const openPromptByPriority = useCallback(() => {
+    const local = playersRef.current.find((p) => p.id === localPlayerIdRef.current);
     if (!local || !local.alive) return;
     if (rafflePlayerIdRef.current === local.id) {
-      setPromptMode('event');
+      openEventPrompt();
+      return;
     }
-  }, []);
+    openWeaponPrompt();
+  }, [openEventPrompt, openWeaponPrompt]);
 
   // Mount Babylon.js engine once
   useEffect(() => {
@@ -179,10 +223,7 @@ export default function App() {
         lastInputSentAtRef.current = now;
         sendWs({
           type: 'player:input',
-          payload: {
-            ...input,
-            isTypingPrompt: promptModeRef.current !== null,
-          },
+          payload: input,
         });
       },
       onPrimaryAction: (origin: Vec3, dir: Vec3) => {
@@ -190,6 +231,7 @@ export default function App() {
       },
       onDropItem: () => sendWs({ type: 'player:drop' }),
       onPickupItem: () => sendWs({ type: 'player:pickup' }),
+      onOpenPrompt: () => openPromptByPriority(),
       onOpenWeaponPrompt: () => openWeaponPrompt(),
       onOpenEventPrompt: () => openEventPrompt(),
       onZoomChange: (z) => setZoomMeters(z),
@@ -198,13 +240,14 @@ export default function App() {
     });
 
     arenaRef.current = arena;
+    if (assetManifestRef.current) arena.setAssetManifest(assetManifestRef.current);
     return () => {
       if (damageFlashTimerRef.current) window.clearTimeout(damageFlashTimerRef.current);
       if (hitmarkerTimerRef.current) window.clearTimeout(hitmarkerTimerRef.current);
       arena.dispose();
       arenaRef.current = null;
     };
-  }, [openEventPrompt, openWeaponPrompt, sendWs]);
+  }, [openEventPrompt, openPromptByPriority, openWeaponPrompt, sendWs]);
 
   const openSocketAndSend = useCallback((initialMessage: unknown) => {
     if (connecting) return;
@@ -303,10 +346,9 @@ export default function App() {
           rafflePlayerIdRef.current = init.rafflePlayerId;
           setPlayers(init.players);
           setActiveEvents(init.activeEvents);
+          setServerNow(init.serverNow);
+          setEventCycle(init.event);
           setEventCooldownSec(init.eventCooldownSec);
-          setRafflePlayerId(init.rafflePlayerId);
-          setRafflePlayerName(init.rafflePlayerName);
-          setRaffleRemainingSec(init.raffleRemainingSec);
           setZoomMeters(0);
           setIslandSizeMeters(init.dimX * VOXEL_SIZE);
           setLootDrops(init.lootDrops);
@@ -382,6 +424,17 @@ export default function App() {
           return;
         }
 
+        if (msg.type === 'ai:error') {
+          console.warn('[Prompt]', msg.payload?.message ?? 'Erro na forja.');
+          const kind = promptModeRef.current;
+          if (kind) {
+            sendWs({ type: 'prompt:cancel', payload: { kind } });
+          }
+          setPromptMode(null);
+          canvasRef.current?.focus();
+          return;
+        }
+
         if (msg.type === 'room:tick') {
           const tick = msg.payload as RoomTickPayload;
           arenaRef.current?.applyRoomTick(tick);
@@ -406,16 +459,25 @@ export default function App() {
             }
             prevCanForgeRef.current = local.canForgeWeapon;
             prevHpRef.current = local.hp;
+
+            if (promptModeRef.current) {
+              if (local.prompt && local.prompt.kind === promptModeRef.current) {
+                promptAckedRef.current = true;
+              } else {
+                const rejected =
+                  !local.prompt &&
+                  (promptAckedRef.current ||
+                    Date.now() - promptRequestAtRef.current > 600);
+                const kindChanged =
+                  local.prompt !== null && local.prompt.kind !== promptModeRef.current;
+                if (rejected || kindChanged) {
+                  setPromptMode(null);
+                }
+              }
+            }
           } else {
             prevCanForgeRef.current = false;
             prevHpRef.current = null;
-          }
-
-          if (
-            promptModeRef.current === 'event' &&
-            tick.rafflePlayerId !== localPlayerIdRef.current
-          ) {
-            setPromptMode(null);
           }
 
           if (tick.phase === 'ended' || (local && !local.alive && gameStateRef.current === 'playing')) {
@@ -437,10 +499,9 @@ export default function App() {
             setLootDrops(tick.lootDrops);
             setEntities(tick.entities);
             setActiveEvents(tick.activeEvents);
+            setServerNow(tick.serverNow);
+            setEventCycle(tick.event);
             setEventCooldownSec(tick.eventCooldownSec);
-            setRafflePlayerId(tick.rafflePlayerId);
-            setRafflePlayerName(tick.rafflePlayerName);
-            setRaffleRemainingSec(tick.raffleRemainingSec);
 
             if (local && local.alive) {
               let closestName: string | null = null;
@@ -570,9 +631,9 @@ export default function App() {
     setMuted(soundSynth.muted);
   };
 
-  const handlePromptSubmit = (prompt: string, allocation?: WeaponAllocation) => {
+  const handlePromptSubmit = (prompt: string) => {
     if (promptMode === 'weapon') {
-      sendWs({ type: 'ai:forge_weapon', payload: { prompt, allocation } });
+      sendWs({ type: 'ai:forge_weapon', payload: { prompt } });
     } else if (promptMode === 'event') {
       sendWs({ type: 'ai:trigger_event', payload: { prompt } });
     }
@@ -581,12 +642,14 @@ export default function App() {
     arenaRef.current?.requestPointerLock();
   };
 
-  const handlePromptTimeout = useCallback(() => {
-    if (promptModeRef.current === 'weapon') {
-      sendWs({ type: 'ai:weapon_prompt_timeout' });
+  const handlePromptCancel = useCallback(() => {
+    const kind: PromptKind | null = promptModeRef.current;
+    if (kind) {
+      sendWs({ type: 'prompt:cancel', payload: { kind } });
     }
     setPromptMode(null);
     canvasRef.current?.focus();
+    arenaRef.current?.requestPointerLock();
   }, [sendWs]);
 
   const handleBackToTitle = () => {
@@ -676,7 +739,7 @@ export default function App() {
         />
       )}
 
-      {gameState === 'playing' && (
+      {gameState === 'playing' && promptMode === null && (
         <GameHud
           localPlayer={localPlayer}
           allPlayers={players}
@@ -684,10 +747,9 @@ export default function App() {
           entities={entities}
           islandSizeMeters={islandSizeMeters}
           activeEvents={activeEvents}
+          eventCycle={eventCycle}
+          serverNow={serverNow}
           eventCooldownSec={eventCooldownSec}
-          rafflePlayerId={rafflePlayerId}
-          rafflePlayerName={rafflePlayerName}
-          raffleRemainingSec={raffleRemainingSec}
           killfeed={killfeed}
           zoomMeters={zoomMeters}
           muted={muted}
@@ -703,6 +765,9 @@ export default function App() {
           onSelectSlot={(slot) => arenaRef.current?.selectSlot(slot)}
           onOpenWeaponPrompt={() => openWeaponPrompt()}
           onOpenEventPrompt={() => openEventPrompt()}
+          onFeedback={(itemId, rating) =>
+            sendWs({ type: 'content:feedback', payload: { itemId, rating, kind: 'weapon' } })
+          }
         />
       )}
 
@@ -719,15 +784,14 @@ export default function App() {
       )}
 
       {gameState === 'playing' && promptMode !== null && (
-        <PromptOverlay
+        <PromptBar
           mode={promptMode}
-          remainingSec={promptMode === 'event' ? raffleRemainingSec : undefined}
+          endsAt={
+            localPlayer?.prompt?.kind === promptMode ? localPlayer.prompt.endsAt : null
+          }
+          serverNow={serverNow}
           onSubmit={handlePromptSubmit}
-          onTimeout={handlePromptTimeout}
-          onCancel={() => {
-            setPromptMode(null);
-            canvasRef.current?.focus();
-          }}
+          onCancel={handlePromptCancel}
         />
       )}
 

@@ -44,6 +44,7 @@ import {
   raycastVoxels,
   VoxelGrid,
 } from '../shared/voxelWorld.ts';
+import type { AssetEntry, AssetManifest } from '../shared/assets.ts';
 import { soundSynth } from './soundSynth.ts';
 import {
   buildBlueprintVoxelMesh,
@@ -82,6 +83,7 @@ export interface ArenaCallbacks {
   onPrimaryAction: (origin: Vec3, dir: Vec3) => void;
   onDropItem: () => void;
   onPickupItem: () => void;
+  onOpenPrompt: () => void;
   onOpenWeaponPrompt: () => void;
   onOpenEventPrompt: () => void;
   onZoomChange: (zoomMeters: number) => void;
@@ -136,6 +138,8 @@ export class BabylonVoxelArena {
   >();
 
   private projectileMeshes = new Map<string, Mesh>();
+  private eventWaypointMeshes = new Map<string, Mesh>();
+  private assetManifest: AssetManifest | null = null;
   private lootMeshes = new Map<string, TransformNode>();
   private entityMeshes = new Map<string, { node: TransformNode; targetPos: Vector3 }>();
 
@@ -528,6 +532,15 @@ export class BabylonVoxelArena {
     }
   }
 
+  public setAssetManifest(manifest: AssetManifest | null): void {
+    this.assetManifest = manifest;
+  }
+
+  private getAsset(id: string | undefined): AssetEntry | null {
+    if (!id || !this.assetManifest) return null;
+    return this.assetManifest.assets.find((asset) => asset.id === id) ?? null;
+  }
+
   public loadRoomInit(init: RoomInitPayload): void {
     this.localPlayerId = init.playerId;
     this.grid = createProceduralIsland(init.seed, init.dimX, init.dimY, init.dimZ);
@@ -649,6 +662,7 @@ export class BabylonVoxelArena {
     this.syncLootDrops(tick.lootDrops);
     this.syncEntities(tick.entities);
     this.applyWeatherAtmosphere(tick.activeEvents);
+    this.syncEventWaypoints(tick.activeEvents);
   }
 
   public getZoomMeters(): number {
@@ -1219,6 +1233,45 @@ export class BabylonVoxelArena {
     }
   }
 
+  private syncEventWaypoints(events: MapEventState[]): void {
+    const seen = new Set<string>();
+    for (const evt of events) {
+      if (!evt.assets?.includes('waypoint:event')) continue;
+      seen.add(evt.id);
+      let mesh = this.eventWaypointMeshes.get(evt.id);
+      if (!mesh) {
+        const waypoint = this.getAsset('waypoint:event');
+        const radius = Number(waypoint?.params.radius ?? 2.5);
+        mesh = MeshBuilder.CreateTorus(
+          `evt_wp_${evt.id}`,
+          { diameter: Math.max(1, radius * 2), thickness: 0.12, tessellation: 28 },
+          this.scene,
+        );
+        const fxAsset = this.getAsset(
+          evt.assets.find((id) => id.startsWith('fx:event:')),
+        );
+        const colorHex =
+          typeof fxAsset?.params.color === 'string' ? fxAsset.params.color : '#f59e0b';
+        const mat = new StandardMaterial(`evt_wp_mat_${evt.id}`, this.scene);
+        const color = Color3.FromHexString(colorHex);
+        mat.emissiveColor = color;
+        mat.diffuseColor = color;
+        mat.disableLighting = true;
+        mat.alpha = 0.72;
+        mesh.material = mat;
+        this.eventWaypointMeshes.set(evt.id, mesh);
+      }
+      mesh.position.set(evt.center[0], evt.center[1] + 0.08, evt.center[2]);
+      mesh.setEnabled(true);
+    }
+    for (const [id, mesh] of this.eventWaypointMeshes) {
+      if (!seen.has(id)) {
+        mesh.dispose();
+        this.eventWaypointMeshes.delete(id);
+      }
+    }
+  }
+
   private applyWeatherAtmosphere(events: MapEventState[]): void {
     const activeWeather = events.find(
       (e) => e.warningRemainingSec <= 0 && e.archetype === 'WEATHER_HAZARD',
@@ -1709,7 +1762,10 @@ export class BabylonVoxelArena {
         this.recoilKick = 1.0;
         this.muzzleFlashTimer = 0.06;
         this.muzzleFlashMesh.setEnabled(true);
-        soundSynth.playShoot(activeItem.massKg);
+        soundSynth.playShoot(
+          activeItem.massKg,
+          activeItem.weapon.assets?.find((id) => id.startsWith('sfx:weapon:')),
+        );
       }
     }
 
@@ -1731,7 +1787,10 @@ export class BabylonVoxelArena {
       else if (e.code === 'Digit4') this.selectSlot(3);
       else if (e.code === 'KeyG' || e.code === 'KeyQ') this.callbacks.onDropItem();
       else if (e.code === 'KeyE') this.callbacks.onPickupItem();
-      else if (e.code === 'KeyT') {
+      else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+        e.preventDefault();
+        this.callbacks.onOpenPrompt();
+      } else if (e.code === 'KeyT') {
         e.preventDefault();
         this.callbacks.onOpenWeaponPrompt();
       } else if (e.code === 'KeyY') {

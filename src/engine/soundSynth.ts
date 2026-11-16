@@ -52,17 +52,41 @@ class SoundSynth {
     osc.stop(t + 0.17);
   }
 
-  playShoot(massKg: number): void {
+  playShoot(massKg: number, assetId?: string): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
     const t = ctx.currentTime;
+    const profile = assetId?.split(':').pop() ?? '';
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = massKg > 12 ? 'sawtooth' : 'square';
-    const baseFreq = Math.max(120, 480 - massKg * 14) * (0.94 + Math.random() * 0.12);
+    let type: OscillatorType = massKg > 12 ? 'sawtooth' : 'square';
+    let pitch = 1;
+    let loudness = 0.14;
+    if (profile === 'ice') {
+      type = 'sine';
+      pitch = 1.18;
+    } else if (profile === 'fire') {
+      type = 'sawtooth';
+      pitch = 0.9;
+      loudness = 0.16;
+    } else if (profile === 'toxic') {
+      type = 'square';
+      pitch = 0.82;
+    } else if (profile === 'void') {
+      type = 'sine';
+      pitch = 0.68;
+      loudness = 0.17;
+    } else if (profile === 'electric') {
+      type = 'square';
+      pitch = 1.35;
+      loudness = 0.12;
+    }
+    osc.type = type;
+    const baseFreq =
+      Math.max(120, 480 - massKg * 14) * pitch * (0.94 + Math.random() * 0.12);
     osc.frequency.setValueAtTime(baseFreq, t);
-    osc.frequency.exponentialRampToValueAtTime(65, t + 0.13);
-    gain.gain.setValueAtTime(0.14, t);
+    osc.frequency.exponentialRampToValueAtTime(65 * pitch, t + 0.13);
+    gain.gain.setValueAtTime(loudness, t);
     gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
     osc.connect(gain).connect(ctx.destination);
     osc.start(t);

@@ -41,8 +41,7 @@ PORT=3000
 HOST=127.0.0.1
 SERVE_CLIENT=false
 CORS_ORIGINS=https://promptwarfare.vercel.app
-GEMINI_API_KEY=<chave>
-VOXELFORGE_DB_PATH=/var/lib/prompt-warfare/voxelforge-blueprints.db
+PROMPT_LEDGER_DB_PATH=/var/lib/prompt-warfare/prompt-ledger.db
 ```
 
 - `HOST=127.0.0.1` expõe a porta apenas para o proxy reverso.
@@ -50,16 +49,29 @@ VOXELFORGE_DB_PATH=/var/lib/prompt-warfare/voxelforge-blueprints.db
 - `CORS_ORIGINS` aceita vírgula, `*` e curingas como `https://prompt-warfare-*.vercel.app` para previews.
 - Em desenvolvimento, deixe `CORS_ORIGINS` vazio ou inclua `http://localhost:3000`; com a lista preenchida, o handshake WebSocket de uma origem não listada é rejeitado.
 - Não defina `VITE_*` na VPS: essas variáveis são embutidas no build do frontend.
-- `GEMINI_API_KEY` fica somente aqui. Nunca use prefixo `VITE_`.
+- `GEMINI_API_KEY` e `VOXELFORGE_DB_PATH` pertencem às ferramentas offline, não à VPS.
 
-### Banco e permissões
+### Catálogo, ledger e permissões
+
+O runtime lê `content/catalog/catalog.json` e escreve apenas no ledger de prompts. Garanta que o catálogo acompanhe o deploy e que o diretório do ledger seja gravável e persistente:
 
 ```bash
 sudo mkdir -p /var/lib/prompt-warfare
 sudo chown promptwarfare:promptwarfare /var/lib/prompt-warfare
 ```
 
-O SQLite é criado no primeiro start. Faça backup do arquivo `.db` (e dos arquivos WAL) ou do diretório inteiro. O servidor deve rodar como uma única instância: salas ficam em memória e não há suporte a múltiplos processos compartilhando estado.
+O ledger usa SQLite com WAL. Faça backup de `prompt-ledger.db` (e dos arquivos WAL) ou do diretório inteiro. Trate o arquivo como dado sensível e pseudonimizado.
+
+Defina uma política de retenção e agende a limpeza/redação:
+
+```bash
+npm run ledger:prune -- --db /var/lib/prompt-warfare/prompt-ledger.db --days 90 --dry-run
+npm run ledger:prune -- --db /var/lib/prompt-warfare/prompt-ledger.db --days 90 --redact-prompts
+```
+
+`--redact-prompts` preserva os agregados (item, estratégia, cobertura) e apaga o texto bruto; sem ele, as linhas antigas de prompt e uso são removidas.
+
+O servidor deve rodar como uma única instância: salas ficam em memória e não há suporte a múltiplos processos compartilhando estado.
 
 ### systemd
 
@@ -149,13 +161,15 @@ Se preferir Bun na Vercel, troque o `installCommand` para `bun install` e config
 - [ ] O navegador abre `wss://api.<domínio>/ws` (sem erro de mixed content).
 - [ ] `CORS_ORIGINS` contém o domínio de produção e os previews necessários.
 - [ ] `SERVE_CLIENT=false` na VPS.
-- [ ] `GEMINI_API_KEY` existe apenas na VPS.
-- [ ] O diretório de dados do SQLite é persistente e tem backup.
+- [ ] `content/catalog/catalog.json` está presente e legível no deploy.
+- [ ] O diretório do `PROMPT_LEDGER_DB_PATH` é gravável, persistente e tem backup.
+- [ ] A política de retenção foi definida e `ledger:prune` está agendado.
+- [ ] Nenhuma chave de IA está configurada na VPS.
 - [ ] Novo deploy da Vercel foi feito depois de alterar `VITE_*`.
 
 ## Limites atuais
 
 - Não há autenticação nem rate limiting. CORS e a checagem de origem do WebSocket não são barreiras de segurança contra clientes que não sejam navegadores.
 - Salas são perdidas ao reiniciar a VPS.
-- O SQLite e o estado em memória assumem uma única instância; não escale horizontalmente sem repensar salas, WebSocket e persistência.
-- Sem `GEMINI_API_KEY`, o jogo continua funcional com o gerador procedural.
+- O estado em memória assume uma única instância; não escale horizontalmente sem repensar salas e WebSocket.
+- O jogo não depende de IA nem de rede externa: o catálogo versionado é a fonte de conteúdo.

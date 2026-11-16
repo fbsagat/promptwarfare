@@ -33,13 +33,15 @@ Tratadas em `RoomManager.handleClientMessage`:
 
 | Tipo | Payload | Efeito |
 | --- | --- | --- |
-| `player:input` | `ClientInputPacket` | Movimento, pulo, yaw/pitch, slot ativo e flag de digitação. |
-| `player:action` | `{ origin, dir }` | Ação primária (tiro, escavação ou gancho). |
-| `player:drop` | — | Descarta o item do slot ativo. |
-| `player:pickup` | — | Pega o loot mais próximo. |
-| `ai:forge_weapon` | `{ prompt, allocation? }` | Forja uma arma; consome a recarga e responde com `ai:weapon_ready`. |
-| `ai:weapon_prompt_timeout` | — | Cancela a forja e aplica recarga curta. |
-| `ai:trigger_event` | `{ prompt }` | Só funciona para o jogador sorteado da rodada. |
+| `player:input` | `ClientInputPacket` | Movimento, pulo, yaw/pitch e slot ativo. Ignorado enquanto o jogador está escrevendo. |
+| `player:action` | `{ origin, dir }` | Ação primária (tiro, escavação ou gancho). Rejeitada durante a escrita. |
+| `player:drop` | — | Descarta o item do slot ativo. Rejeitado durante a escrita. |
+| `player:pickup` | — | Pega o loot mais próximo. Rejeitado durante a escrita. |
+| `prompt:open` | `{ kind: 'weapon' \| 'event' }` | Abre a janela de escrita no servidor e inicia o timeout. |
+| `prompt:cancel` | `{ kind }` | Cancela a escrita; o evento é consumido e a forja volta a ficar pronta. |
+| `ai:forge_weapon` | `{ prompt }` | Envia a arma; exige `prompt:open` de arma. Sem alocação. |
+| `ai:trigger_event` | `{ prompt }` | Envia o evento; exige `prompt:open` de evento e ser o sorteado. |
+| `content:feedback` | `{ itemId, rating: 1 \| -1, kind? }` | Registra feedback explícito do jogador para um item do catálogo. |
 | `room:start` | `{ devSolo? }` | Master inicia a partida (`devSolo` só em dev mode). |
 | `room:update_settings` | `accessMode?`, `password?`, `roomName?`, `targetPlayers?`, `fillWithBots?` | Ajustes de sala; parte só é aceita no lobby e/ou pelo Master. |
 | `room:kick` | `{ targetPlayerId }` | Master expulsa um jogador. |
@@ -49,6 +51,8 @@ Tratadas em `RoomManager.handleClientMessage`:
 
 `DevActionPayload` aceita: `toggle_god_mode`, `toggle_infinite_sandbox`, `toggle_freeze_bots`, `unlock_forge`, `refill_player`, `quick_forge`, `win_event_raffle`, `trigger_event`, `clear_events`, `teleport_center`, `spawn_bot`, `kill_bots` e `force_restart`.
 
+O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindicar e 20s de escrita; a forja tem 20s de escrita. Se o cliente travar, o servidor expira e limpa o estado sozinho. Enquanto escreve, o jogador fica parado e vulnerável; movimento e ações são rejeitados.
+
 ## Servidor → cliente
 
 | Tipo | Conteúdo |
@@ -57,17 +61,19 @@ Tratadas em `RoomManager.handleClientMessage`:
 | `room:error` | `{ code, message, roomId?, ... }` |
 | `room:lobby_state` | `LobbyStatePayload` (membros, Master, configurações e fase). |
 | `room:settings_updated` | `{ accessMode, hostId, hostName }` |
-| `room:init` | `RoomInitPayload`: estado inicial completo (seed, dimensões, grade inicial, jogadores, eventos e loot). |
-| `room:tick` | `RoomTickPayload`: jogadores, projéteis, loot, entidades, eventos, timers, água e resumo. |
+| `room:init` | `RoomInitPayload`: estado inicial completo (seed, dimensões, grade inicial, jogadores, eventos, loot, `serverNow`, `event`, `catalogVersion` e `assetVersion`). |
+| `room:tick` | `RoomTickPayload`: jogadores, projéteis, loot, entidades, eventos, timers, água e resumo. Inclui `serverNow`, `event`, `catalogVersion`, `assetVersion` e, por jogador, `prompt` e `forge`. |
 | `room:killfeed` | `KillfeedEntry` (abates e avisos do sistema). |
 | `voxel:deltas` | `VoxelDelta[]` com alterações de voxels desde o último envio. |
 | `fx:shrapnel` | `{ center, voxels }` para estilhaços locais. |
 | `fx:hit` | `{ heavy }` para hitmarker/hitstop. |
 | `fx:pickup` | Efeito sonoro de coleta. |
-| `ai:weapon_ready` | `{ slotIndex }` quando a arma forjada é equipada. |
+| `ai:weapon_ready` | `{ weapon, slotIndex }` quando a arma do catálogo é equipada. |
 | `ai:error` | `{ message }` em falhas de permissão/tempo da forja ou evento. |
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
+
+Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração.
 
 ## Códigos de erro
 

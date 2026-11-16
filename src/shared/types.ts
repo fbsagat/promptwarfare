@@ -105,8 +105,33 @@ export interface WeaponBlueprint {
   rleVoxels: number[]; // flat [colorIndex, runLength, ...] for 12x12x24
   gripPos: [number, number, number];
   muzzlePos: [number, number, number];
-  allocation?: WeaponAllocation;
+  catalogId?: string;
+  assets?: string[];
   fromDatabase?: boolean;
+  fromCatalog?: boolean;
+}
+
+export type PromptKind = 'weapon' | 'event';
+
+export interface PromptWindowState {
+  kind: PromptKind;
+  endsAt: number; // epoch ms do servidor
+}
+
+export type ForgePhase = 'cooling' | 'ready' | 'writing' | 'dead';
+
+export interface ForgeState {
+  phase: ForgePhase;
+  endsAt: number | null; // epoch ms; null quando pronta
+}
+
+export type EventCyclePhase = 'cooldown' | 'raffle' | 'writing' | 'bot';
+
+export interface EventCycleState {
+  phase: EventCyclePhase;
+  endsAt: number | null; // epoch ms
+  rafflePlayerId: string | null;
+  rafflePlayerName: string | null;
 }
 
 export interface InventorySlotItem {
@@ -163,7 +188,10 @@ export interface MapEventState {
   entityBlueprint?: EntityBlueprint;
   budgetUsed: number;
   wasClamped: boolean;
+  catalogId?: string;
+  assets?: string[];
   fromDatabase?: boolean;
+  fromCatalog?: boolean;
 }
 
 export interface Vec3 {
@@ -192,6 +220,8 @@ export interface PlayerNetState {
   isTypingPrompt: boolean;
   canForgeWeapon: boolean;
   weaponCooldownSec: number;
+  prompt: PromptWindowState | null;
+  forge: ForgeState;
   kills: number;
   weaponsCreated: number;
   grappleTarget: Vec3 | null;
@@ -209,6 +239,7 @@ export interface LootDropState {
 export interface ProjectileNetState {
   id: string;
   ownerId: string;
+  catalogId?: string;
   position: Vec3;
   velocity: Vec3;
   color: string;
@@ -342,6 +373,10 @@ export interface RoomInitPayload {
   activeEvents: MapEventState[];
   lootDrops: LootDropState[];
   entities: SpawnedEntityNetState[];
+  serverNow: number;
+  event: EventCycleState;
+  catalogVersion: string;
+  assetVersion: string;
   eventCooldownSec: number;
   rafflePlayerId: string | null;
   rafflePlayerName: string | null;
@@ -360,6 +395,10 @@ export interface RoomTickPayload {
   lootDrops: LootDropState[];
   entities: SpawnedEntityNetState[];
   activeEvents: MapEventState[];
+  serverNow: number;
+  event: EventCycleState;
+  catalogVersion: string;
+  assetVersion: string;
   eventCooldownSec: number;
   rafflePlayerId: string | null;
   rafflePlayerName: string | null;
@@ -378,5 +417,4 @@ export interface ClientInputPacket {
   yaw: number;
   pitch: number;
   activeSlot: number;
-  isTypingPrompt: boolean;
 }

@@ -1,0 +1,243 @@
+{
+  "version": "2026-11-16.1",
+  "assets": [
+    {
+      "id": "texture:weapon:standard",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "standard"],
+      "params": { "kind": "palette", "colors": ["#38bdf8", "#334155", "#94a3b8", "#f59e0b"] }
+    },
+    {
+      "id": "texture:weapon:ice",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "ice"],
+      "params": { "kind": "palette", "colors": ["#67e8f9", "#1e3a5f", "#bae6fd", "#e0f2fe"] }
+    },
+    {
+      "id": "texture:weapon:fire",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "fire"],
+      "params": { "kind": "palette", "colors": ["#fb923c", "#27272a", "#71717a", "#facc15"] }
+    },
+    {
+      "id": "texture:weapon:toxic",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "toxic"],
+      "params": { "kind": "palette", "colors": ["#4ade80", "#1f2937", "#3f6212", "#a3e635"] }
+    },
+    {
+      "id": "texture:weapon:void",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "void"],
+      "params": { "kind": "palette", "colors": ["#c084fc", "#1e1b4b", "#4c1d95", "#f472b6"] }
+    },
+    {
+      "id": "texture:weapon:electric",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["weapon", "electric"],
+      "params": { "kind": "palette", "colors": ["#facc15", "#1e293b", "#38bdf8", "#fef08a"] }
+    },
+    {
+      "id": "sfx:weapon:standard",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "standard"],
+      "params": { "kind": "procedural", "patch": "shot" }
+    },
+    {
+      "id": "sfx:weapon:ice",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "ice"],
+      "params": { "kind": "procedural", "patch": "freeze" }
+    },
+    {
+      "id": "sfx:weapon:fire",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "fire"],
+      "params": { "kind": "procedural", "patch": "burn" }
+    },
+    {
+      "id": "sfx:weapon:toxic",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "toxic"],
+      "params": { "kind": "procedural", "patch": "acid" }
+    },
+    {
+      "id": "sfx:weapon:void",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "void"],
+      "params": { "kind": "procedural", "patch": "gravity" }
+    },
+    {
+      "id": "sfx:weapon:electric",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["weapon", "electric"],
+      "params": { "kind": "procedural", "patch": "shock" }
+    },
+    {
+      "id": "fx:weapon:standard",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "standard"],
+      "params": { "kind": "particle", "color": "#38bdf8", "count": 8 }
+    },
+    {
+      "id": "fx:weapon:ice",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "ice"],
+      "params": { "kind": "particle", "color": "#67e8f9", "count": 14 }
+    },
+    {
+      "id": "fx:weapon:fire",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "fire"],
+      "params": { "kind": "particle", "color": "#fb923c", "count": 18 }
+    },
+    {
+      "id": "fx:weapon:toxic",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "toxic"],
+      "params": { "kind": "particle", "color": "#4ade80", "count": 16 }
+    },
+    {
+      "id": "fx:weapon:void",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "void"],
+      "params": { "kind": "particle", "color": "#c084fc", "count": 20 }
+    },
+    {
+      "id": "fx:weapon:electric",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["weapon", "electric"],
+      "params": { "kind": "particle", "color": "#facc15", "count": 12 }
+    },
+    {
+      "id": "texture:event:weather",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["event", "weather"],
+      "params": { "kind": "palette", "colors": ["#67e8f9", "#1e3a5f", "#e0f2fe"] }
+    },
+    {
+      "id": "texture:event:terrain",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["event", "terrain"],
+      "params": { "kind": "palette", "colors": ["#fb923c", "#27272a", "#facc15"] }
+    },
+    {
+      "id": "texture:event:entity",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["event", "entity"],
+      "params": { "kind": "palette", "colors": ["#ef4444", "#3f3f46", "#a1a1aa"] }
+    },
+    {
+      "id": "texture:event:supply",
+      "type": "texture",
+      "status": "approved",
+      "tags": ["event", "supply"],
+      "params": { "kind": "palette", "colors": ["#f59e0b", "#334155", "#22d3ee"] }
+    },
+    {
+      "id": "sfx:event:weather",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["event", "weather"],
+      "params": { "kind": "procedural", "patch": "alert" }
+    },
+    {
+      "id": "sfx:event:terrain",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["event", "terrain"],
+      "params": { "kind": "procedural", "patch": "rumble" }
+    },
+    {
+      "id": "sfx:event:entity",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["event", "entity"],
+      "params": { "kind": "procedural", "patch": "growl" }
+    },
+    {
+      "id": "sfx:event:supply",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["event", "supply"],
+      "params": { "kind": "procedural", "patch": "pickup" }
+    },
+    {
+      "id": "fx:event:weather",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["event", "weather"],
+      "params": { "kind": "particle", "color": "#67e8f9", "count": 32 }
+    },
+    {
+      "id": "fx:event:terrain",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["event", "terrain"],
+      "params": { "kind": "particle", "color": "#fb923c", "count": 28 }
+    },
+    {
+      "id": "fx:event:entity",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["event", "entity"],
+      "params": { "kind": "particle", "color": "#ef4444", "count": 20 }
+    },
+    {
+      "id": "fx:event:supply",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["event", "supply"],
+      "params": { "kind": "particle", "color": "#f59e0b", "count": 12 }
+    },
+    {
+      "id": "waypoint:event",
+      "type": "waypoint",
+      "status": "approved",
+      "tags": ["event"],
+      "params": { "kind": "ring", "radius": 2.5 }
+    },
+    {
+      "id": "sfx:forge",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["forge"],
+      "params": { "kind": "procedural", "patch": "forge" }
+    },
+    {
+      "id": "sfx:pickup",
+      "type": "sound",
+      "status": "approved",
+      "tags": ["pickup"],
+      "params": { "kind": "procedural", "patch": "pickup" }
+    },
+    {
+      "id": "fx:shockwave",
+      "type": "effect",
+      "status": "approved",
+      "tags": ["impact"],
+      "params": { "kind": "particle", "color": "#e2e8f0", "count": 24 }
+    }
+  ]
+}

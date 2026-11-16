@@ -49,7 +49,6 @@ function cloneWeaponWithFreshId(
     rleVoxels: [...bp.rleVoxels],
     gripPos: [...bp.gripPos] as [number, number, number],
     muzzlePos: [...bp.muzzlePos] as [number, number, number],
-    allocation: bp.allocation ? { ...bp.allocation } : undefined,
   };
 }
 

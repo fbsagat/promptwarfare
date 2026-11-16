@@ -3,6 +3,7 @@ build/
 dist/
 coverage/
 data/
+content/reports/
 material/
 .vercel/
 .DS_Store

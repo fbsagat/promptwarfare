@@ -2,13 +2,20 @@
   "name": "prompt-warfare",
   "private": true,
   "version": "0.1.0",
-  "description": "Arena battle royale 3D em micro-voxels destrutíveis, com armas e eventos de mapa gerados por IA em tempo real.",
+  "description": "Arena battle royale 3D em micro-voxels destrutíveis, com armas e eventos de mapa resolvidos por um catálogo versionado.",
   "type": "module",
   "engines": {
     "node": ">=22.18.0"
   },
   "scripts": {
     "dev": "tsx server.ts",
+    "catalog:build": "tsx tools/build-catalog.ts",
+    "catalog:candidates": "tsx tools/catalog-candidates.ts",
+    "catalog:promote": "tsx tools/promote-candidates.ts",
+    "demand:seed": "tsx tools/seed-demand.ts",
+    "ledger:report": "tsx tools/ledger-report.ts",
+    "ledger:prune": "tsx tools/ledger-prune.ts",
+    "usage:report": "tsx tools/usage-report.ts",
     "build": "vite build",
     "start": "node server.ts",
     "preview": "vite preview",

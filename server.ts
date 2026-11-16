@@ -4,9 +4,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { generateAiWeapon } from './server/aiGenerator.ts';
-import { getBlueprintDb } from './server/blueprintDb.ts';
+import { getAssetManifest, getAssetVersion } from './server/assets.ts';
+import {
+  getCatalogSummary,
+  getCatalogVersion,
+  resolveWeaponFromCatalog,
+} from './server/catalog.ts';
 import { isOriginAllowed, parseAllowedOrigins } from './server/httpCors.ts';
+import { PromptLedger } from './server/ledger.ts';
 import { RoomManager } from './server/roomManager.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,14 +46,19 @@ async function startServer() {
 
   app.use(express.json({ limit: '1mb' }));
 
-  const roomManager = new RoomManager();
-  const blueprintDb = getBlueprintDb();
+  const ledger = new PromptLedger();
+  const roomManager = new RoomManager({ ledger });
+  const catalogVersion = getCatalogVersion();
+  const assetVersion = getAssetVersion();
+  process.once('exit', () => ledger.close());
 
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
       rooms: roomManager.getRoomList().length,
       devMode: roomManager.isDevModeEnabled(),
+      catalogVersion,
+      assetVersion,
     });
   });
 
@@ -57,18 +67,43 @@ async function startServer() {
   });
 
   app.get('/api/catalog', (_req, res) => {
-    res.json(blueprintDb.getCatalog(8));
+    res.json(getCatalogSummary());
   });
 
-  app.post('/api/ai/preview-weapon', async (req, res) => {
+  app.get('/api/assets', (_req, res) => {
+    res.json(getAssetManifest());
+  });
+
+  app.post('/api/ai/preview-weapon', (req, res) => {
     try {
       const prompt = String(req.body?.prompt ?? '').slice(0, 90);
       if (!prompt.trim()) {
         res.status(400).json({ error: 'Prompt vazio.' });
         return;
       }
-      const weapon = await generateAiWeapon(prompt);
-      res.json({ weapon });
+      const resolution = resolveWeaponFromCatalog(prompt);
+      ledger.record({
+        sessionId: `preview_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        actorType: 'preview',
+        actorRef: null,
+        roomId: null,
+        matchId: null,
+        kind: 'weapon',
+        phase: 'submitted',
+        prompt,
+        itemId: resolution.itemId,
+        strategy: resolution.strategy,
+        catalogVersion,
+        budgetUsed: resolution.blueprint.budgetUsed,
+        wasClamped: resolution.blueprint.wasClamped,
+        elapsedMs: null,
+        reason: null,
+      });
+      res.json({
+        weapon: resolution.blueprint,
+        catalogVersion,
+        strategy: resolution.strategy,
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -76,6 +111,15 @@ async function startServer() {
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+
+  const shutdown = () => {
+    ledger.close();
+    wss.close();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 
   wss.on('connection', (ws, req) => {
     const origin = req.headers.origin;
