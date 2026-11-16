@@ -91,6 +91,17 @@ Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalog
 
 O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. Se o item ideal existe no catálogo mas não no pool, o ledger grava `pool_miss = 1` e `pool_hash`; isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
 
+### Composição de eventos
+
+Quando o prompt pede duas categorias de evento (ex.: “chuva de meteoros com matilha de lobos”), o resolvedor escolhe o evento-base e adiciona componentes de outras categorias:
+
+- `MapEventState.components` carrega `{ archetype, params, entityBlueprint, budgetUsed }`;
+- o componente secundário é escalado para caber no orçamento restante (100 pontos no total);
+- o evento primário continua em `archetype`/`params` para compatibilidade;
+- `onEventActivated` aplica todos os componentes (suprimentos, criaturas, terreno);
+- `tickEvents` pulsa cada componente climático separadamente;
+- se a composição não couber no orçamento, o resultado vira `partial` e entra nas lacunas.
+
 ### `server/semantic.ts` e dedup offline
 
 `server/semantic.ts` gera embeddings lexicais determinísticos (sinônimos do domínio + unigramas/bigramas + trigramas) e similaridade de cosseno. Não há chamada de rede nem modelo externo no runtime.
@@ -114,9 +125,11 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 ### `server/assets.ts`
 
 - Lê `content/assets/manifest.json` no boot; runtime read-only.
-- IDs lógicos para `texture`, `sound`, `effect` e `waypoint`, com `status` e `params`.
+- IDs lógicos para `texture`, `sound`, `effect` e `waypoint`, com `status`, `params`, `url`, `mimeType` e `hash` opcionais.
+- `ASSET_BASE_URL` injeta `baseUrl` no `/api/assets`; o cliente resolve URLs relativas via `resolveAssetUrl`.
 - `assetVersion` aparece em `room:init`/`room:tick`; o catálogo referencia IDs de assets.
-- O manifesto é validado por `server/assets.test.ts`; a ligação do cliente por ID ainda é a próxima etapa.
+- O manifesto é validado por `server/assets.test.ts`; `npm run assets:check` valida URLs e, com `--remote`, faz HEAD/GET no CDN.
+- Texturas de arma usam o material Babylon quando há URL; sons usam cache de samples e caem no sintetizador procedural em falha/ausência.
 
 ### Telemetria de uso
 

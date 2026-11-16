@@ -24,6 +24,7 @@ import {
   type InventorySlotItem,
   type KillfeedEntry,
   type LootDropState,
+  type MapEventComponent,
   type MapEventState,
   type PlayerNetState,
   type ProjectileNetState,
@@ -1986,8 +1987,11 @@ export class RoomManager {
     const hasLowGrav = room.activeEvents.some(
       (e) =>
         e.warningRemainingSec <= 0 &&
-        e.archetype === 'WEATHER_HAZARD' &&
-        e.params.weatherKind === 'low_gravity',
+        this.getEventComponents(e).some(
+          (component) =>
+            component.archetype === 'WEATHER_HAZARD' &&
+            component.params.weatherKind === 'low_gravity',
+        ),
     );
     const gravity = hasLowGrav ? 10 : 24;
 
@@ -1995,8 +1999,11 @@ export class RoomManager {
     const tideEvent = room.activeEvents.find(
       (e) =>
         e.warningRemainingSec <= 0 &&
-        e.archetype === 'TERRAIN_MUTATION' &&
-        e.params.mutationKind === 'rising_tide',
+        this.getEventComponents(e).some(
+          (component) =>
+            component.archetype === 'TERRAIN_MUTATION' &&
+            component.params.mutationKind === 'rising_tide',
+        ),
     );
     if (tideEvent) {
       const progress =
@@ -2654,48 +2661,52 @@ export class RoomManager {
 
       evt.durationRemainingSec = Math.max(0, evt.durationRemainingSec - dt);
 
-      if (doHazardPulse && evt.archetype === 'WEATHER_HAZARD') {
-        const wKind = evt.params.weatherKind ?? 'meteor_shower';
-        if (wKind === 'meteor_shower' || wKind === 'earthquake') {
-          const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
-          let rx = (0.2 + Math.random() * 0.6) * room.dimX * VOXEL_SIZE;
-          let rz = (0.2 + Math.random() * 0.6) * room.dimZ * VOXEL_SIZE;
-          if (alivePlayers.length > 0 && Math.random() < 0.48) {
-            const anchor = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
-            const rad = Math.min(28, evt.params.radiusMeters || 18);
-            const ang = Math.random() * Math.PI * 2;
-            const d = Math.random() * rad;
-            rx = Math.max(8, Math.min(room.dimX * VOXEL_SIZE - 8, anchor.position.x + Math.cos(ang) * d));
-            rz = Math.max(8, Math.min(room.dimZ * VOXEL_SIZE - 8, anchor.position.z + Math.sin(ang) * d));
-          }
-          const gy = getGroundVoxelY(room.grid, Math.floor(rx / VOXEL_SIZE), Math.floor(rz / VOXEL_SIZE));
-          const wy = (gy + 0.5) * VOXEL_SIZE;
-          this.applyVoxelCarve(room, rx, wy, rz, wKind === 'meteor_shower' ? 5.0 : 3.5, true);
-          for (const p of room.players.values()) {
-            if (!p.alive) continue;
-            const d = Math.hypot(p.position.x - rx, p.position.z - rz);
-            if (d < 4.5) {
-              this.damagePlayer(room, p, evt.params.lethality * 0.55, null, evt.prompt);
-              p.velocity.y += 6.5;
+      if (doHazardPulse) {
+        for (const component of this.getEventComponents(evt)) {
+          if (component.archetype !== 'WEATHER_HAZARD') continue;
+          const params = component.params;
+          const wKind = params.weatherKind ?? 'meteor_shower';
+          if (wKind === 'meteor_shower' || wKind === 'earthquake') {
+            const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
+            let rx = (0.2 + Math.random() * 0.6) * room.dimX * VOXEL_SIZE;
+            let rz = (0.2 + Math.random() * 0.6) * room.dimZ * VOXEL_SIZE;
+            if (alivePlayers.length > 0 && Math.random() < 0.48) {
+              const anchor = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+              const rad = Math.min(28, params.radiusMeters || 18);
+              const ang = Math.random() * Math.PI * 2;
+              const d = Math.random() * rad;
+              rx = Math.max(8, Math.min(room.dimX * VOXEL_SIZE - 8, anchor.position.x + Math.cos(ang) * d));
+              rz = Math.max(8, Math.min(room.dimZ * VOXEL_SIZE - 8, anchor.position.z + Math.sin(ang) * d));
             }
-          }
-        } else if (wKind === 'acid_rain') {
-          for (const p of room.players.values()) {
-            if (!p.alive) continue;
-            // Check if player has roof overhead
-            const headVx = Math.floor(p.position.x / VOXEL_SIZE);
-            const headVz = Math.floor(p.position.z / VOXEL_SIZE);
-            const topVy = getGroundVoxelY(room.grid, headVx, headVz);
-            if (topVy * VOXEL_SIZE <= p.position.y + 1.8) {
-              this.damagePlayer(room, p, evt.params.lethality * 0.16, null, 'chuva ácida');
+            const gy = getGroundVoxelY(room.grid, Math.floor(rx / VOXEL_SIZE), Math.floor(rz / VOXEL_SIZE));
+            const wy = (gy + 0.5) * VOXEL_SIZE;
+            this.applyVoxelCarve(room, rx, wy, rz, wKind === 'meteor_shower' ? 5.0 : 3.5, true);
+            for (const p of room.players.values()) {
+              if (!p.alive) continue;
+              const d = Math.hypot(p.position.x - rx, p.position.z - rz);
+              if (d < 4.5) {
+                this.damagePlayer(room, p, params.lethality * 0.55, null, evt.prompt);
+                p.velocity.y += 6.5;
+              }
             }
-          }
-        } else if (wKind === 'blizzard') {
-          const now = Date.now();
-          for (const p of room.players.values()) {
-            if (!p.alive) continue;
-            p.freezeUntil = now + 1500;
-            this.damagePlayer(room, p, evt.params.lethality * 0.1, null, 'nevasca');
+          } else if (wKind === 'acid_rain') {
+            for (const p of room.players.values()) {
+              if (!p.alive) continue;
+              // Check if player has roof overhead
+              const headVx = Math.floor(p.position.x / VOXEL_SIZE);
+              const headVz = Math.floor(p.position.z / VOXEL_SIZE);
+              const topVy = getGroundVoxelY(room.grid, headVx, headVz);
+              if (topVy * VOXEL_SIZE <= p.position.y + 1.8) {
+                this.damagePlayer(room, p, params.lethality * 0.16, null, 'chuva ácida');
+              }
+            }
+          } else if (wKind === 'blizzard') {
+            const now = Date.now();
+            for (const p of room.players.values()) {
+              if (!p.alive) continue;
+              p.freezeUntil = now + 1500;
+              this.damagePlayer(room, p, params.lethality * 0.1, null, 'nevasca');
+            }
           }
         }
       }
@@ -2706,12 +2717,37 @@ export class RoomManager {
     }
   }
 
+  private getEventComponents(evt: MapEventState): MapEventComponent[] {
+    if (evt.components && evt.components.length > 0) return evt.components;
+    return [
+      {
+        archetype: evt.archetype,
+        params: evt.params,
+        entityBlueprint: evt.entityBlueprint,
+        budgetUsed: evt.budgetUsed,
+      },
+    ];
+  }
+
   private onEventActivated(room: GameRoom, evt: MapEventState): void {
+    const components = this.getEventComponents(evt);
+    for (let index = 0; index < components.length; index++) {
+      this.activateEventComponent(room, evt, components[index], index);
+    }
+  }
+
+  private activateEventComponent(
+    room: GameRoom,
+    evt: MapEventState,
+    component: MapEventComponent,
+    componentIndex: number,
+  ): void {
     const cx = (room.dimX * VOXEL_SIZE) / 2;
     const cz = (room.dimZ * VOXEL_SIZE) / 2;
+    const params = component.params;
 
-    if (evt.archetype === 'SUPPLY_DROP') {
-      const qty = Math.max(1, Math.min(8, evt.params.quantity));
+    if (component.archetype === 'SUPPLY_DROP') {
+      const qty = Math.max(1, Math.min(8, params.quantity));
       for (let i = 0; i < qty; i++) {
         const angle = (i / qty) * Math.PI * 2 + Math.random();
         const dist = 6 + Math.random() * (room.dimX * VOXEL_SIZE * 0.28);
@@ -2719,7 +2755,7 @@ export class RoomManager {
         const z = cz + Math.sin(angle) * dist;
         const gy = getGroundVoxelY(room.grid, Math.floor(x / VOXEL_SIZE), Math.floor(z / VOXEL_SIZE));
         room.entities.push({
-          id: `sup_${evt.id}_${i}`,
+          id: `sup_${evt.id}_${componentIndex}_${i}`,
           eventId: evt.id,
           kind: 'supply_crate',
           name: 'Caixa de Suprimentos',
@@ -2728,12 +2764,12 @@ export class RoomManager {
           hp: 100,
           maxHp: 100,
           aiBehavior: 'static_pickup',
-          blueprint: evt.entityBlueprint,
-          ammoRestore: evt.params.ammoRestore ?? 30,
+          blueprint: component.entityBlueprint,
+          ammoRestore: params.ammoRestore ?? 30,
         });
       }
-    } else if (evt.archetype === 'ENTITY_SPAWN') {
-      const qty = Math.max(1, Math.min(10, evt.params.quantity));
+    } else if (component.archetype === 'ENTITY_SPAWN') {
+      const qty = Math.max(1, Math.min(10, params.quantity));
       for (let i = 0; i < qty; i++) {
         const angle = (i / qty) * Math.PI * 2 + Math.random();
         const dist = 7 + Math.random() * (room.dimX * VOXEL_SIZE * 0.28);
@@ -2742,20 +2778,20 @@ export class RoomManager {
         const gy = getGroundVoxelY(room.grid, Math.floor(x / VOXEL_SIZE), Math.floor(z / VOXEL_SIZE));
         const hp = Math.max(25, Math.round(120 - qty * 8));
         room.entities.push({
-          id: `ent_${evt.id}_${i}`,
+          id: `ent_${evt.id}_${componentIndex}_${i}`,
           eventId: evt.id,
           kind: 'creature',
-          name: evt.entityBlueprint?.name || 'Criatura Voxel',
+          name: component.entityBlueprint?.name || 'Criatura Voxel',
           position: { x, y: (gy + 1.5) * VOXEL_SIZE, z },
           velocity: { x: 0, y: 0, z: 0 },
           hp,
           maxHp: hp,
-          aiBehavior: evt.params.aiBehavior ?? 'aggressive_nearest',
-          blueprint: evt.entityBlueprint,
+          aiBehavior: params.aiBehavior ?? 'aggressive_nearest',
+          blueprint: component.entityBlueprint,
         });
       }
-    } else if (evt.archetype === 'TERRAIN_MUTATION') {
-      const mKind = evt.params.mutationKind ?? 'crystal_spires';
+    } else if (component.archetype === 'TERRAIN_MUTATION') {
+      const mKind = params.mutationKind ?? 'crystal_spires';
       if (mKind === 'rising_tide') {
         // Rising tide surges smoothly via tickRoom effectiveWaterLevel
         return;

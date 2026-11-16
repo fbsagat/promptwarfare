@@ -77,6 +77,7 @@ CORS_ORIGINS=https://promptwarfare.vercel.app
 PROMPT_LEDGER_DB_PATH=/var/lib/prompt-warfare/prompt-ledger.db
 CATALOG_WATCH=true
 METRICS_WINDOW_DAYS=90
+ASSET_BASE_URL=https://cdn.promptwarfare.com/assets
 # METRICS_TOKEN=troque-por-um-segredo
 ```
 
@@ -87,6 +88,7 @@ METRICS_WINDOW_DAYS=90
 - Não defina `VITE_*` na VPS: essas variáveis são embutidas no build do frontend.
 - `CATALOG_WATCH=false` desliga o hot reload do catálogo; o padrão é observar `content/catalog/catalog.json`.
 - `METRICS_TOKEN` protege `/api/metrics` via header `X-Metrics-Token`; sem ele, o endpoint expõe apenas agregados públicos (sem prompts).
+- `ASSET_BASE_URL` resolve URLs relativas do manifesto de assets (CDN/MinIO). Sem ele, o cliente usa apenas o fallback procedural.
 - `GEMINI_API_KEY` e `VOXELFORGE_DB_PATH` pertencem às ferramentas offline, não à VPS.
 
 ### Catálogo, ledger e permissões

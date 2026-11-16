@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCanonicalKey, normalizePrompt } from '../src/shared/prompt.ts';
-import { validateAndClampWeapon } from '../src/shared/budget.ts';
+import { computeEventPoints, validateAndClampWeapon } from '../src/shared/budget.ts';
 import type {
   EntityBlueprint,
   EventArchetype,
   EventParams,
+  MapEventComponent,
   MapEventState,
   ProjectileBehavior,
   StatusEffect,
@@ -515,6 +516,26 @@ function countIntentGroups(promptNorm: string, kind: 'weapon' | 'event'): number
   return groups;
 }
 
+type EventCategory = 'weather' | 'terrain' | 'entity' | 'supply';
+
+function requestedEventCategories(promptNorm: string): Set<EventCategory> {
+  const categories = new Set<EventCategory>();
+  for (const category of AMBIGUITY_GROUPS.event) {
+    if (matchesAnyWord(promptNorm, EVENT_CATEGORY_WORDS[category] ?? [])) {
+      categories.add(category as EventCategory);
+    }
+  }
+  return categories;
+}
+
+function eventCategoryOf(item: CatalogEventItem): EventCategory | null {
+  return (
+    (AMBIGUITY_GROUPS.event as readonly EventCategory[]).find((category) =>
+      item.tags.includes(category),
+    ) ?? null
+  );
+}
+
 function isAmbiguousIntent(promptNorm: string, kind: 'weapon' | 'event'): boolean {
   return NEGATION_RX.test(promptNorm) || countIntentGroups(promptNorm, kind) >= 2;
 }
@@ -620,6 +641,70 @@ function cloneWeapon(item: CatalogWeaponItem, prompt: string): WeaponBlueprint {
     assets: [...item.assets],
     fromDatabase: false,
     fromCatalog: true,
+  };
+}
+
+function scaleEventParamsToBudget(
+  params: EventParams,
+  archetype: EventArchetype,
+  maxBudget: number,
+): { params: EventParams; budgetUsed: number } | null {
+  const scaled: EventParams = { ...params };
+  let budget = computeEventPoints(scaled, archetype);
+  let guard = 0;
+  while (budget > maxBudget && guard++ < 40) {
+    if (scaled.lethality > 5) scaled.lethality -= 2;
+    else if (scaled.quantity > 1) scaled.quantity -= 1;
+    else if (scaled.radiusMeters > 6) scaled.radiusMeters -= 2;
+    else if (scaled.durationSec > 15) scaled.durationSec -= 3;
+    else break;
+    budget = computeEventPoints(scaled, archetype);
+  }
+  if (budget > maxBudget) return null;
+  return { params: scaled, budgetUsed: budget };
+}
+
+function composeEvent(
+  base: CatalogEventItem,
+  missingCategories: EventCategory[],
+  activeEvents: CatalogEventItem[],
+): { components: MapEventComponent[]; budgetUsed: number } | null {
+  const primaryBudget =
+    base.payload.budgetUsed ?? computeEventPoints(base.payload.params, base.payload.archetype);
+  const components: MapEventComponent[] = [
+    {
+      archetype: base.payload.archetype,
+      params: { ...base.payload.params },
+      entityBlueprint: base.payload.entityBlueprint,
+      budgetUsed: primaryBudget,
+    },
+  ];
+  let remaining = 100 - primaryBudget;
+  if (remaining < 15) return null;
+
+  for (const category of missingCategories) {
+    const donor = activeEvents.find(
+      (item) => item.id !== base.id && eventCategoryOf(item) === category,
+    );
+    if (!donor) return null;
+    const scaled = scaleEventParamsToBudget(
+      donor.payload.params,
+      donor.payload.archetype,
+      remaining,
+    );
+    if (!scaled) return null;
+    components.push({
+      archetype: donor.payload.archetype,
+      params: scaled.params,
+      entityBlueprint: donor.payload.entityBlueprint,
+      budgetUsed: scaled.budgetUsed,
+    });
+    remaining -= scaled.budgetUsed;
+  }
+
+  return {
+    components,
+    budgetUsed: Math.round((100 - remaining) * 10) / 10,
   };
 }
 
@@ -787,6 +872,40 @@ function resolveEventInternal(
     DEFAULT_EVENT_ID,
     ambiguous,
   );
+
+  const requestedCategories = requestedEventCategories(promptNorm);
+  const baseCategory = eventCategoryOf(picked.item);
+  if (
+    picked.strategy !== 'alias' &&
+    picked.strategy !== 'canonical' &&
+    picked.strategy !== 'default' &&
+    requestedCategories.size >= 2 &&
+    baseCategory !== null &&
+    requestedCategories.has(baseCategory)
+  ) {
+    const missingCategories = Array.from(requestedCategories).filter(
+      (category) => category !== baseCategory,
+    );
+    const composed = composeEvent(picked.item, missingCategories, activeEvents);
+    if (composed) {
+      const event = cloneEvent(picked.item, authorId, authorName, center);
+      event.components = composed.components;
+      event.budgetUsed = composed.budgetUsed;
+      return {
+        event,
+        itemId: picked.item.id,
+        strategy: 'composition',
+        score: picked.score,
+      };
+    }
+    return {
+      event: cloneEvent(picked.item, authorId, authorName, center),
+      itemId: picked.item.id,
+      strategy: 'partial',
+      score: picked.score,
+    };
+  }
+
   return {
     event: cloneEvent(picked.item, authorId, authorName, center),
     itemId: picked.item.id,

@@ -1,5 +1,7 @@
 class SoundSynth {
   private ctx: AudioContext | null = null;
+  private samples = new Map<string, AudioBuffer>();
+  private sampleLoads = new Map<string, Promise<AudioBuffer | null>>();
   public muted = false;
 
   private ensureContext(): AudioContext | null {
@@ -17,6 +19,51 @@ class SoundSynth {
       void this.ctx.resume();
     }
     return this.ctx;
+  }
+
+  private loadSample(url: string, ctx: AudioContext): Promise<AudioBuffer | null> {
+    const cached = this.samples.get(url);
+    if (cached) return Promise.resolve(cached);
+    const pending = this.sampleLoads.get(url);
+    if (pending) return pending;
+    const promise = fetch(url)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((buffer) => ctx.decodeAudioData(buffer))
+      .then((decoded) => {
+        this.samples.set(url, decoded);
+        this.sampleLoads.delete(url);
+        return decoded;
+      })
+      .catch(() => {
+        this.sampleLoads.delete(url);
+        return null;
+      });
+    this.sampleLoads.set(url, promise);
+    return promise;
+  }
+
+  private playSample(
+    url: string,
+    ctx: AudioContext,
+    volume = 1,
+    playbackRate = 1,
+  ): boolean {
+    const buffer = this.samples.get(url);
+    if (!buffer) {
+      void this.loadSample(url, ctx);
+      return false;
+    }
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    source.buffer = buffer;
+    source.playbackRate.value = playbackRate;
+    gain.gain.value = volume;
+    source.connect(gain).connect(ctx.destination);
+    source.start();
+    return true;
   }
 
   playDig(): void {
@@ -52,9 +99,10 @@ class SoundSynth {
     osc.stop(t + 0.17);
   }
 
-  playShoot(massKg: number, assetId?: string): void {
+  playShoot(massKg: number, assetId?: string, assetUrl?: string | null): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
+    if (assetUrl && this.playSample(assetUrl, ctx, 0.8)) return;
     const t = ctx.currentTime;
     const profile = assetId?.split(':').pop() ?? '';
     const osc = ctx.createOscillator();

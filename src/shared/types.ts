@@ -175,12 +175,20 @@ export interface EntityBlueprint {
   rleVoxels: number[]; // 16x16x16
 }
 
+export interface MapEventComponent {
+  archetype: EventArchetype;
+  params: EventParams;
+  entityBlueprint?: EntityBlueprint;
+  budgetUsed: number;
+}
+
 export interface MapEventState {
   id: string;
   authorId: string;
   authorName: string;
   prompt: string;
   archetype: EventArchetype;
+  components?: MapEventComponent[];
   warningRemainingSec: number; // starts at 5
   durationRemainingSec: number;
   totalDurationSec: number;

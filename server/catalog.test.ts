@@ -131,8 +131,22 @@ test('resolver composes safe capabilities and marks weak matches as partial', ()
   assert.equal(weakWeapon.strategy, 'partial');
   assert.ok(weakWeapon.score >= 60);
 
-  const ambiguousEvent = resolveEventFromCatalog(
+  const composedEvent = resolveEventFromCatalog(
     'Chuva de meteoros com matilha de lobos',
+    'p1',
+    'Ana',
+    [0, 0, 0],
+  );
+  assert.equal(composedEvent.strategy, 'composition');
+  assert.equal(composedEvent.event.components?.length, 2);
+  assert.ok((composedEvent.event.budgetUsed ?? 101) <= 100);
+  assert.deepEqual(
+    composedEvent.event.components?.map((component) => component.archetype),
+    ['WEATHER_HAZARD', 'ENTITY_SPAWN'],
+  );
+
+  const ambiguousEvent = resolveEventFromCatalog(
+    'evento estranho de gelo',
     'p1',
     'Ana',
     [0, 0, 0],

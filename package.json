@@ -13,6 +13,7 @@
     "catalog:candidates": "tsx tools/catalog-candidates.ts",
     "catalog:promote": "tsx tools/promote-candidates.ts",
     "catalog:dedupe": "tsx tools/catalog-dedupe.ts",
+    "assets:check": "tsx tools/assets-check.ts",
     "demand:seed": "tsx tools/seed-demand.ts",
     "ledger:report": "tsx tools/ledger-report.ts",
     "loop:report": "tsx tools/loop-report.ts",

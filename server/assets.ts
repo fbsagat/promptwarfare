@@ -16,6 +16,9 @@ function assertManifest(raw: unknown): AssetManifest {
   if (!data || typeof data.version !== 'string' || !Array.isArray(data.assets)) {
     throw new Error('Manifesto de assets inválido: versão ou lista ausente.');
   }
+  if (data.baseUrl !== undefined && typeof data.baseUrl !== 'string') {
+    throw new Error('Manifesto de assets inválido: baseUrl deve ser string.');
+  }
   if (data.assets.length === 0) {
     throw new Error('Manifesto de assets inválido: lista vazia.');
   }
@@ -33,6 +36,15 @@ function assertManifest(raw: unknown): AssetManifest {
     if (!Array.isArray(asset.tags) || typeof asset.params !== 'object' || asset.params === null) {
       throw new Error(`Asset ${asset.id} incompleto.`);
     }
+    if (asset.url !== undefined && typeof asset.url !== 'string') {
+      throw new Error(`Asset ${asset.id} com url inválida.`);
+    }
+    if (asset.mimeType !== undefined && typeof asset.mimeType !== 'string') {
+      throw new Error(`Asset ${asset.id} com mimeType inválido.`);
+    }
+    if (asset.hash !== undefined && typeof asset.hash !== 'string') {
+      throw new Error(`Asset ${asset.id} com hash inválido.`);
+    }
     ids.add(asset.id);
   }
   return data as AssetManifest;
@@ -40,7 +52,11 @@ function assertManifest(raw: unknown): AssetManifest {
 
 export function getAssetManifest(): AssetManifest {
   if (!cached) {
-    cached = assertManifest(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')));
+    const manifest = assertManifest(
+      JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')),
+    );
+    const baseUrl = process.env.ASSET_BASE_URL?.trim();
+    cached = baseUrl ? { ...manifest, baseUrl } : manifest;
   }
   return cached;
 }

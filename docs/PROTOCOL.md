@@ -75,7 +75,7 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
 
-Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala.
+Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala. Eventos compostos incluem `components?: [{ archetype, params, entityBlueprint?, budgetUsed }]`; o cliente deve usar os campos de topo para exibição e ignorar componentes desconhecidos.
 
 ## Códigos de erro
 

@@ -69,6 +69,7 @@ Copy-Item .env.example .env
 | `PROMPT_LEDGER_DB_PATH` | `data/prompt-ledger.db` | Caminho do SQLite append-only de prompts. |
 | `PROMPT_LEDGER_BACKEND` | `sqlite` | `sqlite` ou `postgres` para múltiplas instâncias. |
 | `PROMPT_LEDGER_POSTGRES_URL` | vazio | URL do Postgres quando `PROMPT_LEDGER_BACKEND=postgres` (ou use `DATABASE_URL`). |
+| `ASSET_BASE_URL` | vazio | Origem pública dos assets relativos (MinIO/S3/CDN). |
 | `CATALOG_WATCH` | `true` | Hot reload de `content/catalog/catalog.json`; `false` exige restart. |
 | `METRICS_WINDOW_DAYS` | `90` | Janela de agregação do snapshot de `/api/metrics`. |
 | `METRICS_TOKEN` | vazio | Token opcional exigido em `X-Metrics-Token`; vazio expõe apenas agregados públicos. |
@@ -200,7 +201,7 @@ npm run ledger:prune -- --days 90 --redact-prompts
 npm run catalog:build -- 2026-11-20.1
 ```
 
-Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria.
+Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria. Eventos também compõem: quando o prompt pede duas categorias (ex.: meteoros + criaturas), o servidor combina componentes, escala o secundário para caber nos 100 pontos e aplica todos os efeitos no mundo.
 
 ## Estrutura
 
@@ -236,6 +237,7 @@ tools/
   usage-report.ts         Exporta uso/qualidade por item
   catalog-candidates.ts   Gera candidatos a partir das lacunas
   catalog-dedupe.ts       Relatório de quase-duplicatas semânticas
+  assets-check.ts         Valida URLs do manifesto/CDN
   promote-candidates.ts   Valida e publica candidatos aprovados
   aiGenerator.ts          Ferramenta offline de geração com Gemini
   blueprintDb.ts          Cache SQLite da ferramenta offline
@@ -268,6 +270,7 @@ Os testes usam o runner nativo do Node, rodam offline e cobrem orçamento de arm
 - [Arquitetura](docs/ARCHITECTURE.md)
 - [Deploy Vercel + VPS](docs/DEPLOY.md)
 - [Monitoramento Docker/Prometheus/Grafana](docs/MONITORING.md)
+- [Assets e CDN](docs/ASSETS.md)
 - [Protocolo WebSocket](docs/PROTOCOL.md)
 - [Plano do ciclo de conteúdo por prompts](docs/CONTENT_PLAN.md)
 - [Instruções para agentes](AGENTS.md)

@@ -4,6 +4,7 @@ import {
   MeshBuilder,
   Scene,
   StandardMaterial,
+  Texture,
   TransformNode,
   VertexData,
 } from '@babylonjs/core';
@@ -27,6 +28,7 @@ export function buildBlueprintVoxelMesh(
   d: number,
   voxelScale: number,
   pivot: [number, number, number],
+  textureUrl?: string | null,
 ): Mesh {
   const grid = decodeRleVoxels(rleVoxels, w, h, d);
   const get = (x: number, y: number, z: number) => {
@@ -156,6 +158,12 @@ export function buildBlueprintVoxelMesh(
   const mat = new StandardMaterial(`${name}_mat`, scene);
   mat.specularColor = new Color3(0.15, 0.15, 0.18);
   mat.emissiveColor = new Color3(0.08, 0.08, 0.1);
+  if (textureUrl) {
+    const texture = new Texture(textureUrl, scene);
+    texture.hasAlpha = false;
+    mat.diffuseTexture = texture;
+    mat.diffuseColor = Color3.White();
+  }
   mesh.material = mat;
   mesh.hasVertexAlpha = false;
   return mesh;

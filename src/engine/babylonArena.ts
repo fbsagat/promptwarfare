@@ -45,6 +45,7 @@ import {
   VoxelGrid,
 } from '../shared/voxelWorld.ts';
 import type { AssetEntry, AssetManifest } from '../shared/assets.ts';
+import { resolveAssetUrl } from '../shared/assets.ts';
 import { soundSynth } from './soundSynth.ts';
 import {
   buildBlueprintVoxelMesh,
@@ -541,6 +542,10 @@ export class BabylonVoxelArena {
     return this.assetManifest.assets.find((asset) => asset.id === id) ?? null;
   }
 
+  private getAssetUrl(id: string | undefined): string | null {
+    return resolveAssetUrl(this.getAsset(id), this.assetManifest);
+  }
+
   public loadRoomInit(init: RoomInitPayload): void {
     this.localPlayerId = init.playerId;
     this.grid = createProceduralIsland(init.seed, init.dimX, init.dimY, init.dimZ);
@@ -940,6 +945,9 @@ export class BabylonVoxelArena {
               24,
               0.036,
               activeItem.weapon.gripPos,
+              this.getAssetUrl(
+                activeItem.weapon.assets?.find((id) => id.startsWith('texture:weapon:')),
+              ),
             );
             wMesh.parent = entry.rig.handSocket;
             entry.equippedNode = wMesh;
@@ -1024,6 +1032,9 @@ export class BabylonVoxelArena {
         24,
         0.042,
         item.weapon.gripPos,
+        this.getAssetUrl(
+          item.weapon.assets?.find((id) => id.startsWith('texture:weapon:')),
+        ),
       );
       mesh.parent = this.viewModelAnchor;
       this.viewModelNode = mesh;
@@ -1765,6 +1776,9 @@ export class BabylonVoxelArena {
         soundSynth.playShoot(
           activeItem.massKg,
           activeItem.weapon.assets?.find((id) => id.startsWith('sfx:weapon:')),
+          this.getAssetUrl(
+            activeItem.weapon.assets?.find((id) => id.startsWith('sfx:weapon:')),
+          ),
         );
       }
     }

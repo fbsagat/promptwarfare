@@ -12,6 +12,8 @@
 > **Pool P2:** arsenal determinístico por sala (`server/contentPool.ts`) com núcleo obrigatório, peso inverso ao uso humano, quota de novidade (`introducedIn`/provenance), `pool_hash`/`pool_miss` no ledger e separação entre “fora do pool” e lacuna de catálogo nos relatórios.
 > **Observabilidade P2:** `introducedIn` no schema 3 do catálogo, alertas agregados em `/api/metrics` (baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa e ausência de uso).
 > **Dedup P2:** embeddings lexicais determinísticos (`server/semantic.ts`), quase-duplicatas (`server/semanticDuplicates.ts`), `catalog:dedupe` e merge semântico na promoção com tag/arquétipo compartilhados.
+> **Composição de eventos:** `MapEventState.components` combina categorias, escala o componente secundário para o orçamento total de 100 e aplica todos os efeitos no tick.
+> **Assets P2:** manifesto com `url`/`mimeType`/`hash`, `ASSET_BASE_URL`, resolução relativa no cliente, textura de arma e sample de som reais com fallback procedural, e `assets:check` para validar CDN.
 > **Documentos relacionados:** [ARQUITETURA](ARCHITECTURE.md), [PROTOCOLO](PROTOCOL.md), [DEPLOY](DEPLOY.md).
 
 ## 1. Objetivo
