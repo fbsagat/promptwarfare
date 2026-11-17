@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-16.4","kind":"event","items":{"evt_terrain_glacier":{"archetype":"TERRAIN_MUTATION","params":{"radiusMeters":26,"durationSec":26,"lethality":16,"quantity":2,"mutationKind":"glacier","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":52.7,"wasClamped":false}}}

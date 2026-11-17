@@ -147,11 +147,35 @@ export interface InventorySlotItem {
   weapon?: WeaponBlueprint;
 }
 
+/**
+ * Slot público: referência estável para o conteúdo da arma. O blueprint
+ * completo viaja uma única vez em `content:items` / `room:init.contentItems`.
+ */
+export interface NetInventorySlot {
+  id: string;
+  kind: 'shovel' | 'grapple' | 'weapon';
+  name: string;
+  massKg: number;
+  ammo?: number;
+  ammoMax?: number;
+  /** id da instância em `WeaponBlueprint.id`; ausente para ferramentas. */
+  weaponId?: string;
+}
+
 export type EventArchetype =
   | 'WEATHER_HAZARD'
   | 'ENTITY_SPAWN'
   | 'TERRAIN_MUTATION'
-  | 'SUPPLY_DROP';
+  | 'SUPPLY_DROP'
+  | 'SCENERY_SPAWN';
+
+export type SceneryKind =
+  | 'tree'
+  | 'grove'
+  | 'house'
+  | 'tower'
+  | 'skyscraper'
+  | 'ruins';
 
 export type EntityAiBehavior =
   | 'aggressive_nearest'
@@ -186,6 +210,26 @@ export interface EventParams {
     | 'overgrowth';
   aiBehavior?: EntityAiBehavior;
   ammoRestore?: number; // 10..60
+  sceneryKind?: SceneryKind;
+}
+
+/**
+ * Contrato de diversão de um evento. Não é balanceamento de dano: é o que
+ * garante que o caos seja legível, tenha contra-jogada e não vire morte
+ * inevitável.
+ */
+export interface EventFunContract {
+  telegraphSec: number;
+  escapeWindowSec: number;
+  counterplay: string[];
+  spectacle: string[];
+  readability: string[];
+  riskReward: string[];
+  fairness: {
+    unavoidableDamage: boolean;
+    maxLethality: number;
+  };
+  botResponse: string[];
 }
 
 export interface EntityBlueprint {
@@ -208,6 +252,7 @@ export interface MapEventState {
   prompt: string;
   archetype: EventArchetype;
   components?: MapEventComponent[];
+  fun?: EventFunContract;
   warningRemainingSec: number; // starts at 5
   durationRemainingSec: number;
   totalDurationSec: number;
@@ -221,6 +266,13 @@ export interface MapEventState {
   fromDatabase?: boolean;
   fromCatalog?: boolean;
 }
+
+/**
+ * Evento no fio: os campos de apresentação estática (blueprint de entidade e
+ * componentes) já foram enviados no conteúdo do evento; o tick carrega só o
+ * estado que muda a 20 Hz.
+ */
+export type NetMapEventState = Omit<MapEventState, 'components' | 'entityBlueprint'>;
 
 export interface Vec3 {
   x: number;
@@ -265,10 +317,22 @@ export interface PlayerNetState {
   personalityLabel?: string;
 }
 
+/** Estado de jogador transmitido a 20 Hz; slots carregam apenas referências. */
+export interface PlayerNetWireState extends Omit<PlayerNetState, 'slots'> {
+  slots: (NetInventorySlot | null)[]; // length 4
+}
+
 export interface LootDropState {
   id: string;
   position: Vec3;
   item: InventorySlotItem;
+}
+
+/** Loot no fio: mesmo contrato de referência dos slots. */
+export interface LootDropWireState {
+  id: string;
+  position: Vec3;
+  item: NetInventorySlot;
 }
 
 export interface IslandZipline {
@@ -408,6 +472,8 @@ export interface ContentPoolNetInfo {
   catalogVersion: string;
   weaponCount: number;
   eventCount: number;
+  /** Enviado apenas em `room:init`; evita repetir o arsenal de assets no tick. */
+  assetIds?: string[];
 }
 
 export interface RoomInitPayload {
@@ -463,6 +529,29 @@ export interface RoomTickPayload {
   phase: 'lobby' | 'playing' | 'ended';
   summary?: RoomMatchSummary;
   devState?: DevRoomState;
+}
+
+/**
+ * Conteúdo estático de armas enviado uma única vez por instância. O cliente
+ * mantém um cache por `id` e hidrata os slots do tick.
+ */
+export interface ContentItemsPayload {
+  catalogVersion: string;
+  weapons: WeaponBlueprint[];
+}
+
+export interface RoomInitWirePayload extends Omit<RoomInitPayload, 'players' | 'lootDrops' | 'activeEvents'> {
+  players: PlayerNetWireState[];
+  activeEvents: NetMapEventState[];
+  lootDrops: LootDropWireState[];
+  /** Blueprints de todas as armas já presentes na sala. */
+  contentItems: WeaponBlueprint[];
+}
+
+export interface RoomTickWirePayload extends Omit<RoomTickPayload, 'players' | 'lootDrops' | 'activeEvents'> {
+  players: PlayerNetWireState[];
+  activeEvents: NetMapEventState[];
+  lootDrops: LootDropWireState[];
 }
 
 export interface ClientInputPacket {

@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-16.4","kind":"event","items":{"evt_weather_blizzard":{"archetype":"WEATHER_HAZARD","params":{"radiusMeters":28,"durationSec":36,"lethality":18,"quantity":2,"weatherKind":"blizzard","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":61.2,"wasClamped":false}}}

@@ -86,9 +86,28 @@ O relabel do Netdata adiciona `stack="promptwarfare"` a containers `pw_*`, permi
 | `promptwarfare_loop_versions` | gauge | Versões observadas |
 | `promptwarfare_items{kind}` | gauge | Itens com demanda/uso |
 | `promptwarfare_gap_status{status}` | gauge | Fechadas/persistentes/regredidas |
+| `promptwarfare_counterplay_blocks_total` | counter | Dano climático bloqueado por teto/abrigo |
+| `promptwarfare_catalog_index_loaded` | gauge | Runtime usando índice quente |
+| `promptwarfare_catalog_shards{state}` | gauge | Shards totais/em cache |
+| `promptwarfare_catalog_shard_requests{result}` | counter | Hit/load do LRU de shards |
+| `promptwarfare_catalog_shard_hit_ratio` | gauge | Taxa de acerto do LRU |
+| `promptwarfare_catalog_payload_loads_total` | counter | Payloads materializados |
+| `promptwarfare_catalog_reloads_total` | counter | Recargas do catálogo |
+| `promptwarfare_resolver_calls_total{scope}` | counter | Chamadas do resolvedor pool/full |
+| `promptwarfare_resolver_duration_ms{stat}` | gauge | Duração avg/last/max |
+| `promptwarfare_resolver_candidates{stat}` | gauge | Candidatos avg/last |
+| `promptwarfare_asset_requests_total{kind}` | counter | Requisições de manifesto core/subset/full |
+| `promptwarfare_client_assets_loaded` | gauge | Maior working set de assets no cliente |
+| `promptwarfare_client_asset_fetches_total{result}` | counter | Requests/fetched/failed do cliente |
+| `promptwarfare_client_asset_bytes` | counter | Bytes de manifestos baixados |
+| `promptwarfare_event_triggers_total` | counter | Eventos acionados na janela |
+| `promptwarfare_event_kills_total` | counter | Abates causados por eventos |
+| `promptwarfare_event_feedback{rating}` | gauge | Feedback de eventos up/down |
+| `promptwarfare_event_feedback_score` | gauge | Feedback líquido de eventos (-1..1) |
+| `promptwarfare_event_item_*{item}` | gauge | Top eventos por eventos/abates/feedback |
 | `promptwarfare_alert_active{code,severity}` | gauge | Alerta agregado ativo |
 
-A janela do snapshot é `METRICS_WINDOW_DAYS` (padrão 90); o refresh é a cada 60 s. Salas/uptime são lidos ao vivo no scrape.
+A janela do snapshot é `METRICS_WINDOW_DAYS` (padrão 90); o ledger é recarregado a cada 60 s. No scrape, salas, catálogo, resolvedor, assets e eventos são relidos ao vivo; o cache de assets do cliente chega por `client:perf` a cada 15 s e entra nos contadores por delta.
 
 ## Alertas Prometheus
 

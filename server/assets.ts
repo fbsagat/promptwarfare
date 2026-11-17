@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { AssetManifest, AssetType } from '../src/shared/assets.ts';
+import type { AssetEntry, AssetManifest, AssetType } from '../src/shared/assets.ts';
 
 export type { AssetEntry, AssetManifest, AssetType } from '../src/shared/assets.ts';
 
@@ -10,6 +10,30 @@ const MANIFEST_PATH = path.resolve(__dirname, '..', 'content', 'assets', 'manife
 const VALID_TYPES = new Set<AssetType>(['texture', 'sound', 'effect', 'waypoint']);
 
 let cached: AssetManifest | null = null;
+let assetIndex: Map<string, AssetEntry> | null = null;
+let coreAssetIds: string[] | null = null;
+
+const CORE_ASSET_PREFIXES = [
+  'sfx:footstep:',
+  'sfx:impact:',
+  'sfx:ambience:',
+  'sfx:water:',
+  'sfx:ui:',
+  'sfx:dig:',
+  'sfx:land:',
+  'sfx:pickup:',
+  'sfx:equip:',
+  'sfx:drop:',
+  'sfx:traversal:',
+  'sfx:grapple:',
+  'waypoint:',
+];
+const CORE_ASSET_IDS = new Set(['sfx:forge', 'fx:shockwave']);
+
+function isCoreAsset(id: string): boolean {
+  if (CORE_ASSET_IDS.has(id)) return true;
+  return CORE_ASSET_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
 
 function assertManifest(raw: unknown): AssetManifest {
   const data = raw as Partial<AssetManifest> | null;
@@ -78,4 +102,39 @@ export function getAssetVersion(): string {
 
 export function getAssetIds(): Set<string> {
   return new Set(getAssetManifest().assets.map((asset) => asset.id));
+}
+
+/** Índice por id; evita `.find()` linear em cada consulta de manifest. */
+export function getAssetIndex(): Map<string, AssetEntry> {
+  if (!assetIndex) {
+    assetIndex = new Map(getAssetManifest().assets.map((asset) => [asset.id, asset]));
+  }
+  return assetIndex;
+}
+
+export function getCoreAssetIds(): string[] {
+  if (!coreAssetIds) {
+    coreAssetIds = getAssetManifest()
+      .assets.filter((asset) => isCoreAsset(asset.id))
+      .map((asset) => asset.id);
+  }
+  return coreAssetIds;
+}
+
+/**
+ * Manifesto com apenas os assets pedidos. Ids desconhecidos são ignorados para
+ * tolerar conteúdo antigo/novo durante deploy; a ordem segue o manifesto.
+ */
+export function getAssetManifestByIds(ids: Iterable<string>): AssetManifest {
+  const manifest = getAssetManifest();
+  const wanted = new Set(ids);
+  return {
+    version: manifest.version,
+    baseUrl: manifest.baseUrl,
+    assets: manifest.assets.filter((asset) => wanted.has(asset.id)),
+  };
+}
+
+export function getCoreAssetManifest(): AssetManifest {
+  return getAssetManifestByIds(getCoreAssetIds());
 }

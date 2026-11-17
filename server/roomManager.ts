@@ -26,14 +26,18 @@ import {
   type IslandZipline,
   type KillfeedEntry,
   type LootDropState,
+  type LootDropWireState,
   type MapEventComponent,
   type MapEventState,
+  type NetInventorySlot,
+  type NetMapEventState,
   type PlayerNetState,
+  type PlayerNetWireState,
   type ProjectileNetState,
   type PromptKind,
-  type RoomInitPayload,
+  type RoomInitWirePayload,
+  type RoomTickWirePayload,
   type RoomMatchSummary,
-  type RoomTickPayload,
   type SpawnedEntityNetState,
   type Vec3,
   type VoxelDelta,
@@ -85,8 +89,10 @@ import {
   notifyBotDamaged,
   rotateAngleTowards,
   stepBotBrain,
+  type BotActionOutput,
   type BotBrainState,
 } from '../src/shared/botBrain.ts';
+import { buildSceneryCells, type SceneryCell } from '../src/shared/scenery.ts';
 
 export interface SocketLike {
   readyState?: number;
@@ -131,6 +137,11 @@ interface ServerProjectile extends ProjectileNetState {
   stuck: boolean;
 }
 
+interface SceneryPlan {
+  layers: SceneryCell[][];
+  nextLayer: number;
+}
+
 interface GameRoom {
   id: string;
   name: string;
@@ -155,6 +166,7 @@ interface GameRoom {
   lootDrops: LootDropState[];
   entities: SpawnedEntityNetState[];
   activeEvents: MapEventState[];
+  sceneryPlans: Map<string, SceneryPlan>;
   eventPhase: EventCyclePhase;
   eventEndsAt: number;
   eventCooldownSec: number;
@@ -226,6 +238,44 @@ function createStarterSlots(): (InventorySlotItem | null)[] {
   ];
 }
 
+function hashSeed(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * O slot público não carrega o blueprint. O conteúdo viaja uma vez em
+ * `content:items`; a 20 Hz só trafega a referência.
+ */
+function stripInventorySlot(slot: InventorySlotItem | null): NetInventorySlot | null {
+  if (!slot) return null;
+  const net: NetInventorySlot = {
+    id: slot.id,
+    kind: slot.kind,
+    name: slot.name,
+    massKg: slot.massKg,
+  };
+  if (typeof slot.ammo === 'number') net.ammo = slot.ammo;
+  if (typeof slot.ammoMax === 'number') net.ammoMax = slot.ammoMax;
+  if (slot.weapon) net.weaponId = slot.weapon.id;
+  return net;
+}
+
+function stripLootDrop(drop: LootDropState): LootDropWireState | null {
+  const item = stripInventorySlot(drop.item);
+  if (!item) return null;
+  return { id: drop.id, position: drop.position, item };
+}
+
+function stripMapEvent(evt: MapEventState): NetMapEventState {
+  const { components: _components, entityBlueprint: _entityBlueprint, ...rest } = evt;
+  return rest;
+}
+
 function closestPointOnSegmentT(
   px: number,
   py: number,
@@ -262,6 +312,17 @@ export class RoomManager {
   private readonly devEnabled: boolean;
   private readonly ledger: LedgerSink | null;
   private usageWeights: Record<string, number> = {};
+  /** Blueprints já transmitidos por sala; cada instância viaja uma única vez. */
+  private sentWeaponIds = new WeakMap<GameRoom, Set<string>>();
+  /** Eventos climáticos bloqueados por teto desde o boot (contra-jogada). */
+  private shelterBlocks = 0;
+  /** Último relatório de cache de assets por jogador (deltas acumulados). */
+  private clientAssetReports = new Map<
+    string,
+    { loaded: number; requests: number; fetched: number; failed: number; bytes: number }
+  >();
+  private clientAssetTotals = { requests: 0, fetched: 0, failed: 0, bytes: 0 };
+  private clientAssetLoadedMax = 0;
 
   constructor(opts: { devEnabled?: boolean; ledger?: LedgerSink | null } = {}) {
     this.devEnabled = opts.devEnabled ?? isServerDevEnabled();
@@ -314,12 +375,48 @@ export class RoomManager {
     });
   }
 
+  private recordClientPerf(playerId: string, raw: any): void {
+    const counter = (value: unknown): number => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.max(0, Math.min(1_000_000_000, Math.floor(numeric))) : 0;
+    };
+    const next = {
+      loaded: counter(raw?.loaded),
+      requests: counter(raw?.requests),
+      fetched: counter(raw?.fetched),
+      failed: counter(raw?.failed),
+      bytes: counter(raw?.bytes),
+    };
+    const prev = this.clientAssetReports.get(playerId) ?? {
+      loaded: 0,
+      requests: 0,
+      fetched: 0,
+      failed: 0,
+      bytes: 0,
+    };
+    this.clientAssetTotals.requests += Math.max(0, next.requests - prev.requests);
+    this.clientAssetTotals.fetched += Math.max(0, next.fetched - prev.fetched);
+    this.clientAssetTotals.failed += Math.max(0, next.failed - prev.failed);
+    this.clientAssetTotals.bytes += Math.max(0, next.bytes - prev.bytes);
+    this.clientAssetReports.set(playerId, next);
+    this.clientAssetLoadedMax = Math.max(this.clientAssetLoadedMax, next.loaded);
+  }
+
   getRuntimeStats(): {
     rooms: number;
     playing: number;
     lobby: number;
     humans: number;
     bots: number;
+    counterplayBlocks: number;
+    clientAssets: {
+      loadedMax: number;
+      requests: number;
+      fetched: number;
+      failed: number;
+      bytes: number;
+      reporters: number;
+    };
   } {
     let playing = 0;
     let lobby = 0;
@@ -333,7 +430,22 @@ export class RoomManager {
         else if (player.ws !== null) humans += 1;
       }
     }
-    return { rooms: this.rooms.size, playing, lobby, humans, bots };
+    return {
+      rooms: this.rooms.size,
+      playing,
+      lobby,
+      humans,
+      bots,
+      counterplayBlocks: this.shelterBlocks,
+      clientAssets: {
+        loadedMax: this.clientAssetLoadedMax,
+        requests: this.clientAssetTotals.requests,
+        fetched: this.clientAssetTotals.fetched,
+        failed: this.clientAssetTotals.failed,
+        bytes: this.clientAssetTotals.bytes,
+        reporters: this.clientAssetReports.size,
+      },
+    };
   }
 
   getRoomList(): RoomPublicSummary[] {
@@ -442,6 +554,7 @@ export class RoomManager {
       lootDrops: [],
       entities: [],
       activeEvents: [],
+      sceneryPlans: new Map(),
       eventPhase: 'cooldown',
       eventEndsAt: Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000,
       eventCooldownSec: EVENT_CYCLE_COOLDOWN_SEC,
@@ -721,6 +834,7 @@ export class RoomManager {
     room.lootDrops = [];
     room.entities = [];
     room.activeEvents = [];
+    room.sceneryPlans.clear();
     room.eventPhase = 'cooldown';
     room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
     room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
@@ -1014,6 +1128,10 @@ export class RoomManager {
         if (Number.isFinite(t)) {
           this.sendToPlayer(player, { type: 'pong', payload: { t } });
         }
+        break;
+      }
+      case 'client:perf': {
+        this.recordClientPerf(player.id, msg.payload?.assets);
         break;
       }
 
@@ -1325,6 +1443,7 @@ export class RoomManager {
     room.lootDrops = [];
     room.entities = [];
     room.activeEvents = [];
+    room.sceneryPlans.clear();
     room.eventPhase = 'cooldown';
     room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
     room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
@@ -1956,6 +2075,31 @@ export class RoomManager {
     }
   }
 
+  private damageFromEvent(
+    room: GameRoom,
+    evt: MapEventState,
+    victim: ServerPlayer,
+    amount: number,
+    reason: string,
+  ): void {
+    const wasAlive = victim.alive;
+    this.damagePlayer(room, victim, amount, null, reason);
+    if (wasAlive && !victim.alive && evt.catalogId) {
+      this.ledger?.recordUsage({
+        itemId: evt.catalogId,
+        kind: 'event',
+        role: 'kill',
+        actorType: 'system',
+        actorRef: evt.authorId,
+        roomId: room.id,
+        matchId: room.matchId,
+        catalogVersion: getCatalogVersion(),
+        targetRef: victim.id,
+        metadata: { event: evt.prompt, reason },
+      });
+    }
+  }
+
   private killPlayer(
     room: GameRoom,
     victim: ServerPlayer,
@@ -2270,6 +2414,7 @@ export class RoomManager {
 
     // 2. Tick active events
     this.tickEvents(room, dt);
+    this.advanceSceneryPlans(room);
 
     // 3. Update bots & players
     for (const player of room.players.values()) {
@@ -2592,7 +2737,10 @@ export class RoomManager {
       this.broadcastToRoom(room, { type: 'voxel:deltas', payload: batch });
     }
 
-    const tickPayload: RoomTickPayload = {
+    // Conteúdo de arma novo precisa chegar antes do tick que o referencia.
+    this.broadcastNewWeaponContent(room);
+
+    const tickPayload: RoomTickWirePayload = {
       hostId: room.hostId,
       hostName: room.players.get(room.hostId)?.name ?? 'Master',
       accessMode: room.accessMode,
@@ -2610,9 +2758,11 @@ export class RoomManager {
         damage: pr.damage,
         ttlSec: pr.ttlSec,
       })),
-      lootDrops: room.lootDrops,
+      lootDrops: room.lootDrops
+        .map(stripLootDrop)
+        .filter((drop): drop is LootDropWireState => drop !== null),
       entities: room.entities,
-      activeEvents: room.activeEvents,
+      activeEvents: room.activeEvents.map(stripMapEvent),
       serverNow: now,
       event: this.buildEventCycleState(room),
       catalogVersion: getCatalogVersion(),
@@ -2754,6 +2904,7 @@ export class RoomManager {
 
       case 'clear_events': {
         room.activeEvents = [];
+        room.sceneryPlans.clear();
         room.entities = [];
         room.projectiles = [];
         break;
@@ -2999,7 +3150,13 @@ export class RoomManager {
                 room.grid.get(fx, fy, fz) === MAT.LAVA ||
                 room.grid.get(fx, fy - 1, fz) === MAT.LAVA;
               if (onLava) {
-                this.damagePlayer(room, p, component.params.lethality * 0.22, null, 'rio de lava');
+                this.damageFromEvent(
+                  room,
+                  evt,
+                  p,
+                  component.params.lethality * 0.22,
+                  'rio de lava',
+                );
                 p.velocity.y += 2.2;
               }
             }
@@ -3031,7 +3188,13 @@ export class RoomManager {
               if (!p.alive) continue;
               const d = Math.hypot(p.position.x - rx, p.position.z - rz);
               if (d < hitRadius) {
-                this.damagePlayer(room, p, params.lethality * damageFactor, null, evt.prompt);
+                this.damageFromEvent(
+                  room,
+                  evt,
+                  p,
+                  params.lethality * damageFactor,
+                  evt.prompt,
+                );
                 p.velocity.y += wKind === 'thunderstorm' ? 3.8 : 6.5;
               }
             }
@@ -3045,7 +3208,9 @@ export class RoomManager {
               if (topVy * VOXEL_SIZE <= p.position.y + 1.8) {
                 const factor = wKind === 'sandstorm' ? 0.12 : 0.16;
                 const reason = wKind === 'sandstorm' ? 'tempestade de areia' : 'chuva ácida';
-                this.damagePlayer(room, p, params.lethality * factor, null, reason);
+                this.damageFromEvent(room, evt, p, params.lethality * factor, reason);
+              } else {
+                this.shelterBlocks += 1;
               }
             }
           } else if (wKind === 'blizzard' || wKind === 'hail') {
@@ -3053,12 +3218,23 @@ export class RoomManager {
             const isHail = wKind === 'hail';
             for (const p of room.players.values()) {
               if (!p.alive) continue;
-              p.freezeUntil = now + (isHail ? 700 : 1500);
-              this.damagePlayer(
+              const headVx = Math.floor(p.position.x / VOXEL_SIZE);
+              const headVz = Math.floor(p.position.z / VOXEL_SIZE);
+              const topVy = getGroundVoxelY(room.grid, headVx, headVz);
+              const sheltered = topVy * VOXEL_SIZE > p.position.y + 1.8;
+              p.freezeUntil = Math.max(
+                p.freezeUntil,
+                now + (sheltered ? (isHail ? 250 : 500) : isHail ? 700 : 1500),
+              );
+              if (sheltered) {
+                this.shelterBlocks += 1; // teto bloqueia o dano; resta só o frio
+                continue;
+              }
+              this.damageFromEvent(
                 room,
+                evt,
                 p,
                 params.lethality * (isHail ? 0.28 : 0.1),
-                null,
                 isHail ? 'granizo' : 'nevasca',
               );
             }
@@ -3081,7 +3257,7 @@ export class RoomManager {
               p.velocity.z += dz * inv * pull;
               p.velocity.y += 1.4 + (1 - d / rad) * 3.4;
               if (d < rad * 0.35) {
-                this.damagePlayer(room, p, params.lethality * 0.18, null, evt.prompt);
+                this.damageFromEvent(room, evt, p, params.lethality * 0.18, evt.prompt);
               }
             }
           }
@@ -3166,6 +3342,66 @@ export class RoomManager {
           aiBehavior: params.aiBehavior ?? 'aggressive_nearest',
           blueprint: component.entityBlueprint,
         });
+      }
+    } else if (component.archetype === 'SCENERY_SPAWN') {
+      const kind = params.sceneryKind ?? 'tree';
+      const quantity = Math.max(
+        1,
+        Math.min(kind === 'skyscraper' ? 2 : kind === 'grove' ? 1 : 6, params.quantity),
+      );
+      const cells = new Map<string, SceneryCell>();
+      for (let i = 0; i < quantity; i++) {
+        const angle = (i / quantity) * Math.PI * 2 + hashSeed(`${evt.id}:${componentIndex}:${i}`) * 0.000001;
+        let dist = kind === 'skyscraper' ? 2 : 5 + (i % 3) * 3;
+        let vx = Math.floor((cx + Math.cos(angle) * dist) / VOXEL_SIZE);
+        let vz = Math.floor((cz + Math.sin(angle) * dist) / VOXEL_SIZE);
+        // Não nasce em cima de um jogador: empurra o ponto para o lado.
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const blocked = Array.from(room.players.values()).some((player) => {
+            if (!player.alive) return false;
+            return (
+              Math.hypot(
+                player.position.x - vx * VOXEL_SIZE,
+                player.position.z - vz * VOXEL_SIZE,
+              ) < 2.8
+            );
+          });
+          if (!blocked) break;
+          dist += 3;
+          vx = Math.floor((cx + Math.cos(angle + attempt + 1) * dist) / VOXEL_SIZE);
+          vz = Math.floor((cz + Math.sin(angle + attempt + 1) * dist) / VOXEL_SIZE);
+        }
+        if (
+          vx < 2 ||
+          vz < 2 ||
+          vx >= room.dimX - 2 ||
+          vz >= room.dimZ - 2
+        ) {
+          continue;
+        }
+        const baseY = getGroundVoxelY(room.grid, vx, vz) + 1;
+        for (const cell of buildSceneryCells(
+          kind,
+          vx,
+          baseY,
+          vz,
+          hashSeed(`${evt.id}:${componentIndex}:${i}:${kind}`),
+          room.dimY,
+        )) {
+          cells.set(`${cell.vx},${cell.vy},${cell.vz}`, cell);
+        }
+      }
+      if (cells.size > 0) {
+        const byLayer = new Map<number, SceneryCell[]>();
+        for (const cell of cells.values()) {
+          const layer = byLayer.get(cell.vy);
+          if (layer) layer.push(cell);
+          else byLayer.set(cell.vy, [cell]);
+        }
+        const layers = Array.from(byLayer.entries())
+          .sort(([a], [b]) => a - b)
+          .map(([, layer]) => layer);
+        room.sceneryPlans.set(evt.id, { layers, nextLayer: 0 });
       }
     } else if (component.archetype === 'TERRAIN_MUTATION') {
       const mKind = params.mutationKind ?? 'crystal_spires';
@@ -3270,6 +3506,35 @@ export class RoomManager {
         room.deltas.push(...deltas);
         room.pendingTickDeltas.push(...deltas);
       }
+    }
+  }
+
+  /**
+   * Aplica uma camada por tick de todas as estruturas de cenário. O plano
+   * sobrevive ao fim do evento: o objeto termina de subir mesmo se a janela
+   * do evento fechar antes.
+   */
+  private advanceSceneryPlans(room: GameRoom): void {
+    for (const [eventId, plan] of room.sceneryPlans) {
+      const layer = plan.layers[plan.nextLayer];
+      if (!layer) {
+        room.sceneryPlans.delete(eventId);
+        continue;
+      }
+      const deltas: VoxelDelta[] = [];
+      for (const cell of layer) {
+        if (cell.vy <= 0 || cell.vy >= room.dimY - 1) continue;
+        if (room.grid.get(cell.vx, cell.vy, cell.vz) !== MAT.AIR) continue;
+        if (room.grid.set(cell.vx, cell.vy, cell.vz, cell.mat)) {
+          deltas.push({ vx: cell.vx, vy: cell.vy, vz: cell.vz, mat: cell.mat });
+        }
+      }
+      if (deltas.length > 0) {
+        room.deltas.push(...deltas);
+        room.pendingTickDeltas.push(...deltas);
+      }
+      plan.nextLayer += 1;
+      if (plan.nextLayer >= plan.layers.length) room.sceneryPlans.delete(eventId);
     }
   }
 
@@ -3671,6 +3936,7 @@ export class RoomManager {
       nowMs,
       dt,
     });
+    this.applyBotHazardAvoidance(room, bot, action);
 
     if (action.startTypingPrompt && !bot.botForgePrompted) {
       bot.isTypingPrompt = true;
@@ -3725,6 +3991,51 @@ export class RoomManager {
     }
   }
 
+  /**
+   * Reação mínima e determinística a perigos que o bot consegue "ler": foge do
+   * tornado e de lava/vulcão. Eventos climáticos de céu aberto (granizo,
+   * nevasca, chuva ácida) continuam dependendo de teto/escavação, que o bot
+   * ainda não planeja; a contra-jogada humana continua valendo.
+   */
+  private applyBotHazardAvoidance(
+    room: GameRoom,
+    bot: ServerPlayer,
+    action: BotActionOutput,
+  ): void {
+    for (const evt of room.activeEvents) {
+      let centerX = evt.center[0];
+      let centerZ = evt.center[2];
+      let radius = Math.max(8, evt.params.radiusMeters || 18);
+      let flee = false;
+
+      if (evt.archetype === 'WEATHER_HAZARD' && evt.params.weatherKind === 'tornado') {
+        const cx = (room.dimX * VOXEL_SIZE) / 2;
+        const cz = (room.dimZ * VOXEL_SIZE) / 2;
+        centerX = cx + Math.cos(room.elapsedSec * 0.35) * 10;
+        centerZ = cz + Math.sin(room.elapsedSec * 0.35) * 10;
+        radius = Math.max(12, evt.params.radiusMeters || 24) * 1.15;
+        flee = true;
+      } else if (
+        evt.archetype === 'TERRAIN_MUTATION' &&
+        (evt.params.mutationKind === 'volcano' || evt.params.mutationKind === 'lava_river')
+      ) {
+        radius *= 0.75;
+        flee = true;
+      }
+
+      if (!flee) continue;
+      const dx = bot.position.x - centerX;
+      const dz = bot.position.z - centerZ;
+      if (Math.hypot(dx, dz) > radius) continue;
+      action.intent = 'retreat';
+      action.targetYaw = Math.atan2(dx, dz);
+      action.moveX = 0;
+      action.moveZ = 1;
+      action.jump = true;
+      return;
+    }
+  }
+
   private buildEventCycleState(room: GameRoom): EventCycleState {
     return {
       phase: room.eventPhase,
@@ -3734,7 +4045,7 @@ export class RoomManager {
     };
   }
 
-  private stripPlayer(p: ServerPlayer): PlayerNetState {
+  private stripPlayer(p: ServerPlayer): PlayerNetWireState {
     const now = Date.now();
     const forgePhase: 'cooling' | 'ready' | 'writing' | 'dead' = !p.alive
       ? 'dead'
@@ -3763,7 +4074,7 @@ export class RoomManager {
       velocity: p.velocity,
       yaw: p.yaw,
       pitch: p.pitch,
-      slots: p.slots,
+      slots: p.slots.map(stripInventorySlot),
       activeSlot: p.activeSlot,
       heat: p.heat,
       overheatedUntil: p.overheatedUntil,
@@ -3827,8 +4138,48 @@ export class RoomManager {
     }
   }
 
-  private buildInitPayload(room: GameRoom, playerId: string): RoomInitPayload {
+  private collectWeaponContent(room: GameRoom): WeaponBlueprint[] {
+    const weapons = new Map<string, WeaponBlueprint>();
+    for (const p of room.players.values()) {
+      for (const slot of p.slots) {
+        if (slot?.weapon) weapons.set(slot.weapon.id, slot.weapon);
+      }
+    }
+    for (const drop of room.lootDrops) {
+      if (drop.item.weapon) weapons.set(drop.item.weapon.id, drop.item.weapon);
+    }
+    return Array.from(weapons.values());
+  }
+
+  /**
+   * Envia uma única vez o blueprint de cada instância de arma que passou a
+   * existir na sala. Isso cobre forja, loot, morte e qualquer caminho futuro
+   * sem espalhar `send` por cada um deles.
+   */
+  private broadcastNewWeaponContent(room: GameRoom): void {
+    let sent = this.sentWeaponIds.get(room);
+    if (!sent) {
+      sent = new Set<string>();
+      this.sentWeaponIds.set(room, sent);
+    }
+    const fresh: WeaponBlueprint[] = [];
+    for (const weapon of this.collectWeaponContent(room)) {
+      if (sent.has(weapon.id)) continue;
+      sent.add(weapon.id);
+      fresh.push(weapon);
+    }
+    if (fresh.length === 0) return;
+    this.broadcastToRoom(room, {
+      type: 'content:items',
+      payload: { catalogVersion: getCatalogVersion(), weapons: fresh },
+    });
+  }
+
+  private buildInitPayload(room: GameRoom, playerId: string): RoomInitWirePayload {
     const hostName = room.players.get(room.hostId)?.name ?? 'Master';
+    const lootDrops = room.lootDrops
+      .map(stripLootDrop)
+      .filter((drop): drop is LootDropWireState => drop !== null);
     return {
       roomId: room.id,
       roomName: room.name,
@@ -3842,14 +4193,15 @@ export class RoomManager {
       dimZ: room.dimZ,
       deltas: room.deltas,
       players: Array.from(room.players.values()).map((p) => this.stripPlayer(p)),
-      activeEvents: room.activeEvents,
-      lootDrops: room.lootDrops,
+      activeEvents: room.activeEvents.map(stripMapEvent),
+      lootDrops,
       entities: room.entities,
+      contentItems: this.collectWeaponContent(room),
       serverNow: Date.now(),
       event: this.buildEventCycleState(room),
       catalogVersion: getCatalogVersion(),
       assetVersion: getAssetVersion(),
-      contentPool: summarizeContentPool(room.contentPool),
+      contentPool: summarizeContentPool(room.contentPool, true),
       eventCooldownSec: Math.round(room.eventCooldownSec),
       rafflePlayerId: room.rafflePlayerId,
       rafflePlayerName: room.rafflePlayerName,

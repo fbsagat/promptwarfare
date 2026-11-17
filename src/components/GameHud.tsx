@@ -40,6 +40,19 @@ const QUALITY_LABELS: Record<QualityLevel, string> = {
   high: 'Alta',
 };
 
+const COUNTERPLAY_LABELS: Record<string, string> = {
+  shelter: 'Abrigue-se',
+  dig: 'Cave',
+  sprint: 'Corra',
+  high_ground: 'Suba',
+  grapple: 'Use o gancho',
+  adapt: 'Adapte-se',
+  jump: 'Pule',
+  climb: 'Suba',
+  combat: 'Enfrente',
+  loot: 'Corra para o loot',
+};
+
 interface GameHudProps {
   localPlayer: PlayerNetState | null;
   allPlayers: PlayerNetState[];
@@ -61,6 +74,7 @@ interface GameHudProps {
   isFullscreen: boolean;
   damageFlash: boolean;
   hitmarkerActive: boolean;
+  hitmarkerHeavy: boolean;
   aimContext: 'neutral' | 'dig' | 'grapple' | 'enemy';
   nearbyLootName: string | null;
   nearbyZipline: string | null;
@@ -191,6 +205,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   isFullscreen,
   damageFlash,
   hitmarkerActive,
+  hitmarkerHeavy,
   aimContext,
   nearbyLootName,
   nearbyZipline,
@@ -256,6 +271,26 @@ export const GameHud: React.FC<GameHudProps> = ({
           ? 'bg-amber-300'
           : 'bg-white/85';
 
+  const hitmarkerSlashClass = hitmarkerHeavy
+    ? 'w-4 h-[2px] bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.9)]'
+    : 'w-3 h-[1.5px] bg-rose-400';
+
+  const offscreenMarkers = (() => {
+    if (!localPlayer) return [];
+    return activeEvents
+      .map((evt) => {
+        const dx = evt.center[0] - localPlayer.position.x;
+        const dz = evt.center[2] - localPlayer.position.z;
+        const dist = Math.hypot(dx, dz);
+        let rel = Math.atan2(dx, dz) - localPlayer.yaw;
+        rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+        return { evt, dist, rel };
+      })
+      .filter(({ dist, rel }) => dist > 10 && dist < 150 && Math.abs(rel) > 0.72)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 3);
+  })();
+
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-4 md:p-5">
       {/* Peripheral blue drowning vignette when low oxygen */}
@@ -277,6 +312,45 @@ export const GameHud: React.FC<GameHudProps> = ({
           }}
         />
       )}
+
+      {/* Eventos fora do campo de visão: seta na borda com distância */}
+      {offscreenMarkers.map(({ evt, dist, rel }) => {
+        const deg = (rel * 180) / Math.PI;
+        const warning = evt.warningRemainingSec > 0;
+        const label =
+          evt.archetype === 'SUPPLY_DROP'
+            ? 'SUPRIMENTO'
+            : evt.archetype === 'SCENERY_SPAWN'
+              ? 'ESTRUTURA'
+              : evt.archetype === 'ENTITY_SPAWN'
+                ? 'CRIATURAS'
+                : evt.archetype === 'TERRAIN_MUTATION'
+                  ? 'TERRENO'
+                  : 'CLIMA';
+        return (
+          <div
+            key={`edge_${evt.id}`}
+            className="absolute left-1/2 top-1/2"
+            style={{ transform: `translate(-50%, -50%) rotate(${deg}deg)` }}
+          >
+            <div className="absolute left-1/2 -translate-x-1/2 -top-[144px] flex flex-col items-center gap-1">
+              <div
+                className={`w-0 h-0 border-l-[7px] border-r-[7px] border-b-[13px] border-l-transparent border-r-transparent drop-shadow-[0_0_4px_rgba(0,0,0,0.85)] ${
+                  warning ? 'border-b-rose-400' : 'border-b-amber-300'
+                }`}
+              />
+              <span
+                className={`inline-block text-[9px] font-mono-tabular font-bold px-1.5 py-0.5 rounded bg-[#0b101b]/85 whitespace-nowrap ${
+                  warning ? 'text-rose-200' : 'text-amber-200'
+                }`}
+                style={{ transform: `rotate(${-deg}deg)` }}
+              >
+                {warning ? 'PERIGO' : label} · {Math.round(dist)}m
+              </span>
+            </div>
+          </div>
+        );
+      })}
 
       {/* TOP ROW: Corner Clusters + Center Event Alert */}
       <div className="flex items-start justify-between gap-4">
@@ -425,6 +499,14 @@ export const GameHud: React.FC<GameHudProps> = ({
                   {Math.ceil(warningEvent.warningRemainingSec)}s
                 </span>
               </p>
+              {warningEvent.fun && warningEvent.fun.counterplay.length > 0 && (
+                <p className="mt-0.5 text-[10px] font-medium text-rose-100/80">
+                  {warningEvent.fun.counterplay
+                    .slice(0, 3)
+                    .map((counter) => COUNTERPLAY_LABELS[counter] ?? counter)
+                    .join(' · ')}
+                </p>
+              )}
             </div>
           )}
 
@@ -594,10 +676,13 @@ export const GameHud: React.FC<GameHudProps> = ({
 
           {hitmarkerActive && (
             <>
-              <div className="absolute w-3 h-[1.5px] bg-rose-400 rotate-45 -translate-x-1.5 -translate-y-1.5" />
-              <div className="absolute w-3 h-[1.5px] bg-rose-400 -rotate-45 translate-x-1.5 -translate-y-1.5" />
-              <div className="absolute w-3 h-[1.5px] bg-rose-400 -rotate-45 -translate-x-1.5 translate-y-1.5" />
-              <div className="absolute w-3 h-[1.5px] bg-rose-400 rotate-45 translate-x-1.5 translate-y-1.5" />
+              {hitmarkerHeavy && (
+                <div className="absolute inset-0 rounded-full border border-amber-300/70 scale-125" />
+              )}
+              <div className={`absolute ${hitmarkerSlashClass} rotate-45 -translate-x-1.5 -translate-y-1.5`} />
+              <div className={`absolute ${hitmarkerSlashClass} -rotate-45 translate-x-1.5 -translate-y-1.5`} />
+              <div className={`absolute ${hitmarkerSlashClass} -rotate-45 -translate-x-1.5 translate-y-1.5`} />
+              <div className={`absolute ${hitmarkerSlashClass} rotate-45 translate-x-1.5 translate-y-1.5`} />
             </>
           )}
           {damageDirection && (

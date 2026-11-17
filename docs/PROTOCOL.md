@@ -13,6 +13,8 @@ Sem essas variáveis, tudo continua na mesma origem, como no desenvolvimento loc
 
 A fonte de verdade dos campos é `src/shared/types.ts`. `room:tick` é enviado a 20 Hz com o estado público dos jogadores; o cliente envia entradas com throttle de 45 ms.
 
+Slots e loot **não carregam o blueprint da arma** no estado de 20 Hz. Eles trafegam apenas `{ weaponId }`; o blueprint completo chega uma única vez por instância em `room:init.contentItems` ou na mensagem `content:items`. O cliente hidrata o slot com `src/shared/contentHydration.ts` antes de entregar o estado ao HUD e ao renderizador. Os tipos `RoomInitWirePayload`/`RoomTickWirePayload` descrevem o fio; `RoomInitPayload`/`RoomTickPayload` descrevem a visão hidratada.
+
 ## Cliente → servidor
 
 ### Antes de entrar em uma sala
@@ -39,6 +41,7 @@ Tratadas em `RoomManager.handleClientMessage`:
 | `player:pickup` | — | Pega o loot mais próximo. Rejeitado durante a escrita. |
 | `player:zipline` | `{ routeId }` | Inicia uma tirolesa se o jogador estiver a ≤ 3,6 m da âncora superior. |
 | `ping` | `{ t }` | Mede latência; o servidor responde com `pong` ecoando `t`. |
+| `client:perf` | `{ assets: { loaded, requests, fetched, failed, bytes } }` | Telemetria do cache/prefetch de assets do cliente para `/api/metrics`/`/metrics`. Valores são clampados; deltas são acumulados por jogador. |
 | `prompt:open` | `{ kind: 'weapon' \| 'event' }` | Abre a janela de escrita no servidor e inicia o timeout. |
 | `prompt:cancel` | `{ kind }` | Cancela a escrita; o evento é consumido e a forja volta a ficar pronta. |
 | `ai:forge_weapon` | `{ prompt }` | Envia a arma; exige `prompt:open` de arma. Sem alocação. |
@@ -65,8 +68,9 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `room:error` | `{ code, message, roomId?, ... }` |
 | `room:lobby_state` | `LobbyStatePayload` (membros, Master, configurações e fase). |
 | `room:settings_updated` | `{ accessMode, hostId, hostName }` |
-| `room:init` | `RoomInitPayload`: estado inicial completo (seed, dimensões, grade inicial, jogadores, eventos, loot, `serverNow`, `event`, `catalogVersion` e `assetVersion`). |
-| `room:tick` | `RoomTickPayload`: jogadores, projéteis, loot, entidades, eventos, timers, água e resumo. Inclui `serverNow`, `event`, `catalogVersion`, `assetVersion` e, por jogador, `prompt` e `forge`. |
+| `room:init` | `RoomInitWirePayload`: estado inicial completo (seed, dimensões, grade inicial, jogadores, eventos, loot, `serverNow`, `event`, `catalogVersion` e `assetVersion`). Inclui `contentItems: WeaponBlueprint[]` com todas as armas já presentes na sala. |
+| `room:tick` | `RoomTickWirePayload`: jogadores, projéteis, loot, entidades, eventos, timers, água e resumo. Slots e loot trazem só `weaponId`; o blueprint não é reenviado. Inclui `serverNow`, `event`, `catalogVersion`, `assetVersion` e, por jogador, `prompt` e `forge`. |
+| `content:items` | `{ catalogVersion, weapons: WeaponBlueprint[] }` com blueprints novos de uma instância de arma. Enviado antes do primeiro `room:tick` que referencia o id. |
 | `room:killfeed` | `KillfeedEntry` (abates e avisos do sistema). |
 | `voxel:deltas` | `VoxelDelta[]` com alterações de voxels desde o último envio. |
 | `fx:shrapnel` | `{ center, voxels }` para estilhaços locais. |
@@ -79,7 +83,7 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
 
-Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala. Eventos compostos incluem `components?: [{ archetype, params, entityBlueprint?, budgetUsed }]`; o cliente deve usar os campos de topo para exibição e ignorar componentes desconhecidos.
+Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala; `assetIds` aparece só no `room:init` para prefetch. No fio, `activeEvents` é `NetMapEventState`: os campos estáticos `components` e `entityBlueprint` foram removidos do tick (o cliente não os usa para exibição); `fun` permanece para o HUD mostrar contra-jogadas. `entities` continua carregando o blueprint da criatura porque o renderizador precisa dele para montar a malha.
 
 Cada jogador também traz `stamina`, `sprinting`, `crouching`, `sliding`, `slideCooldownSec`, `climbing` e `ziplineRouteId` para HUD/câmera. As rotas de tirolesa **não** vão no protocolo: cliente e servidor derivam a mesma lista determinística da seed/dimensões via `createProceduralIsland(..., meta)`.
 

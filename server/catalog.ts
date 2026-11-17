@@ -6,6 +6,7 @@ import { computeEventPoints, validateAndClampWeapon } from '../src/shared/budget
 import type {
   EntityBlueprint,
   EventArchetype,
+  EventFunContract,
   EventParams,
   MapEventComponent,
   MapEventState,
@@ -13,6 +14,15 @@ import type {
   StatusEffect,
   WeaponBlueprint,
 } from '../src/shared/types.ts';
+import { deriveEventFunContract } from '../src/shared/eventFun.ts';
+import {
+  validateCatalogIndex,
+  type CatalogEventIndexEntry,
+  type CatalogEventIndexSummary,
+  type CatalogIndexFile,
+  type CatalogWeaponIndexEntry,
+  type CatalogWeaponIndexSummary,
+} from './catalogArtifacts.ts';
 
 export type CatalogItemStatus = 'approved' | 'deprecated';
 export type CatalogProvenance =
@@ -41,6 +51,8 @@ export interface CatalogWeaponItem extends CatalogItemMeta {
   tags: string[];
   aliases: string[];
   assets: string[];
+  /** Presente quando o item veio do índice compacto. */
+  summary?: CatalogWeaponIndexSummary;
   payload: WeaponBlueprint;
 }
 
@@ -48,6 +60,7 @@ export interface CatalogEventPayload {
   archetype: EventArchetype;
   params: EventParams;
   entityBlueprint?: EntityBlueprint;
+  fun?: EventFunContract;
   budgetUsed: number;
   wasClamped: boolean;
 }
@@ -58,6 +71,8 @@ export interface CatalogEventItem extends CatalogItemMeta {
   tags: string[];
   aliases: string[];
   assets: string[];
+  /** Presente quando o item veio do índice compacto. */
+  summary?: CatalogEventIndexSummary;
   payload: CatalogEventPayload;
 }
 
@@ -91,7 +106,12 @@ export interface ResolutionOptions {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CATALOG_PATH = path.resolve(__dirname, '..', 'content', 'catalog', 'catalog.json');
+const CATALOG_DIR = path.resolve(__dirname, '..', 'content', 'catalog');
+const CATALOG_PATH = path.join(CATALOG_DIR, 'catalog.json');
+const CATALOG_INDEX_PATH = path.join(CATALOG_DIR, 'index.json');
+const CATALOG_SHARD_DIR = path.join(CATALOG_DIR, 'shards');
+/** Shards mantidos em memória; cada um é imutável e content-addressed. */
+const SHARD_CACHE_MAX = 8;
 export const DEFAULT_WEAPON_ID = 'wpn_rifle_standard';
 export const DEFAULT_EVENT_ID = 'evt_weather_meteor_shower';
 const GENERIC_TAGS = new Set(['weapon', 'event', 'weather', 'terrain', 'entity']);
@@ -157,6 +177,8 @@ type WeaponCapability =
   | 'sticky_bomb'
   | 'homing_weak';
 
+const weaponCapabilityCache = new WeakMap<CatalogWeaponItem, Set<WeaponCapability>>();
+
 const STATUS_CAPABILITIES = new Set<WeaponCapability>([
   'freeze',
   'burn',
@@ -175,6 +197,8 @@ function requestedWeaponCapabilities(promptNorm: string): Set<WeaponCapability> 
 }
 
 function weaponCapabilitiesOf(item: CatalogWeaponItem): Set<WeaponCapability> {
+  const cached = weaponCapabilityCache.get(item);
+  if (cached) return cached;
   const caps = new Set<WeaponCapability>();
   if (item.payload.modifiers.statusEffect !== 'none') {
     caps.add(item.payload.modifiers.statusEffect as WeaponCapability);
@@ -182,6 +206,7 @@ function weaponCapabilitiesOf(item: CatalogWeaponItem): Set<WeaponCapability> {
   if (item.payload.modifiers.projectileBehavior !== 'standard') {
     caps.add(item.payload.modifiers.projectileBehavior as WeaponCapability);
   }
+  weaponCapabilityCache.set(item, caps);
   return caps;
 }
 
@@ -259,6 +284,13 @@ const EVENT_TAG_WORDS: Record<string, string[]> = {
   ice_colossus: ['colosso', 'gigante de gelo', 'sentinela de gelo'],
   venom_serpents: ['serpente', 'cobra', 'viper', 'venenosa'],
   supply: ['municao', 'caixa', 'suprimento', 'bala', 'ammo', 'cura', 'kit', 'tesouro'],
+  scenery: ['cenario', 'estrutura', 'construcao', 'construir', 'surgir', 'surja', 'surjam', 'erguer'],
+  tree: ['arvore', 'arvores', 'floresta', 'bosque'],
+  grove: ['arvoredo', 'bosque'],
+  house: ['casa', 'cabana', 'chale', 'predio pequeno'],
+  tower: ['torre', 'predio', 'edificio'],
+  skyscraper: ['arranha ceu', 'arranhaceu', 'edificio gigante', 'arranha-ceu'],
+  ruins: ['ruina', 'ruinas', 'templo', 'escombros'],
   ammo_depot: ['deposito de municao', 'carga de municao', 'arsenal movel'],
   elite_supply: ['suprimento raro', 'carga rara', 'drop lendario', 'elite'],
   treasure_cache: ['cofre', 'bau', 'tesouro escondido', 'cache'],
@@ -269,6 +301,25 @@ const EVENT_TAG_WORDS: Record<string, string[]> = {
 };
 
 let cachedCatalog: CatalogFile | null = null;
+let cachedIndex: CatalogIndexFile | null = null;
+let cachedResolverIndex: ResolverIndex | null = null;
+/** filename do shard -> payloads por id. LRU simples por ordem de inserção. */
+const shardCache = new Map<string, Map<string, unknown>>();
+const catalogStats = {
+  shardLoads: 0,
+  shardHits: 0,
+  payloadLoads: 0,
+  reloads: 0,
+  lastReloadMs: 0,
+  resolverCalls: 0,
+  resolverPoolCalls: 0,
+  resolverFullCalls: 0,
+  resolverCandidatesTotal: 0,
+  resolverLastCandidates: 0,
+  resolverMsTotal: 0,
+  resolverLastMs: 0,
+  resolverMsMax: 0,
+};
 
 function assertCatalogShape(raw: unknown): CatalogFile {
   const data = raw as Partial<CatalogFile> | null;
@@ -316,14 +367,154 @@ function assertCatalogShape(raw: unknown): CatalogFile {
   return data as CatalogFile;
 }
 
+function loadShard(filename: string): Map<string, unknown> {
+  const cached = shardCache.get(filename);
+  if (cached) {
+    catalogStats.shardHits += 1;
+    // Refresh LRU position.
+    shardCache.delete(filename);
+    shardCache.set(filename, cached);
+    return cached;
+  }
+  const filePath = path.join(CATALOG_SHARD_DIR, filename);
+  const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as {
+    items?: unknown;
+  } | null;
+  if (!raw || typeof raw.items !== 'object' || raw.items === null || Array.isArray(raw.items)) {
+    throw new Error(`Shard inválido: ${filename}.`);
+  }
+  catalogStats.shardLoads += 1;
+  const items = new Map(Object.entries(raw.items as Record<string, unknown>));
+  shardCache.set(filename, items);
+  if (shardCache.size > SHARD_CACHE_MAX) {
+    const oldest = shardCache.keys().next().value;
+    if (oldest) shardCache.delete(oldest);
+  }
+  return items;
+}
+
+function payloadFromIndex(
+  index: CatalogIndexFile,
+  entry: { id: string; shard: string },
+): unknown {
+  const filename = index.shards[entry.shard];
+  if (!filename) throw new Error(`Shard ausente no índice: ${entry.shard}.`);
+  const payload = loadShard(filename).get(entry.id);
+  if (!payload) throw new Error(`Payload ausente no shard: ${entry.id}.`);
+  catalogStats.payloadLoads += 1;
+  return payload;
+}
+
+function buildCatalogFromIndex(index: CatalogIndexFile): CatalogFile {
+  const weapons: CatalogWeaponItem[] = index.weapons.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    tags: entry.tags,
+    aliases: entry.aliases,
+    assets: entry.assets,
+    status: entry.status,
+    provenance: entry.provenance,
+    introducedIn: entry.introducedIn,
+    summary: entry.summary,
+    get payload(): WeaponBlueprint {
+      return payloadFromIndex(index, entry as CatalogWeaponIndexEntry) as WeaponBlueprint;
+    },
+  }));
+  const events: CatalogEventItem[] = index.events.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    tags: entry.tags,
+    aliases: entry.aliases,
+    assets: entry.assets,
+    status: entry.status,
+    provenance: entry.provenance,
+    introducedIn: entry.introducedIn,
+    summary: entry.summary,
+    get payload(): CatalogEventPayload {
+      return payloadFromIndex(index, entry as CatalogEventIndexEntry) as CatalogEventPayload;
+    },
+  }));
+  return {
+    schemaVersion: index.schemaVersion,
+    version: index.version,
+    weapons,
+    events,
+  };
+}
+
+function readIndexFromDisk(): CatalogIndexFile {
+  const raw = JSON.parse(fs.readFileSync(CATALOG_INDEX_PATH, 'utf8'));
+  const index = validateCatalogIndex(raw);
+  for (const filename of new Set(Object.values(index.shards))) {
+    if (!fs.existsSync(path.join(CATALOG_SHARD_DIR, filename))) {
+      throw new Error(`Shard ausente para o índice ${index.version}: ${filename}.`);
+    }
+  }
+  return index;
+}
+
+interface LoadedCatalog {
+  catalog: CatalogFile;
+  index: CatalogIndexFile | null;
+}
+
+function loadCatalogFromDisk(): LoadedCatalog {
+  if (fs.existsSync(CATALOG_INDEX_PATH)) {
+    const index = readIndexFromDisk();
+    return { catalog: buildCatalogFromIndex(index), index };
+  }
+  // Compatibilidade: catálogo completo sem índice (artefato antigo/testes).
+  const raw = fs.readFileSync(CATALOG_PATH, 'utf8');
+  return { catalog: assertCatalogShape(JSON.parse(raw)), index: null };
+}
+
 export function getCatalog(): CatalogFile {
-  if (!cachedCatalog) cachedCatalog = loadCatalogFromDisk();
+  if (!cachedCatalog) {
+    const loaded = loadCatalogFromDisk();
+    cachedCatalog = loaded.catalog;
+    cachedIndex = loaded.index;
+  }
   return cachedCatalog;
 }
 
-function loadCatalogFromDisk(): CatalogFile {
-  const raw = fs.readFileSync(CATALOG_PATH, 'utf8');
-  return assertCatalogShape(JSON.parse(raw));
+/** Índice compacto em uso; `null` quando o runtime caiu no catálogo completo. */
+export function getCatalogIndex(): CatalogIndexFile | null {
+  getCatalog();
+  return cachedIndex;
+}
+
+export interface CatalogRuntimeStats {
+  usingIndex: boolean;
+  shardCount: number;
+  cachedShards: number;
+  shardCacheMax: number;
+  shardLoads: number;
+  shardHits: number;
+  shardHitRate: number;
+  payloadLoads: number;
+  reloads: number;
+  lastReloadMs: number;
+}
+
+/** Diagnóstico para métricas/testes; não força o carregamento de payloads. */
+export function getCatalogRuntimeStats(): CatalogRuntimeStats {
+  getCatalog();
+  const totalShardAccess = catalogStats.shardLoads + catalogStats.shardHits;
+  return {
+    usingIndex: cachedIndex !== null,
+    shardCount: cachedIndex ? Object.keys(cachedIndex.shards).length : 0,
+    cachedShards: shardCache.size,
+    shardCacheMax: SHARD_CACHE_MAX,
+    shardLoads: catalogStats.shardLoads,
+    shardHits: catalogStats.shardHits,
+    shardHitRate:
+      totalShardAccess > 0
+        ? Math.round((catalogStats.shardHits / totalShardAccess) * 1000) / 1000
+        : 0,
+    payloadLoads: catalogStats.payloadLoads,
+    reloads: catalogStats.reloads,
+    lastReloadMs: catalogStats.lastReloadMs,
+  };
 }
 
 export interface CatalogReloadResult {
@@ -333,42 +524,55 @@ export interface CatalogReloadResult {
 }
 
 /**
- * Relê o catálogo do disco e troca o cache de forma atômica. Se o arquivo
- * estiver inválido, lança e mantém a versão anterior em memória.
+ * Relê o índice do disco e troca o cache de forma atômica. Se o índice ou
+ * algum shard estiver inválido, lança e mantém a versão anterior em memória.
  */
 export function reloadCatalog(): CatalogReloadResult {
-  const next = loadCatalogFromDisk();
-  cachedCatalog = next;
+  const startedAt = performance.now();
+  const loaded = loadCatalogFromDisk();
+  cachedCatalog = loaded.catalog;
+  cachedIndex = loaded.index;
+  cachedResolverIndex = null;
+  shardCache.clear();
+  catalogStats.reloads += 1;
+  catalogStats.lastReloadMs = Math.round((performance.now() - startedAt) * 100) / 100;
   return {
-    version: next.version,
-    weapons: next.weapons.length,
-    events: next.events.length,
+    version: loaded.catalog.version,
+    weapons: loaded.catalog.weapons.length,
+    events: loaded.catalog.events.length,
   };
 }
 
 let catalogWatcherActive = false;
+let watchedCatalogPaths: string[] = [];
 
 export function startCatalogWatcher(pollMs = 1000): void {
   if (catalogWatcherActive) return;
   catalogWatcherActive = true;
-  fs.watchFile(CATALOG_PATH, { interval: pollMs, persistent: false }, (curr, prev) => {
-    if (curr.mtimeMs === prev.mtimeMs && curr.size === prev.size) return;
-    try {
-      const result = reloadCatalog();
-      console.log(
-        `[Catálogo] recarregado: ${result.version} (${result.weapons} armas, ${result.events} eventos)`,
-      );
-    } catch (err) {
-      console.warn(
-        `[Catálogo] recarga ignorada; mantendo a versão anterior: ${(err as Error).message}`,
-      );
-    }
-  });
+  // O índice é o contrato do runtime, mas observar o catálogo completo também
+  // cobre o primeiro `catalog:index` em um ambiente que ainda não tinha índice.
+  watchedCatalogPaths = [CATALOG_INDEX_PATH, CATALOG_PATH];
+  for (const watchedPath of watchedCatalogPaths) {
+    fs.watchFile(watchedPath, { interval: pollMs, persistent: false }, (curr, prev) => {
+      if (curr.mtimeMs === prev.mtimeMs && curr.size === prev.size) return;
+      try {
+        const result = reloadCatalog();
+        console.log(
+          `[Catálogo] recarregado: ${result.version} (${result.weapons} armas, ${result.events} eventos)`,
+        );
+      } catch (err) {
+        console.warn(
+          `[Catálogo] recarga ignorada; mantendo a versão anterior: ${(err as Error).message}`,
+        );
+      }
+    });
+  }
 }
 
 export function stopCatalogWatcher(): void {
   if (!catalogWatcherActive) return;
-  fs.unwatchFile(CATALOG_PATH);
+  for (const watchedPath of watchedCatalogPaths) fs.unwatchFile(watchedPath);
+  watchedCatalogPaths = [];
   catalogWatcherActive = false;
 }
 
@@ -492,19 +696,6 @@ function tokenSet(texts: string[]): Set<string> {
   return tokens;
 }
 
-function keywordScore(promptNorm: string, tags: string[], words: Record<string, string[]>): number {
-  let score = 0;
-  for (const tag of tags) {
-    if (GENERIC_TAGS.has(tag)) continue;
-    const candidates = words[tag];
-    if (!candidates) continue;
-    if (candidates.some((word) => promptNorm.includes(word))) {
-      score += 60;
-    }
-  }
-  return score;
-}
-
 const EVENT_CATEGORY_WORDS: Record<string, string[]> = {
   weather: [
     'acid_rain',
@@ -528,6 +719,13 @@ const EVENT_CATEGORY_WORDS: Record<string, string[]> = {
     'glacier',
     'overgrowth',
     'terrain',
+    'cenario',
+    'estrutura',
+    'arvore',
+    'predio',
+    'torre',
+    'casa',
+    'ruina',
   ],
   entity: [
     'aggressive_nearest',
@@ -590,79 +788,301 @@ function isAmbiguousIntent(promptNorm: string, kind: 'weapon' | 'event'): boolea
   return NEGATION_RX.test(promptNorm) || countIntentGroups(promptNorm, kind) >= 2;
 }
 
-interface ScoredItem<T> {
+interface ResolverEntry<T extends CatalogWeaponItem | CatalogEventItem> {
   item: T;
+  ordinal: number;
+  aliasNorms: Set<string>;
+  canonicalKeys: Set<string>;
+  tokens: Set<string>;
+  tagNorms: string[];
+  keywordEntries: Array<{ tag: string; words: string[] }>;
+}
+
+interface ResolverWordPosting<T extends CatalogWeaponItem | CatalogEventItem> {
+  word: string;
+  entries: ResolverEntry<T>[];
+}
+
+interface ResolverKindIndex<T extends CatalogWeaponItem | CatalogEventItem> {
+  entries: ResolverEntry<T>[];
+  activeEntries: ResolverEntry<T>[];
+  byId: Map<string, ResolverEntry<T>>;
+  /** alias normalizado -> itens, em ordem de catálogo. */
+  alias: Map<string, ResolverEntry<T>[]>;
+  /** chave canônica -> itens, em ordem de catálogo. */
+  canonical: Map<string, ResolverEntry<T>[]>;
+  /** token de nome/tag/alias -> itens. */
+  tokens: Map<string, ResolverEntry<T>[]>;
+  /** tag normalizada -> itens (só tags que pontuam). */
+  tagWords: ResolverWordPosting<T>[];
+  /** palavra-chave de domínio -> itens com a tag correspondente. */
+  keywordWords: ResolverWordPosting<T>[];
+}
+
+interface ResolverIndex {
+  catalog: CatalogFile;
+  weapons: ResolverKindIndex<CatalogWeaponItem>;
+  events: ResolverKindIndex<CatalogEventItem>;
+}
+
+interface ScoredEntry<T extends CatalogWeaponItem | CatalogEventItem> {
+  item: T;
+  entry: ResolverEntry<T>;
   score: number;
   strategy: CatalogResolutionStrategy;
 }
 
-function scoreWeapon(
-  promptNorm: string,
-  promptCanonical: string,
-  promptTokens: Set<string>,
-  item: CatalogWeaponItem,
-): ScoredItem<CatalogWeaponItem> {
-  const aliasNorms = item.aliases.map(normalizePrompt);
-  if (aliasNorms.includes(promptNorm)) {
-    return { item, score: 1000, strategy: 'alias' };
-  }
-  if (promptCanonical && item.aliases.some((a) => buildCanonicalKey(a) === promptCanonical)) {
-    return { item, score: 800, strategy: 'canonical' };
-  }
-
-  const itemTokens = tokenSet([item.name, ...item.tags, ...item.aliases]);
-  let score = 0;
-  for (const token of promptTokens) {
-    if (itemTokens.has(token)) score += 15;
-  }
-  for (const tag of item.tags) {
-    if (GENERIC_TAGS.has(tag)) continue;
-    const tagNorm = normalizePrompt(tag);
-    if (tagNorm.length >= 3 && promptNorm.includes(tagNorm)) score += 25;
-  }
-  score += keywordScore(promptNorm, item.tags, WEAPON_TAG_WORDS);
-
-  return { item, score, strategy: score > 0 ? 'tags' : 'default' };
+interface CandidateCollection<T extends CatalogWeaponItem | CatalogEventItem> {
+  entries: ResolverEntry<T>[];
+  exactAliasIds: Set<string>;
+  canonicalIds: Set<string>;
 }
 
-function scoreEvent(
-  promptNorm: string,
-  promptCanonical: string,
-  promptTokens: Set<string>,
-  item: CatalogEventItem,
-): ScoredItem<CatalogEventItem> {
-  const aliasNorms = item.aliases.map(normalizePrompt);
-  if (aliasNorms.includes(promptNorm)) {
-    return { item, score: 1000, strategy: 'alias' };
+function pushPosting<T extends CatalogWeaponItem | CatalogEventItem>(
+  map: Map<string, ResolverEntry<T>[]>,
+  key: string,
+  entry: ResolverEntry<T>,
+): void {
+  const list = map.get(key);
+  if (!list) {
+    map.set(key, [entry]);
+    return;
   }
-  if (promptCanonical && item.aliases.some((a) => buildCanonicalKey(a) === promptCanonical)) {
-    return { item, score: 800, strategy: 'canonical' };
-  }
-
-  const itemTokens = tokenSet([item.name, ...item.tags, ...item.aliases]);
-  let score = 0;
-  for (const token of promptTokens) {
-    if (itemTokens.has(token)) score += 15;
-  }
-  for (const tag of item.tags) {
-    if (GENERIC_TAGS.has(tag)) continue;
-    const tagNorm = normalizePrompt(tag);
-    if (tagNorm.length >= 3 && promptNorm.includes(tagNorm)) score += 25;
-  }
-  score += keywordScore(promptNorm, item.tags, EVENT_TAG_WORDS);
-
-  return { item, score, strategy: score > 0 ? 'tags' : 'default' };
+  if (list[list.length - 1] !== entry) list.push(entry);
 }
 
-function pickBest<T>(
+function addWordPosting<T extends CatalogWeaponItem | CatalogEventItem>(
+  map: Map<string, Set<ResolverEntry<T>>>,
+  word: string,
+  entry: ResolverEntry<T>,
+): void {
+  const set = map.get(word);
+  if (set) {
+    set.add(entry);
+  } else {
+    map.set(word, new Set([entry]));
+  }
+}
+
+function buildResolverEntries<T extends CatalogWeaponItem | CatalogEventItem>(
   items: T[],
-  scorer: (item: T) => ScoredItem<T>,
+  words: Record<string, string[]>,
+): ResolverEntry<T>[] {
+  return items.map((item, ordinal) => {
+    const aliasNorms = new Set(item.aliases.map((alias) => normalizePrompt(alias)));
+    const canonicalKeys = new Set(
+      item.aliases
+        .map((alias) => buildCanonicalKey(alias))
+        .filter((key) => key.length > 0),
+    );
+    const tokens = tokenSet([item.name, ...item.tags, ...item.aliases]);
+    const tagNorms = Array.from(
+      new Set(
+        item.tags
+          .map((tag) => normalizePrompt(tag))
+          .filter((tag) => tag.length >= 3 && !GENERIC_TAGS.has(tag)),
+      ),
+    );
+    const keywordEntries = item.tags
+      .filter((tag) => !GENERIC_TAGS.has(tag) && (words[tag]?.length ?? 0) > 0)
+      .map((tag) => ({
+        tag,
+        words: words[tag]
+          .map((word) => normalizePrompt(word))
+          .filter((word) => word.length > 0),
+      }));
+    return { item, ordinal, aliasNorms, canonicalKeys, tokens, tagNorms, keywordEntries };
+  });
+}
+
+function buildResolverKind<T extends CatalogWeaponItem | CatalogEventItem>(
+  items: T[],
+  words: Record<string, string[]>,
+): ResolverKindIndex<T> {
+  const entries = buildResolverEntries(items, words);
+  const byId = new Map(entries.map((entry) => [entry.item.id, entry]));
+  const alias = new Map<string, ResolverEntry<T>[]>();
+  const canonical = new Map<string, ResolverEntry<T>[]>();
+  const tokens = new Map<string, ResolverEntry<T>[]>();
+  const tagPostings = new Map<string, Set<ResolverEntry<T>>>();
+  const keywordPostings = new Map<string, Set<ResolverEntry<T>>>();
+
+  for (const entry of entries) {
+    for (const aliasNorm of entry.aliasNorms) pushPosting(alias, aliasNorm, entry);
+    for (const key of entry.canonicalKeys) pushPosting(canonical, key, entry);
+    for (const token of entry.tokens) pushPosting(tokens, token, entry);
+    for (const tagNorm of entry.tagNorms) addWordPosting(tagPostings, tagNorm, entry);
+    for (const keywordEntry of entry.keywordEntries) {
+      for (const word of keywordEntry.words) addWordPosting(keywordPostings, word, entry);
+    }
+  }
+
+  return {
+    entries,
+    activeEntries: entries.filter((entry) => entry.item.status !== 'deprecated'),
+    byId,
+    alias,
+    canonical,
+    tokens,
+    tagWords: Array.from(tagPostings, ([word, set]) => ({ word, entries: [...set] })),
+    keywordWords: Array.from(keywordPostings, ([word, set]) => ({
+      word,
+      entries: [...set],
+    })),
+  };
+}
+
+function getResolverIndex(catalog: CatalogFile): ResolverIndex {
+  if (cachedResolverIndex?.catalog === catalog) return cachedResolverIndex;
+  cachedResolverIndex = {
+    catalog,
+    weapons: buildResolverKind(catalog.weapons, WEAPON_TAG_WORDS),
+    events: buildResolverKind(catalog.events, EVENT_TAG_WORDS),
+  };
+  return cachedResolverIndex;
+}
+
+export interface ResolverStats {
+  built: boolean;
+  weaponEntries: number;
+  eventEntries: number;
+  weaponTokens: number;
+  eventTokens: number;
+  calls: number;
+  poolCalls: number;
+  fullCalls: number;
+  avgMs: number;
+  lastMs: number;
+  maxMs: number;
+  avgCandidates: number;
+  lastCandidates: number;
+}
+
+/** Diagnóstico do índice de resolução; usado por métricas e testes. */
+export function getResolverStats(): ResolverStats {
+  const catalog = getCatalog();
+  const index = getResolverIndex(catalog);
+  return {
+    built: true,
+    weaponEntries: index.weapons.entries.length,
+    eventEntries: index.events.entries.length,
+    weaponTokens: index.weapons.tokens.size,
+    eventTokens: index.events.tokens.size,
+    calls: catalogStats.resolverCalls,
+    poolCalls: catalogStats.resolverPoolCalls,
+    fullCalls: catalogStats.resolverFullCalls,
+    avgMs:
+      catalogStats.resolverCalls > 0
+        ? Math.round((catalogStats.resolverMsTotal / catalogStats.resolverCalls) * 1000) / 1000
+        : 0,
+    lastMs: Math.round(catalogStats.resolverLastMs * 1000) / 1000,
+    maxMs: Math.round(catalogStats.resolverMsMax * 1000) / 1000,
+    avgCandidates:
+      catalogStats.resolverCalls > 0
+        ? Math.round(catalogStats.resolverCandidatesTotal / catalogStats.resolverCalls)
+        : 0,
+    lastCandidates: catalogStats.resolverLastCandidates,
+  };
+}
+
+function recordResolverCall(
+  scoped: boolean,
+  candidates: number,
+  startedAt: number,
+): void {
+  const elapsed = performance.now() - startedAt;
+  catalogStats.resolverCalls += 1;
+  if (scoped) catalogStats.resolverPoolCalls += 1;
+  else catalogStats.resolverFullCalls += 1;
+  catalogStats.resolverCandidatesTotal += candidates;
+  catalogStats.resolverLastCandidates = candidates;
+  catalogStats.resolverMsTotal += elapsed;
+  catalogStats.resolverLastMs = elapsed;
+  if (elapsed > catalogStats.resolverMsMax) catalogStats.resolverMsMax = elapsed;
+}
+
+function scoreEntry<T extends CatalogWeaponItem | CatalogEventItem>(
+  entry: ResolverEntry<T>,
+  promptNorm: string,
+  promptTokens: Set<string>,
+): ScoredEntry<T> {
+  let score = 0;
+  for (const token of promptTokens) {
+    if (entry.tokens.has(token)) score += 15;
+  }
+  for (const tagNorm of entry.tagNorms) {
+    if (promptNorm.includes(tagNorm)) score += 25;
+  }
+  for (const keywordEntry of entry.keywordEntries) {
+    if (keywordEntry.words.some((word) => promptNorm.includes(word))) score += 60;
+  }
+  return { item: entry.item, entry, score, strategy: score > 0 ? 'tags' : 'default' };
+}
+
+function collectCandidates<T extends CatalogWeaponItem | CatalogEventItem>(
+  index: ResolverKindIndex<T>,
+  promptNorm: string,
+  promptCanonical: string,
+  promptTokens: Set<string>,
+  restrictIds: ReadonlySet<string> | null,
+): CandidateCollection<T> {
+  const candidates = new Map<string, ResolverEntry<T>>();
+  const exactAliasIds = new Set<string>();
+  const canonicalIds = new Set<string>();
+  const add = (entries: ResolverEntry<T>[] | undefined): void => {
+    if (!entries) return;
+    for (const entry of entries) {
+      if (entry.item.status === 'deprecated') continue;
+      if (restrictIds && !restrictIds.has(entry.item.id)) continue;
+      candidates.set(entry.item.id, entry);
+    }
+  };
+
+  const aliasEntries = index.alias.get(promptNorm);
+  if (aliasEntries) {
+    for (const entry of aliasEntries) exactAliasIds.add(entry.item.id);
+    add(aliasEntries);
+  }
+  if (promptCanonical) {
+    const canonicalEntries = index.canonical.get(promptCanonical);
+    if (canonicalEntries) {
+      for (const entry of canonicalEntries) canonicalIds.add(entry.item.id);
+      add(canonicalEntries);
+    }
+  }
+  for (const token of promptTokens) add(index.tokens.get(token));
+  for (const posting of index.tagWords) {
+    if (promptNorm.includes(posting.word)) add(posting.entries);
+  }
+  for (const posting of index.keywordWords) {
+    if (promptNorm.includes(posting.word)) add(posting.entries);
+  }
+
+  return {
+    entries: Array.from(candidates.values()).sort((a, b) => a.ordinal - b.ordinal),
+    exactAliasIds,
+    canonicalIds,
+  };
+}
+
+function pickBestEntry<T extends CatalogWeaponItem | CatalogEventItem>(
+  candidates: CandidateCollection<T>,
+  promptNorm: string,
+  promptTokens: Set<string>,
+  activeEntries: ResolverEntry<T>[],
   defaultId: string,
   ambiguous: boolean,
-): ScoredItem<T> {
-  let best: ScoredItem<T> | null = null;
-  for (const item of items) {
-    const scored = scorer(item);
+): ScoredEntry<T> {
+  let best: ScoredEntry<T> | null = null;
+  for (const entry of candidates.entries) {
+    let scored: ScoredEntry<T>;
+    if (candidates.exactAliasIds.has(entry.item.id)) {
+      scored = { item: entry.item, entry, score: 1000, strategy: 'alias' };
+    } else if (candidates.canonicalIds.has(entry.item.id)) {
+      scored = { item: entry.item, entry, score: 800, strategy: 'canonical' };
+    } else {
+      scored = scoreEntry(entry, promptNorm, promptTokens);
+    }
     if (!best || scored.score > best.score) best = scored;
   }
   if (best && best.score >= MIN_COVER_SCORE) {
@@ -670,8 +1090,9 @@ function pickBest<T>(
     if (best.score >= CONFIDENT_COVER_SCORE && !ambiguous) return best;
     return { ...best, strategy: 'partial' };
   }
-  const fallback = items.find((item) => (item as { id?: string }).id === defaultId) ?? items[0];
-  return { item: fallback, score: 0, strategy: 'default' };
+  const fallback =
+    activeEntries.find((entry) => entry.item.id === defaultId) ?? activeEntries[0];
+  return { item: fallback.item, entry: fallback, score: 0, strategy: 'default' };
 }
 
 function cloneWeapon(item: CatalogWeaponItem, prompt: string): WeaponBlueprint {
@@ -773,6 +1194,7 @@ function cloneEvent(
     // item aprovado em vez do texto cru do jogador para evitar abuso/PII no HUD.
     prompt: item.name,
     archetype: payload.archetype,
+    fun: payload.fun ?? deriveEventFunContract(payload.archetype, payload.params),
     warningRemainingSec: 5,
     durationRemainingSec: payload.params.durationSec,
     totalDurationSec: payload.params.durationSec,
@@ -798,20 +1220,41 @@ function resolveWeaponInternal(
   prompt: string,
   allowedIds?: ReadonlySet<string> | null,
 ): WeaponResolution {
+  const startedAt = performance.now();
   const cleanPrompt = prompt.trim().slice(0, 90) || 'Rifle de plasma';
   const promptNorm = normalizePrompt(cleanPrompt);
   const promptCanonical = buildCanonicalKey(cleanPrompt);
   const promptTokens = tokenSet([cleanPrompt]);
   const ambiguous = isAmbiguousIntent(promptNorm, 'weapon');
   const fullCatalog = getCatalog();
-  const poolWeapons = getActiveWeapons(fullCatalog).filter(
-    (item) => !allowedIds || allowedIds.has(item.id),
+  const resolver = getResolverIndex(fullCatalog).weapons;
+  const poolEntries = allowedIds
+    ? Array.from(allowedIds)
+        .map((id) => resolver.byId.get(id))
+        .filter(
+          (entry): entry is ResolverEntry<CatalogWeaponItem> =>
+            Boolean(entry && entry.item.status !== 'deprecated'),
+        )
+        .sort((a, b) => a.ordinal - b.ordinal)
+    : null;
+  const activeEntries =
+    poolEntries && poolEntries.length > 0 ? poolEntries : resolver.activeEntries;
+  const restrictIds =
+    poolEntries && poolEntries.length > 0
+      ? new Set(activeEntries.map((entry) => entry.item.id))
+      : null;
+  const candidates = collectCandidates(
+    resolver,
+    promptNorm,
+    promptCanonical,
+    promptTokens,
+    restrictIds,
   );
-  const activeWeapons =
-    allowedIds && poolWeapons.length === 0 ? getActiveWeapons(fullCatalog) : poolWeapons;
-  const picked = pickBest(
-    activeWeapons,
-    (item) => scoreWeapon(promptNorm, promptCanonical, promptTokens, item),
+  const picked = pickBestEntry(
+    candidates,
+    promptNorm,
+    promptTokens,
+    activeEntries,
     DEFAULT_WEAPON_ID,
     ambiguous,
   );
@@ -839,8 +1282,14 @@ function resolveWeaponInternal(
     coveredByBase.length > 0 &&
     missing.length > 0
   ) {
-    const composed = composeWeapon(picked.item, missing, cleanPrompt, activeWeapons);
+    const composed = composeWeapon(
+      picked.item,
+      missing,
+      cleanPrompt,
+      activeEntries.map((entry) => entry.item),
+    );
     if (composed) {
+      recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
       return {
         blueprint: composed,
         itemId: picked.item.id,
@@ -848,6 +1297,7 @@ function resolveWeaponInternal(
         score: picked.score,
       };
     }
+    recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
     return {
       blueprint: cloneWeapon(picked.item, cleanPrompt),
       itemId: picked.item.id,
@@ -856,6 +1306,7 @@ function resolveWeaponInternal(
     };
   }
 
+  recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
   return {
     blueprint: cloneWeapon(picked.item, cleanPrompt),
     itemId: picked.item.id,
@@ -914,20 +1365,41 @@ function resolveEventInternal(
   center: [number, number, number],
   allowedIds?: ReadonlySet<string> | null,
 ): EventResolution {
+  const startedAt = performance.now();
   const cleanPrompt = prompt.trim().slice(0, 90) || 'Chuva de meteoros de cristal';
   const promptNorm = normalizePrompt(cleanPrompt);
   const promptCanonical = buildCanonicalKey(cleanPrompt);
   const promptTokens = tokenSet([cleanPrompt]);
   const ambiguous = isAmbiguousIntent(promptNorm, 'event');
   const fullCatalog = getCatalog();
-  const poolEvents = getActiveEvents(fullCatalog).filter(
-    (item) => !allowedIds || allowedIds.has(item.id),
+  const resolver = getResolverIndex(fullCatalog).events;
+  const poolEntries = allowedIds
+    ? Array.from(allowedIds)
+        .map((id) => resolver.byId.get(id))
+        .filter(
+          (entry): entry is ResolverEntry<CatalogEventItem> =>
+            Boolean(entry && entry.item.status !== 'deprecated'),
+        )
+        .sort((a, b) => a.ordinal - b.ordinal)
+    : null;
+  const activeEntries =
+    poolEntries && poolEntries.length > 0 ? poolEntries : resolver.activeEntries;
+  const restrictIds =
+    poolEntries && poolEntries.length > 0
+      ? new Set(activeEntries.map((entry) => entry.item.id))
+      : null;
+  const candidates = collectCandidates(
+    resolver,
+    promptNorm,
+    promptCanonical,
+    promptTokens,
+    restrictIds,
   );
-  const activeEvents =
-    allowedIds && poolEvents.length === 0 ? getActiveEvents(fullCatalog) : poolEvents;
-  const picked = pickBest(
-    activeEvents,
-    (item) => scoreEvent(promptNorm, promptCanonical, promptTokens, item),
+  const picked = pickBestEntry(
+    candidates,
+    promptNorm,
+    promptTokens,
+    activeEntries,
     DEFAULT_EVENT_ID,
     ambiguous,
   );
@@ -945,11 +1417,16 @@ function resolveEventInternal(
     const missingCategories = Array.from(requestedCategories).filter(
       (category) => category !== baseCategory,
     );
-    const composed = composeEvent(picked.item, missingCategories, activeEvents);
+    const composed = composeEvent(
+      picked.item,
+      missingCategories,
+      activeEntries.map((entry) => entry.item),
+    );
     if (composed) {
       const event = cloneEvent(picked.item, authorId, authorName, center);
       event.components = composed.components;
       event.budgetUsed = composed.budgetUsed;
+      recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
       return {
         event,
         itemId: picked.item.id,
@@ -957,6 +1434,7 @@ function resolveEventInternal(
         score: picked.score,
       };
     }
+    recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
     return {
       event: cloneEvent(picked.item, authorId, authorName, center),
       itemId: picked.item.id,
@@ -965,6 +1443,7 @@ function resolveEventInternal(
     };
   }
 
+  recordResolverCall(allowedIds != null, candidates.entries.length, startedAt);
   return {
     event: cloneEvent(picked.item, authorId, authorName, center),
     itemId: picked.item.id,
@@ -1021,23 +1500,29 @@ export function getCatalogSummary() {
   const weapons = getActiveWeapons(catalog);
   const events = getActiveEvents(catalog);
   return {
-    weapons: weapons.map((item) => ({
-      prompt: item.aliases[0] ?? item.name,
-      name: item.name,
-      budgetUsed: item.payload.budgetUsed,
-      source: 'catalog' as const,
-      hitCount: 0,
-      primaryColor: item.payload.palette[0]?.hex ?? '#38bdf8',
-      damage: item.payload.stats.damage,
-      projectiles: item.payload.stats.projectiles,
-    })),
-    events: events.map((item) => ({
-      prompt: item.aliases[0] ?? item.name,
-      archetype: item.payload.archetype,
-      budgetUsed: item.payload.budgetUsed,
-      source: 'catalog' as const,
-      hitCount: 0,
-    })),
+    weapons: weapons.map((item) => {
+      const summary = item.summary;
+      return {
+        prompt: item.aliases[0] ?? item.name,
+        name: item.name,
+        budgetUsed: summary?.budgetUsed ?? item.payload.budgetUsed,
+        source: 'catalog' as const,
+        hitCount: 0,
+        primaryColor: summary?.primaryColor ?? item.payload.palette[0]?.hex ?? '#38bdf8',
+        damage: summary?.damage ?? item.payload.stats.damage,
+        projectiles: summary?.projectiles ?? item.payload.stats.projectiles,
+      };
+    }),
+    events: events.map((item) => {
+      const summary = item.summary;
+      return {
+        prompt: item.aliases[0] ?? item.name,
+        archetype: summary?.archetype ?? item.payload.archetype,
+        budgetUsed: summary?.budgetUsed ?? item.payload.budgetUsed,
+        source: 'catalog' as const,
+        hitCount: 0,
+      };
+    }),
     stats: {
       totalWeapons: weapons.length,
       totalEvents: events.length,

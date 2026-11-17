@@ -30,6 +30,8 @@ export interface ContentPool {
   eventIds: string[];
   weaponCount: number;
   eventCount: number;
+  /** Assets referenciados pelo arsenal/categorias da sala (prefetch). */
+  assetIds: string[];
 }
 
 export type ContentPoolInfo = ContentPoolNetInfo;
@@ -376,6 +378,14 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
 
   const weaponIds = Array.from(selectedWeapons.keys()).sort();
   const eventIds = Array.from(selectedEvents.keys()).sort();
+  const assetIds = Array.from(
+    new Set(
+      [
+        ...Array.from(selectedWeapons.values(), (item) => item.assets),
+        ...Array.from(selectedEvents.values(), (item) => item.assets),
+      ].flat(),
+    ),
+  ).sort();
   const usageDigest = usageHash(options.usage);
   const hash = fnv1a(
     [
@@ -400,10 +410,14 @@ export function buildContentPool(options: BuildContentPoolOptions): ContentPool 
     eventIds,
     weaponCount: weaponIds.length,
     eventCount: eventIds.length,
+    assetIds,
   };
 }
 
-export function summarizeContentPool(pool: ContentPool | null): ContentPoolInfo | null {
+export function summarizeContentPool(
+  pool: ContentPool | null,
+  includeAssets = false,
+): ContentPoolInfo | null {
   if (!pool) return null;
   return {
     hash: pool.hash,
@@ -411,6 +425,7 @@ export function summarizeContentPool(pool: ContentPool | null): ContentPoolInfo 
     catalogVersion: pool.catalogVersion,
     weaponCount: pool.weaponCount,
     eventCount: pool.eventCount,
+    ...(includeAssets ? { assetIds: pool.assetIds } : {}),
   };
 }
 

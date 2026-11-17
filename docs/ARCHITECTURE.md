@@ -29,6 +29,7 @@ Em desenvolvimento, o `server.ts` monta o Vite em modo middleware e serve o fron
 - Todo o estado de partida vive no servidor, em memória: jogadores, grade de voxels, projéteis, loot, entidades, eventos e placar.
 - O cliente envia entradas (`player:input`) com throttle de 45 ms e ações pontuais; nunca calcula dano, colisão ou destruição.
 - O `RoomManager` executa `tickRoom(room, 0.05)` a cada 50 ms (20 Hz): atualiza timers, eventos, jogadores, bots, projéteis, entidades e envia `room:tick` + `voxel:deltas`.
+- Slots e loot no fio carregam só `weaponId`; o blueprint completo é transmitido uma vez em `content:items` (ou em `room:init.contentItems`) e cacheado no cliente. O cliente hidrata o estado antes do HUD/renderização com `src/shared/contentHydration.ts`.
 - Colisão e movimento usam a mesma implementação de `src/shared/voxelWorld.ts` nos dois lados, mas só o resultado do servidor é autoritativo.
 - Reiniciar o processo apaga salas e partidas. O catálogo é um arquivo versionado e permanece entre reinícios.
 
@@ -66,16 +67,18 @@ Novas mensagens de cliente devem ser adicionadas ao `switch` de `handleClientMes
 
 ### `server/catalog.ts`
 
-O runtime não gera conteúdo. Ele carrega `content/catalog/catalog.json` no boot e resolve o prompt contra itens **não depreciados**:
+O runtime não gera conteúdo. Ele carrega o **índice quente** `content/catalog/index.json` no boot e resolve o prompt contra itens **não depreciados**:
 
 1. Normaliza o prompt e a chave canônica (`src/shared/prompt.ts`).
-2. Tenta alias exato, depois chave canônica, depois tokens/tags e palavras-chave de arquétipo/elemento.
+2. Tenta alias exato, depois chave canônica, depois tokens/tags e palavras-chave de arquétipo/elemento. Aliases, chaves canônicas, tokens e palavras-chave são pré-computados uma vez por versão do catálogo; um índice invertido restringe a pontuação aos candidatos, sem varrer todos os itens.
 3. Se o pedido combina uma capacidade já presente no item-base com outra existente em outro item, tenta uma **composição** validada pelo orçamento. Combinações impossíveis (dois status ou dois comportamentos) não são compostas.
 4. Match fraco (< 120 pontos), ambíguo ou composição que estourou o orçamento vira `partial`: o item mais próximo é servido, mas o pedido é registrado como lacuna duvidosa.
 5. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
 6. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
 
-O catálogo é read-only, usa `schemaVersion: 3` e versionamento por release. Cada item carrega `status` (`approved`/`deprecated`), `provenance` (`procedural`, `ai_assisted`, `authored`, `template` ou `seed`) e `introducedIn` (versão de entrada, usada para novidade). `getCatalogVersion()` aparece em `room:init`/`room:tick`. Com `CATALOG_WATCH` ligado (padrão), o arquivo é recarregado de forma atômica quando muda; `SIGHUP` força a recarga. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
+`content/catalog/catalog.json` continua sendo o artefato completo para build, testes e ferramentas offline. O runtime usa `index.json` (metadados + `budgetUsed`/resumo visual) e carrega o payload do item sob demanda de `content/catalog/shards/*.json`. Cada shard tem nome content-addressed e é imutável; o `catalog.ts` mantém um LRU de 8 shards. `getCatalogSummary()`/`/api/catalog` leem apenas o índice, sem carregar payloads.
+
+O catálogo é read-only, usa `schemaVersion: 3` e versionamento por release. Cada item carrega `status` (`approved`/`deprecated`), `provenance` (`procedural`, `ai_assisted`, `authored`, `template` ou `seed`) e `introducedIn` (versão de entrada, usada para novidade). `getCatalogVersion()` aparece em `room:init`/`room:tick`. Com `CATALOG_WATCH` ligado (padrão), o índice é recarregado de forma atômica quando muda; `SIGHUP` força a recarga. Editar `catalog.json` manualmente exige `npm run catalog:index` (ou `catalog:build`) para regenerar o índice; `promote-candidates` e `build-catalog` já fazem isso. A malha RLE continua `12×12×24` para armas e `16×16×16` para entidades.
 
 O estado do evento transmitido à sala usa o **nome do item do catálogo**, não o texto cru do jogador; o prompt original fica apenas no ledger.
 
@@ -101,6 +104,22 @@ Quando o prompt pede duas categorias de evento (ex.: “chuva de meteoros com ma
 - `onEventActivated` aplica todos os componentes (suprimentos, criaturas, terreno);
 - `tickEvents` pulsa cada componente climático separadamente;
 - se a composição não couber no orçamento, o resultado vira `partial` e entra nas lacunas.
+
+### Contrato de diversão dos eventos
+
+Todo evento carrega `MapEventState.fun` (`EventFunContract`) com:
+
+- `telegraphSec` e `escapeWindowSec`: aviso e tempo real de reação (o runtime mantém 5 s de aviso);
+- `counterplay`: `shelter`, `dig`, `sprint`, `high_ground`, `grapple`, `combat`, `loot` etc.;
+- `spectacle`, `readability` e `riskReward`: camadas visuais/sonoras, canais de leitura e por que entrar no perigo;
+- `fairness`: `unavoidableDamage` sempre `false` e `maxLethality ≤ 45`;
+- `botResponse`: reação esperada dos bots (`flee`, `seek_shelter`, `climb`, `fight`, `loot`).
+
+O contrato é derivado de `archetype`/`params` em `src/shared/eventFun.ts` quando o item não traz um explícito; `catalog:promote` valida e grava o contrato em eventos promovidos. O HUD mostra as contra-jogadas no aviso. Nevasca/granizo respeitam teto (dano zero quando abrigado), e bots fogem de tornado/lava/vulcão.
+
+### Eventos de cenário
+
+`SCENERY_SPAWN` gera estruturas voxel determinísticas (`src/shared/scenery.ts`: árvore, bosque, casa, torre, arranha-céu, ruínas). O servidor escolhe uma área livre, apoia no solo e aplica as células em **uma camada por tick** via `room.sceneryPlans`, produzindo o efeito de surgir do chão. A estrutura fica no mapa depois do evento e pode ser usada como cobertura/verticalidade; torres e arranha-céus incluem `MAT.LADDER`. O pool trata os itens como `terrain`, mas o arquétipo é separado para geração, HUD e contrato de diversão.
 
 ### `server/semantic.ts` e dedup offline
 
@@ -165,6 +184,7 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 | Arquivo | Responsabilidade |
 | --- | --- |
 | `types.ts` | Protocolo, constantes de voxel e tipos de domínio. Fonte da verdade dos payloads. |
+| `contentHydration.ts` | Junta referências de slot (`weaponId`) com o cache de blueprints do cliente e devolve o estado completo para HUD/renderização. |
 | `budget.ts` | Orçamento de 100 pontos, normalização, clamps, RLE e geradores de fallback. |
 | `prompt.ts` | Normalização de prompt e chave canônica usadas pelo resolvedor e pelo cache offline. |
 | `voxelWorld.ts` | Ilha procedural determinística (inclui escadas e rotas de tirolesa via `IslandMeta`), raycast, movimento, carving e colapso de estruturas. |
@@ -183,8 +203,9 @@ Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 - `engine/chunkDetailPlugin.ts` usa `matId` (enviado pelo mesher) para detalhe procedural, brilho de lava/cristal e borda Fresnel por material, sem texturas.
 - Água tem normal map procedural animado, espuma de costa gerada da heightmap e névoa submersa; o bloom fica atrás do preset de qualidade e só pega emissivos (threshold 1.0).
 - `engine/greedyMesher.worker.ts` faz greedy meshing por chunk em Web Worker; os chunks têm 16³ voxels e são enviados com padding para consulta O(1) de vizinhos.
-- `engine/voxelMeshBuilder.ts` converte RLE em malhas de armas, criaturas e avatares.
-- `engine/soundSynth.ts` sintetiza efeitos via Web Audio e usa samples do manifesto (`sfx:*`) quando existem, com fallback procedural.
+- `engine/voxelMeshBuilder.ts` converte RLE em malhas de armas, criaturas e avatares; `applyWeaponModules` acrescenta cano/mira/carregador/coronha no grid do modelo-base usando a receita de `src/shared/weaponVisuals.ts`.
+- `engine/soundSynth.ts` sintetiza efeitos via Web Audio e usa samples do manifesto (`sfx:*`) quando existem, com fallback procedural; `playEventCue` dá identidade sonora por tipo de evento.
+- `engine/babylonArena.ts` combina `eventPresentation.ts` (cor, anel, feixe e cue por evento) com o clima por `weatherKind` e invalida visualizações quando um lote de assets chega.
 - `engine/audio/audioEngine.ts` centraliza contexto, limiter, buses (`sfx`, `ambience`, `ui`), cache de samples, listener e cadeia espacial (PannerNode + lowpass de oclusão).
 - `engine/audio/audioDirector.ts` resolve `sfx:*` do manifesto, espacializa tiros/impactos/explosões/passos, aplica oclusão por raycast e faz crossfade de ambiência (vento/água/fogo/caverna).
 - `engine/audio/materialAudio.ts` mapeia `MAT` para passos e impactos (pedra, madeira, metal, gelo, terracota, macio).

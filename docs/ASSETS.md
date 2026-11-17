@@ -57,10 +57,12 @@ npm run assets:check -- --remote
 
 ## Cliente
 
-- `src/shared/assets.ts` expõe `resolveAssetUrl`.
-- `babylonArena` aplica `texture:weapon:*` no material da arma quando há URL; se o download falhar, mantém a paleta.
-- `soundSynth` tenta baixar/cachear `sfx:weapon:*` e toca o sample; até o cache carregar, usa o som procedural.
-- `audioDirector` usa os SFX espacialmente (HRTF/equalpower), escolhe passos/impactos por `MAT` e faz crossfade de loops de ambiência; `soundSynth` segue para tiros procedurais, UI e feedback local.
+- `src/shared/assets.ts` expõe `resolveAssetUrl` (com `?v=<hash>` em URLs relativas para cache imutável) e `mergeAssetManifests`.
+- `GET /api/assets/core` entrega o núcleo pequeno (passos, impactos, ambiência, UI, waypoint e forja). O jogo não baixa o manifesto inteiro no boot.
+- `GET /api/assets?ids=a,b,c` entrega só os assets pedidos; ids desconhecidos são ignorados e o limite é 256 por requisição.
+- No início da partida, `contentPool.assetIds` (enviado apenas em `room:init`) pré-carrega o arsenal da sala. Durante o jogo, o cliente coleta assets das armas/loot/eventos visíveis e busca os que faltam em lotes.
+- `babylonArena` aplica `texture:weapon:*` no material da arma quando há URL; se o download falhar, mantém a paleta. Quando um lote de assets chega, as visualizações dependentes de asset são invalidadas e reconstruídas no próximo tick.
+- `audioDirector` pré-carrega sons do núcleo e dos lotes sob demanda, com deduplicação por URL; usa os SFX espacialmente (HRTF/equalpower), escolhe passos/impactos por `MAT` e faz crossfade de loops de ambiência; `soundSynth` segue para tiros procedurais, UI e feedback local.
 - Eventos/waypoints continuam usando `waypoint:event` e `fx:event:*` do manifesto.
 
 ## SFX importados (Fase 0)
@@ -110,6 +112,7 @@ Não edite esta seção à mão; rode o script novamente.
 
 ## Limitações atuais
 
+- O manifesto completo ainda é carregado no servidor no boot; o carregamento sob demanda desta fase é da rede/cliente. O manifesto tem 80 entradas — sharding do próprio manifesto fica para quando o banco passar de milhares de assets.
 - O manifesto tem URLs apenas para os SFX convertidos; texturas, efeitos e waypoints continuam procedurais.
 - Assets não têm hot reload no cliente: mudar o manifesto exige recarregar a página/nova sessão. O catálogo tem hot reload separado (`CATALOG_WATCH`).
 - A validação de hash é apenas de presença; verificação criptográfica do conteúdo ainda não é feita.

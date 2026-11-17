@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-16.4","kind":"event","items":{"evt_weather_thunderstorm":{"archetype":"WEATHER_HAZARD","params":{"radiusMeters":32,"durationSec":30,"lethality":26,"quantity":3,"weatherKind":"thunderstorm","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":70.9,"wasClamped":false}}}

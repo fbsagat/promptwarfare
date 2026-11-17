@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "version": "2026-11-16.4",
+  "version": "2026-11-18.1",
   "weapons": [
     {
       "id": "wpn_pistol_standard",
@@ -48901,6 +48901,249 @@
           ]
         },
         "budgetUsed": 43,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_tree",
+      "name": "Árvore emergente",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "tree"
+      ],
+      "aliases": [
+        "árvore",
+        "arvore",
+        "árvores",
+        "arvores",
+        "surja uma árvore",
+        "surjam árvores"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 12,
+          "durationSec": 20,
+          "lethality": 5,
+          "quantity": 1,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "tree"
+        },
+        "budgetUsed": 28.8,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_grove",
+      "name": "Bosque repentino",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "grove"
+      ],
+      "aliases": [
+        "bosque",
+        "floresta",
+        "arvoredo",
+        "floresta repentina",
+        "bosque de árvores"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 18,
+          "durationSec": 24,
+          "lethality": 5,
+          "quantity": 1,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "grove"
+        },
+        "budgetUsed": 36,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_house",
+      "name": "Casa do chão",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "house"
+      ],
+      "aliases": [
+        "casa",
+        "cabana",
+        "chalé",
+        "chale",
+        "construa uma casa"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 16,
+          "durationSec": 24,
+          "lethality": 5,
+          "quantity": 2,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "house"
+        },
+        "budgetUsed": 37.7,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_tower",
+      "name": "Torre emergente",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "tower"
+      ],
+      "aliases": [
+        "torre",
+        "prédio",
+        "predio",
+        "edifício",
+        "edificio",
+        "construa uma torre"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 18,
+          "durationSec": 28,
+          "lethality": 5,
+          "quantity": 1,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "tower"
+        },
+        "budgetUsed": 37.8,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_skyscraper",
+      "name": "Arranha-céu do chão",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "skyscraper"
+      ],
+      "aliases": [
+        "arranha-céu",
+        "arranha ceu",
+        "arranhaceu",
+        "edifício gigante",
+        "edificio gigante",
+        "skyscraper"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 22,
+          "durationSec": 30,
+          "lethality": 5,
+          "quantity": 1,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "skyscraper"
+        },
+        "budgetUsed": 42.3,
+        "wasClamped": false
+      }
+    },
+    {
+      "id": "evt_scenery_ruins",
+      "name": "Ruínas emergentes",
+      "tags": [
+        "event",
+        "terrain",
+        "scenery",
+        "ruins"
+      ],
+      "aliases": [
+        "ruínas",
+        "ruinas",
+        "templo antigo",
+        "escombros",
+        "construa ruínas"
+      ],
+      "assets": [
+        "texture:event:terrain",
+        "sfx:event:terrain",
+        "fx:event:terrain",
+        "waypoint:event"
+      ],
+      "status": "approved",
+      "provenance": "authored",
+      "introducedIn": "2026-11-18.1",
+      "payload": {
+        "archetype": "SCENERY_SPAWN",
+        "params": {
+          "radiusMeters": 18,
+          "durationSec": 24,
+          "lethality": 5,
+          "quantity": 1,
+          "aiBehavior": "aggressive_nearest",
+          "ammoRestore": 28,
+          "sceneryKind": "ruins"
+        },
+        "budgetUsed": 36,
         "wasClamped": false
       }
     }

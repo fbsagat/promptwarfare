@@ -19,6 +19,13 @@ export interface AssetManifest {
   assets: AssetEntry[];
 }
 
+function assetHashQuery(asset: AssetEntry): string {
+  const hash = asset.hash?.trim();
+  if (!hash) return '';
+  const value = hash.replace(/^sha256:/i, '').slice(0, 16);
+  return value ? `?v=${value}` : '';
+}
+
 export function resolveAssetUrl(
   asset: AssetEntry | null | undefined,
   manifest: AssetManifest | null | undefined,
@@ -26,6 +33,29 @@ export function resolveAssetUrl(
   if (!asset?.url) return null;
   if (/^https?:\/\//i.test(asset.url)) return asset.url;
   if (!manifest?.baseUrl) return null;
-  return `${manifest.baseUrl.replace(/\/+$/, '')}/${asset.url.replace(/^\/+/, '')}`;
+  const base = manifest.baseUrl.replace(/\/+$/, '');
+  const relative = asset.url.replace(/^\/+/, '');
+  return `${base}/${relative}${assetHashQuery(asset)}`;
+}
+
+/**
+ * Une manifests par id, preservando a versão/baseUrl mais recente. O cliente
+ * baixa um núcleo pequeno e acrescenta assets sob demanda; o índice de render
+ * é reconstruído a partir do resultado.
+ */
+export function mergeAssetManifests(
+  current: AssetManifest | null,
+  incoming: AssetManifest | null,
+): AssetManifest | null {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const merged = new Map<string, AssetEntry>();
+  for (const asset of current.assets) merged.set(asset.id, asset);
+  for (const asset of incoming.assets) merged.set(asset.id, asset);
+  return {
+    version: incoming.version || current.version,
+    baseUrl: incoming.baseUrl ?? current.baseUrl,
+    assets: Array.from(merged.values()),
+  };
 }
 

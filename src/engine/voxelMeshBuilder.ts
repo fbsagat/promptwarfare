@@ -10,12 +10,106 @@ import {
 } from '@babylonjs/core';
 import { decodeRleVoxels } from '../shared/budget.ts';
 import type { PaletteColor } from '../shared/types.ts';
+import type { WeaponModuleRecipe } from '../shared/weaponVisuals.ts';
 
 function hexToRgb01(hex: string): [number, number, number] {
   const clean = hex.replace('#', '');
   if (clean.length !== 6) return [0.3, 0.8, 1.0];
   const n = parseInt(clean, 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/**
+ * Acrescenta peças modulares (cano, mira, carregador, coronha) ao grid do
+ * modelo-base. Só ocupa células vazias e nunca sai dos limites 12×12×24.
+ */
+export function applyWeaponModules(
+  grid: Uint8Array,
+  w: number,
+  h: number,
+  d: number,
+  recipe: WeaponModuleRecipe,
+): void {
+  const at = (x: number, y: number, z: number): number => {
+    if (x < 0 || x >= w || y < 0 || y >= h || z < 0 || z >= d) return 0;
+    return grid[x + z * w + y * w * d];
+  };
+  const put = (x: number, y: number, z: number, color: number): void => {
+    if (x < 0 || x >= w || y < 0 || y >= h || z < 0 || z >= d) return;
+    const index = x + z * w + y * w * d;
+    if (grid[index] === 0) grid[index] = Math.max(1, Math.min(255, color));
+  };
+
+  let minX = w;
+  let maxX = -1;
+  let minY = h;
+  let maxY = -1;
+  let minZ = d;
+  let maxZ = -1;
+  for (let y = 0; y < h; y++) {
+    for (let z = 0; z < d; z++) {
+      for (let x = 0; x < w; x++) {
+        if (at(x, y, z) === 0) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+    }
+  }
+  if (maxZ < 0) return;
+
+  const findAtZ = (z: number): { x: number; y: number } | null => {
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (at(x, y, z) !== 0) return { x, y };
+      }
+    }
+    return null;
+  };
+
+  const barrelAnchor = findAtZ(maxZ);
+  if (barrelAnchor) {
+    for (let step = 1; step <= recipe.barrel; step++) {
+      put(barrelAnchor.x, barrelAnchor.y, maxZ + step, recipe.accent);
+    }
+  }
+
+  const stockAnchor = findAtZ(minZ);
+  if (stockAnchor) {
+    for (let step = 1; step <= recipe.stock; step++) {
+      put(stockAnchor.x, stockAnchor.y, minZ - step, recipe.accent);
+    }
+  }
+
+  const midZ = Math.floor((minZ + maxZ) / 2);
+  if (recipe.scope) {
+    for (let y = maxY; y >= minY; y--) {
+      const x = Array.from({ length: maxX - minX + 1 }, (_, i) => minX + i).find(
+        (candidate) => at(candidate, y, midZ) !== 0,
+      );
+      if (x !== undefined) {
+        put(x, y + 1, midZ, recipe.accent);
+        break;
+      }
+    }
+  }
+
+  if (recipe.magazine > 0) {
+    for (let y = minY; y <= maxY; y++) {
+      const x = Array.from({ length: maxX - minX + 1 }, (_, i) => minX + i).find(
+        (candidate) => at(candidate, y, midZ) !== 0,
+      );
+      if (x !== undefined) {
+        for (let step = 1; step <= recipe.magazine; step++) {
+          put(x, y - step, midZ, recipe.accent);
+        }
+        break;
+      }
+    }
+  }
 }
 
 export function buildBlueprintVoxelMesh(
@@ -29,8 +123,10 @@ export function buildBlueprintVoxelMesh(
   voxelScale: number,
   pivot: [number, number, number],
   textureUrl?: string | null,
+  modules?: WeaponModuleRecipe | null,
 ): Mesh {
   const grid = decodeRleVoxels(rleVoxels, w, h, d);
+  if (modules) applyWeaponModules(grid, w, h, d, modules);
   const get = (x: number, y: number, z: number) => {
     if (x < 0 || x >= w || y < 0 || y >= h || z < 0 || z >= d) return 0;
     return grid[x + z * w + y * w * d];
@@ -371,4 +467,69 @@ export function buildPlayerAvatarMesh(
       root.dispose(false, true);
     },
   };
+}
+
+export interface GrassTuftOptions {
+  height?: number;
+  width?: number;
+}
+
+/**
+ * Tufo de grama: duas lâminas cruzadas com gradiente escuro→claro na base dos
+ * vértices. Pensado para ThinInstance (uma malha, centenas de instâncias) e
+ * sem textura. A cor por instância entra pelo buffer `color`.
+ */
+export function buildGrassTuftMesh(
+  scene: Scene,
+  name = 'grassTuft',
+  options: GrassTuftOptions = {},
+): Mesh {
+  const height = options.height ?? 0.46;
+  const half = (options.width ?? 0.28) / 2;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  const pushQuad = (
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+    nx: number,
+    ny: number,
+    nz: number,
+  ): void => {
+    const base = positions.length / 3;
+    positions.push(
+      ax, 0, az,
+      bx, 0, bz,
+      bx, height, bz,
+      ax, height, az,
+    );
+    for (let i = 0; i < 4; i++) normals.push(nx, ny, nz);
+    colors.push(
+      0.58, 0.58, 0.58, 1,
+      0.58, 0.58, 0.58, 1,
+      1, 1, 1, 1,
+      1, 1, 1, 1,
+    );
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+
+  // Lâmina no plano XY e outra no plano ZY, com normais levemente para cima
+  // para pegar sol/hemisférica em vez de ficarem pretas de lado.
+  pushQuad(-half, 0, half, 0, 0, 0.94, 0.34);
+  pushQuad(0, -half, 0, half, 0.34, 0.94, 0);
+
+  const mesh = new Mesh(name, scene);
+  const vData = new VertexData();
+  vData.positions = positions;
+  vData.normals = normals;
+  vData.colors = colors;
+  vData.indices = indices;
+  vData.applyToMesh(mesh);
+  mesh.isPickable = false;
+  mesh.hasVertexAlpha = false;
+  return mesh;
 }

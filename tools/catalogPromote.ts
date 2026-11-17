@@ -10,6 +10,10 @@ import {
   validateAndClampWeapon,
 } from '../src/shared/budget.ts';
 import type { WeaponBlueprint } from '../src/shared/types.ts';
+import {
+  deriveEventFunContract,
+  validateEventFunContract,
+} from '../src/shared/eventFun.ts';
 import { buildCanonicalKey, normalizePrompt } from '../src/shared/prompt.ts';
 import { textSetSimilarity } from '../server/semantic.ts';
 import {
@@ -251,6 +255,12 @@ export function promoteCandidates(
       continue;
     }
     const id = uniqueId(catalogId(candidate), used);
+    const fun = payload.fun ?? deriveEventFunContract(payload.archetype, validated.params);
+    const funIssues = validateEventFunContract(fun);
+    if (funIssues.length > 0) {
+      skipped.push({ id: candidate.id, reason: `contrato de diversão: ${funIssues[0]}` });
+      continue;
+    }
     const item: CatalogEventItem = {
       id,
       name: candidate.prompt.slice(0, 60),
@@ -264,6 +274,7 @@ export function promoteCandidates(
         archetype: payload.archetype,
         params: validated.params,
         entityBlueprint: payload.entityBlueprint,
+        fun,
         budgetUsed: validated.budgetUsed,
         wasClamped: validated.wasClamped,
       },

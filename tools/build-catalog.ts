@@ -19,6 +19,7 @@ import type {
   WeaponStats,
 } from '../src/shared/types.ts';
 import type { CatalogFile, CatalogWeaponItem, CatalogEventItem } from '../server/catalog.ts';
+import { writeCatalogArtifacts } from '../server/catalogArtifacts.ts';
 import { mergeCatalog } from './catalogMerge.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -905,10 +906,14 @@ const { weapons, events } = catalog;
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 fs.writeFileSync(OUT_FILE, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
+const artifacts = writeCatalogArtifacts(catalog, OUT_DIR);
 
 const clampedWeapons = weapons.filter((w) => w.payload.wasClamped);
 const clampedEvents = events.filter((e) => e.payload.wasClamped);
 console.log(`Catálogo ${CATALOG_VERSION}: ${weapons.length} armas, ${events.length} eventos`);
+console.log(
+  `Índice/sharding: ${artifacts.indexPath} (${artifacts.shardCount} shards)`,
+);
 console.log(`Itens preservados fora da base: ${keptWeapons.length} armas, ${keptEvents.length} eventos`);
 console.log(`Armas com clamp: ${clampedWeapons.length}`, clampedWeapons.map((w) => `${w.id}:${w.payload.budgetUsed}`));
 console.log(`Eventos com clamp: ${clampedEvents.length}`, clampedEvents.map((e) => `${e.id}:${e.payload.budgetUsed}`));

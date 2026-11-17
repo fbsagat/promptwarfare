@@ -2,6 +2,7 @@ import {
   audioEngine,
   type SoundPosition,
 } from './audio/audioEngine.ts';
+import type { EventSoundPatch } from '../shared/eventPresentation.ts';
 
 interface ProceduralOutput {
   node: AudioNode;
@@ -222,6 +223,87 @@ class SoundSynth {
       osc.onended = () => out.dispose();
       osc.start(t + i * 0.13);
       osc.stop(t + i * 0.13 + 0.12);
+    }
+  }
+
+  /**
+   * Cue curto e distinto por tipo de evento. É procedural de propósito: dá
+   * identidade sonora imediata sem exigir um arquivo novo por evento.
+   */
+  playEventCue(patch: EventSoundPatch, position?: SoundPosition): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const out = this.output(ctx, {
+      bus: 'sfx',
+      position,
+      hrtf: false,
+      maxDistance: 140,
+      volume: 0.8,
+    });
+
+    const noise = (duration: number, filterType: BiquadFilterType, frequency: number): void => {
+      const frames = Math.max(1, Math.floor(ctx.sampleRate * duration));
+      const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < frames; i++) channel[i] = Math.random() * 2 - 1;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = filterType;
+      filter.frequency.setValueAtTime(frequency, t);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+      source.connect(filter).connect(gain).connect(out.node);
+      source.onended = () => out.dispose();
+      source.start(t);
+      source.stop(t + duration);
+    };
+
+    if (patch === 'hiss') {
+      noise(0.32, 'highpass', 1500);
+      return;
+    }
+    if (patch === 'wind') {
+      noise(0.7, 'bandpass', 620);
+      return;
+    }
+
+    const tones =
+      patch === 'chime'
+        ? [{ f: 880, type: 'triangle' as OscillatorType, d: 0.26, gap: 0.08 }]
+        : patch === 'alert'
+          ? [
+              { f: 520, type: 'square' as OscillatorType, d: 0.11, gap: 0.13 },
+              { f: 760, type: 'square' as OscillatorType, d: 0.11, gap: 0.13 },
+            ]
+          : patch === 'growl'
+            ? [{ f: 130, type: 'sawtooth' as OscillatorType, d: 0.42, gap: 0 }]
+            : [
+                { f: 46, type: 'sawtooth' as OscillatorType, d: 0.5, gap: 0 },
+                { f: 68, type: 'sine' as OscillatorType, d: 0.5, gap: 0.02 },
+              ];
+
+    let remaining = tones.length;
+    const done = (): void => {
+      remaining -= 1;
+      if (remaining <= 0) out.dispose();
+    };
+    for (const tone of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = tone.type;
+      osc.frequency.setValueAtTime(tone.f, t + tone.gap);
+      if (patch === 'growl') {
+        osc.frequency.exponentialRampToValueAtTime(tone.f * 0.62, t + tone.gap + tone.d);
+      }
+      gain.gain.setValueAtTime(patch === 'rumble' ? 0.16 : 0.1, t + tone.gap);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + tone.gap + tone.d);
+      osc.connect(gain).connect(out.node);
+      osc.onended = done;
+      osc.start(t + tone.gap);
+      osc.stop(t + tone.gap + tone.d + 0.02);
     }
   }
 

@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-18.1","kind":"event","items":{"evt_weather_tornado":{"archetype":"WEATHER_HAZARD","params":{"radiusMeters":26,"durationSec":30,"lethality":20,"quantity":1,"weatherKind":"tornado","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":58.9,"wasClamped":false}}}

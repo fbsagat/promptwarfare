@@ -12,6 +12,7 @@ import {
   MeshBuilder,
   Quaternion,
   Scene,
+  ShaderMaterial,
   ShadowGenerator,
   StandardMaterial,
   Texture,
@@ -53,6 +54,10 @@ import {
 import type { AssetEntry, AssetManifest } from '../shared/assets.ts';
 import { resolveAssetUrl } from '../shared/assets.ts';
 import { soundSynth } from './soundSynth.ts';
+import { presentationForEvent } from '../shared/eventPresentation.ts';
+import { impactReactionFor } from '../shared/materialReaction.ts';
+import { recoilImpulseFor } from '../shared/weaponFeel.ts';
+import { weaponDisplayPalette, weaponModuleRecipe } from '../shared/weaponVisuals.ts';
 import { ChunkDetailPlugin } from './chunkDetailPlugin.ts';
 import { audioDirector } from './audio/audioDirector.ts';
 import { materialColor } from './audio/materialAudio.ts';
@@ -66,6 +71,7 @@ import {
 } from './quality.ts';
 import {
   buildBlueprintVoxelMesh,
+  buildGrassTuftMesh,
   buildPlayerAvatarMesh,
   buildStarterToolMesh,
   type PlayerAvatarRig,
@@ -85,6 +91,82 @@ interface ShrapnelParticle {
   ttl: number;
   color: [number, number, number];
 }
+
+/** Visual de telégrafo de evento: anel central, raio de perigo e sweep. */
+interface EventWaypointVisual {
+  root: Mesh;
+  ringMat: StandardMaterial;
+  dangerMat: StandardMaterial;
+  sweep: Mesh | null;
+  sweepMat: StandardMaterial | null;
+  radiusMeters: number;
+  warningRemaining: number;
+  warningTotal: number;
+  lethal: boolean;
+}
+
+/**
+ * Água: shader dedicado com duas camadas de normal em scroll, Fresnel e brilho
+ * solar. Névoa replicada manualmente porque ShaderMaterial não entra no
+ * pipeline de fog padrão; a densidade/cor vêm do `scene` todo frame.
+ */
+const WATER_VERTEX_SHADER = `precision highp float;
+attribute vec3 position;
+uniform mat4 world;
+uniform mat4 worldViewProjection;
+varying vec3 vWorldPos;
+void main() {
+  vec4 worldPos = world * vec4(position, 1.0);
+  vWorldPos = worldPos.xyz;
+  gl_Position = worldViewProjection * vec4(position, 1.0);
+}
+`;
+
+const WATER_FRAGMENT_SHADER = `precision highp float;
+varying vec3 vWorldPos;
+uniform sampler2D uNormalA;
+uniform sampler2D uNormalB;
+uniform vec3 uCameraPos;
+uniform vec3 uSunDir;
+uniform vec3 uDeepColor;
+uniform vec3 uShallowColor;
+uniform vec3 uFogColor;
+uniform float uFogDensity;
+uniform float uTime;
+uniform float uUnderwater;
+
+void main() {
+  vec3 V = normalize(uCameraPos - vWorldPos);
+  vec2 uvA = vWorldPos.xz * 0.05 + uTime * vec2(0.014, 0.009);
+  vec2 uvB = vWorldPos.xz * 0.13 - uTime * vec2(0.008, 0.012);
+  vec3 nA = texture2D(uNormalA, uvA).rgb * 2.0 - 1.0;
+  vec3 nB = texture2D(uNormalB, uvB).rgb * 2.0 - 1.0;
+  vec3 N = normalize(vec3(nA.x + nB.x, 2.4, nA.y + nB.y));
+
+  float fresnel = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 3.0);
+  vec3 base = mix(
+    uDeepColor,
+    uShallowColor,
+    clamp(0.15 + fresnel * 1.35, 0.0, 1.0)
+  );
+
+  vec3 H = normalize(uSunDir + V);
+  float spec = pow(max(dot(N, H), 0.0), 160.0);
+  float glint = pow(max(dot(N, H), 0.0), 900.0);
+  vec3 color = base + vec3(1.0, 0.95, 0.84) * (spec * 1.2 + glint * 1.6);
+
+  float dist = length(uCameraPos - vWorldPos);
+  float fogFactor = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);
+  color = mix(color, uFogColor, clamp(fogFactor, 0.0, 1.0));
+
+  if (uUnderwater > 0.5) {
+    color = mix(color, vec3(0.03, 0.2, 0.28), 0.35);
+  }
+
+  float alpha = mix(0.78, 0.95, fresnel);
+  gl_FragColor = vec4(color, alpha);
+}
+`;
 
 export interface PerfStats {
   fps: number;
@@ -145,8 +227,10 @@ export class BabylonVoxelArena {
 
   private waterMesh: Mesh;
   private abyssFloorMesh: Mesh;
-  private waterMat: StandardMaterial;
+  private waterMat: StandardMaterial | null = null;
+  private waterShader: ShaderMaterial | null = null;
   private waterNormalTexture: DynamicTexture | null = null;
+  private waterNormalTextureB: DynamicTexture | null = null;
   private shoreFoamMesh: Mesh | null = null;
   private shoreFoamMat: StandardMaterial | null = null;
   private shoreFoamTexture: DynamicTexture | null = null;
@@ -196,11 +280,14 @@ export class BabylonVoxelArena {
     z: 0,
     stride: 0,
     airborne: false,
+    underwater: false,
     sliding: false,
     zipline: false,
     initialized: false,
   };
   private ambienceTimer = 0;
+  private waterStepAccum = 0;
+  private bubbleTimer = 0;
   private ambienceState = {
     underwater: false,
     underground: false,
@@ -218,6 +305,44 @@ export class BabylonVoxelArena {
   private shrapnelCursor = 0;
   private readonly SHRAPNEL_CAP = 240;
 
+  // Rastro de projéteis: segmentos ThinInstance estáticos que encolhem.
+  private trailBaseMesh: Mesh;
+  private trailMatrices: Float32Array;
+  private trailColors: Float32Array;
+  private trailPositions: Float32Array;
+  private trailQuats: Float32Array;
+  /** [largura, comprimento] por segmento. */
+  private trailSizes: Float32Array;
+  private trailTtl: Float32Array;
+  private trailMaxTtl: Float32Array;
+  private trailCursor = 0;
+  private activeTrails = 0;
+  private readonly TRAIL_CAP = 192;
+
+  // Fumaça/fumos: pool ThinInstance com flutuação e expansão (sem gravidade).
+  private smokeBaseMesh: Mesh;
+  private smokeMatrices: Float32Array;
+  private smokeColors: Float32Array;
+  private smokePositions: Float32Array;
+  private smokeVelocities: Float32Array;
+  private smokeSizes: Float32Array;
+  private smokeTtl: Float32Array;
+  private smokeMaxTtl: Float32Array;
+  private smokeCursor = 0;
+  private activeSmoke = 0;
+  private readonly SMOKE_CAP = 64;
+
+  // Vegetação: tufos em ThinInstance que seguem a câmera em grade determinística.
+  private grassBaseMesh: Mesh;
+  private grassMatrices: Float32Array;
+  private grassColors: Float32Array;
+  private grassTimer = 0;
+  private grassDirty = false;
+  private lastGrassX = 0;
+  private lastGrassZ = 0;
+  private islandSeed = 1337;
+  private readonly GRASS_CAP = 729;
+
   // Dynamic entities
   private playerRigs = new Map<
     string,
@@ -234,8 +359,9 @@ export class BabylonVoxelArena {
   >();
 
   private projectileMeshes = new Map<string, Mesh>();
-  private eventWaypointMeshes = new Map<string, Mesh>();
+  private eventWaypointMeshes = new Map<string, EventWaypointVisual>();
   private assetManifest: AssetManifest | null = null;
+  private assetIndex = new Map<string, AssetEntry>();
   private lootMeshes = new Map<string, TransformNode>();
   private entityMeshes = new Map<string, { node: TransformNode; targetPos: Vector3 }>();
 
@@ -248,6 +374,13 @@ export class BabylonVoxelArena {
   private lastLocalActionFxAt = 0;
   private weaponCache = new Map<string, WeaponBlueprint>();
   private recoilKick = 0;
+  /** Impulso de mira devolvido gradualmente (recuperação parcial do recoil). */
+  private recoilRecoveryPitch = 0;
+  /** Sway do viewmodel vindo do delta de mouse. */
+  private swayX = 0;
+  private swayY = 0;
+  private landDip = 0;
+  private cameraRoll = 0;
   private cameraTrauma = 0;
   private hitstopTimer = 0;
 
@@ -304,6 +437,11 @@ export class BabylonVoxelArena {
   private scratchScale = new Vector3();
   private scratchPos = new Vector3();
   private scratchMat = Matrix.Identity();
+  private readonly upVec = new Vector3(0, 1, 0);
+  private readonly upAltVec = new Vector3(0, 0, 1);
+  private scratchNormal = new Vector3(0, 1, 0);
+  private scratchAxis = new Vector3();
+  private scratchSpin = new Quaternion();
 
   constructor(canvas: HTMLCanvasElement, callbacks: ArenaCallbacks) {
     this.canvas = canvas;
@@ -334,6 +472,7 @@ export class BabylonVoxelArena {
       gpuTier: this.gpuTier,
     });
     this.engine.setHardwareScalingLevel(this.quality.hardwareScaling);
+    audioDirector.setHrtfSourceCap(this.quality.hrtfSources);
 
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.42, 0.72, 0.94, 1);
@@ -434,17 +573,63 @@ export class BabylonVoxelArena {
       this.scene,
     );
     this.waterMesh.position.set(64, WATER_LEVEL_WORLD - 0.12, 64);
-    this.waterMat = new StandardMaterial('waterMat', this.scene);
-    this.waterMat.diffuseColor = Color3.FromHexString('#0a4f73');
-    this.waterMat.emissiveColor = Color3.FromHexString('#032238');
-    this.waterMat.specularColor = new Color3(0.45, 0.62, 0.78);
-    this.waterMat.specularPower = 64;
-    this.waterMat.alpha = 0.8;
-    this.waterMat.backFaceCulling = false;
-    this.waterNormalTexture = this.createWaterNormalTexture();
-    this.waterMat.bumpTexture = this.waterNormalTexture;
-    this.waterMat.bumpTexture.level = 0.32;
-    this.waterMesh.material = this.waterMat;
+
+    // Duas camadas de normal: uma para cada escala/velocidade no shader.
+    this.waterNormalTexture = this.createWaterNormalTexture('waterNormalTexA', 0);
+    this.waterNormalTextureB = this.createWaterNormalTexture('waterNormalTexB', 2.4);
+
+    if (this.isSoftwareGl) {
+      const mat = new StandardMaterial('waterMat', this.scene);
+      mat.diffuseColor = Color3.FromHexString('#0a4f73');
+      mat.emissiveColor = Color3.FromHexString('#032238');
+      mat.specularColor = new Color3(0.45, 0.62, 0.78);
+      mat.specularPower = 64;
+      mat.alpha = 0.8;
+      mat.backFaceCulling = false;
+      mat.bumpTexture = this.waterNormalTexture;
+      mat.bumpTexture.level = 0.32;
+      this.waterMat = mat;
+      this.waterMesh.material = mat;
+    } else {
+      const shader = new ShaderMaterial(
+        'waterShader',
+        this.scene,
+        {
+          vertexSource: WATER_VERTEX_SHADER,
+          fragmentSource: WATER_FRAGMENT_SHADER,
+        },
+        {
+          attributes: ['position'],
+          uniforms: [
+            'world',
+            'worldViewProjection',
+            'uCameraPos',
+            'uSunDir',
+            'uDeepColor',
+            'uShallowColor',
+            'uFogColor',
+            'uFogDensity',
+            'uTime',
+            'uUnderwater',
+          ],
+          samplers: ['uNormalA', 'uNormalB'],
+          needAlphaBlending: true,
+        },
+      );
+      shader.backFaceCulling = false;
+      shader.setTexture('uNormalA', this.waterNormalTexture);
+      shader.setTexture('uNormalB', this.waterNormalTextureB);
+      shader.setColor3('uDeepColor', Color3.FromHexString('#06364f'));
+      shader.setColor3('uShallowColor', Color3.FromHexString('#2f9ab6'));
+      shader.setVector3('uSunDir', new Vector3(0.55, 0.82, 0.45).normalize());
+      shader.setColor3('uFogColor', this.scene.fogColor);
+      shader.setFloat('uFogDensity', this.scene.fogDensity);
+      shader.setFloat('uTime', 0);
+      shader.setFloat('uUnderwater', 0);
+      shader.setVector3('uCameraPos', this.camera.position);
+      this.waterShader = shader;
+      this.waterMesh.material = shader;
+    }
     this.waterMesh.alphaIndex = 0;
 
     // Shrapnel zero-GC ThinInstance pool
@@ -481,6 +666,82 @@ export class BabylonVoxelArena {
     }
     this.shrapnelBaseMesh.thinInstanceSetBuffer('matrix', this.shrapnelMatrices, 16, false);
     this.shrapnelBaseMesh.thinInstanceSetBuffer('color', this.shrapnelColors, 4, false);
+
+    // Rastro de projéteis: caixa unitária esticada por segmento, zero-GC.
+    this.trailBaseMesh = MeshBuilder.CreateBox(
+      'projectileTrail',
+      { size: 1 },
+      this.scene,
+    );
+    const trailMat = new StandardMaterial('projectileTrailMat', this.scene);
+    trailMat.disableLighting = true;
+    trailMat.emissiveColor = Color3.White();
+    trailMat.alpha = 0.62;
+    trailMat.backFaceCulling = false;
+    this.trailBaseMesh.material = trailMat;
+    this.trailBaseMesh.isPickable = false;
+    this.trailBaseMesh.alwaysSelectAsActiveMesh = true;
+    this.trailBaseMesh.setEnabled(false);
+    this.trailMatrices = new Float32Array(this.TRAIL_CAP * 16);
+    this.trailColors = new Float32Array(this.TRAIL_CAP * 4);
+    this.trailPositions = new Float32Array(this.TRAIL_CAP * 3);
+    this.trailQuats = new Float32Array(this.TRAIL_CAP * 4);
+    this.trailSizes = new Float32Array(this.TRAIL_CAP * 2);
+    this.trailTtl = new Float32Array(this.TRAIL_CAP);
+    this.trailMaxTtl = new Float32Array(this.TRAIL_CAP);
+    for (let i = 0; i < this.TRAIL_CAP; i++) {
+      Matrix.Scaling(0, 0, 0).copyToArray(this.trailMatrices, i * 16);
+      this.trailQuats[i * 4 + 3] = 1;
+      this.trailColors[i * 4 + 3] = 1;
+    }
+    this.trailBaseMesh.thinInstanceSetBuffer('matrix', this.trailMatrices, 16, false);
+    this.trailBaseMesh.thinInstanceSetBuffer('color', this.trailColors, 4, false);
+
+    // Fumaça/fumos: caixa unitária que expande e flutua (boca de cano, bolhas).
+    this.smokeBaseMesh = MeshBuilder.CreateBox('smokePuff', { size: 1 }, this.scene);
+    const smokeMat = new StandardMaterial('smokePuffMat', this.scene);
+    smokeMat.diffuseColor = new Color3(0.8, 0.82, 0.86);
+    smokeMat.emissiveColor = new Color3(0.16, 0.17, 0.19);
+    smokeMat.specularColor = Color3.Black();
+    smokeMat.alpha = 0.3;
+    smokeMat.backFaceCulling = false;
+    this.smokeBaseMesh.material = smokeMat;
+    this.smokeBaseMesh.isPickable = false;
+    this.smokeBaseMesh.alwaysSelectAsActiveMesh = true;
+    this.smokeBaseMesh.setEnabled(false);
+    this.smokeMatrices = new Float32Array(this.SMOKE_CAP * 16);
+    this.smokeColors = new Float32Array(this.SMOKE_CAP * 4);
+    this.smokePositions = new Float32Array(this.SMOKE_CAP * 3);
+    this.smokeVelocities = new Float32Array(this.SMOKE_CAP * 3);
+    this.smokeSizes = new Float32Array(this.SMOKE_CAP);
+    this.smokeTtl = new Float32Array(this.SMOKE_CAP);
+    this.smokeMaxTtl = new Float32Array(this.SMOKE_CAP);
+    for (let i = 0; i < this.SMOKE_CAP; i++) {
+      Matrix.Scaling(0, 0, 0).copyToArray(this.smokeMatrices, i * 16);
+      this.smokeColors[i * 4 + 3] = 1;
+    }
+    this.smokeBaseMesh.thinInstanceSetBuffer('matrix', this.smokeMatrices, 16, false);
+    this.smokeBaseMesh.thinInstanceSetBuffer('color', this.smokeColors, 4, false);
+
+    // Vegetação: uma malha de tufo, centenas de instâncias seguindo a câmera.
+    this.grassBaseMesh = buildGrassTuftMesh(this.scene);
+    const grassMat = new StandardMaterial('grassTuftMat', this.scene);
+    grassMat.diffuseColor = Color3.White();
+    grassMat.specularColor = Color3.Black();
+    grassMat.emissiveColor = new Color3(0.04, 0.06, 0.03);
+    grassMat.backFaceCulling = false;
+    this.grassBaseMesh.material = grassMat;
+    this.grassBaseMesh.receiveShadows = false;
+    this.grassBaseMesh.alwaysSelectAsActiveMesh = true;
+    this.grassBaseMesh.setEnabled(false);
+    this.grassMatrices = new Float32Array(this.GRASS_CAP * 16);
+    this.grassColors = new Float32Array(this.GRASS_CAP * 4);
+    for (let i = 0; i < this.GRASS_CAP; i++) {
+      Matrix.Scaling(0, 0, 0).copyToArray(this.grassMatrices, i * 16);
+      this.grassColors[i * 4 + 3] = 1;
+    }
+    this.grassBaseMesh.thinInstanceSetBuffer('matrix', this.grassMatrices, 16, false);
+    this.grassBaseMesh.thinInstanceSetBuffer('color', this.grassColors, 4, false);
 
     // Sunlit voxel sun disc + warm solar halo + multi-tier drifting sky clouds
     const sunHalo = MeshBuilder.CreateBox('voxelSunHalo', { width: 32, height: 32, depth: 2 }, this.scene);
@@ -624,7 +885,9 @@ export class BabylonVoxelArena {
     scorch.update(false);
     this.scorchTexture = scorch;
 
-    for (let i = 0; i < 10; i++) {
+    // Pool de decals de impacto: criado no maior cap de perfil (64) e limitado
+    // em runtime por `quality.decalCap`; os excedentes ficam desligados.
+    for (let i = 0; i < 64; i++) {
       const decal = MeshBuilder.CreateGround(
         `decal_${i}`,
         { width: 1, height: 1, subdivisions: 1 },
@@ -679,6 +942,7 @@ export class BabylonVoxelArena {
     this.rebuildAllChunks();
     this.rebuildShoreFoam();
     this.rebuildZiplines();
+    this.rebuildGrass();
 
     this.bindInputListeners();
     this.attachContextListeners();
@@ -689,6 +953,9 @@ export class BabylonVoxelArena {
         window as unknown as { __pwArena?: BabylonVoxelArena }
       ).__pwArena = this;
     }
+
+    // Caps de qualidade (clima/decals) valem desde o primeiro frame.
+    this.applyQualityCaps();
 
     this.engine.runRenderLoop(() => {
       if (this.disposed) return;
@@ -726,10 +993,10 @@ export class BabylonVoxelArena {
     this.bloomPipeline = pipeline;
   }
 
-  private createWaterNormalTexture(): DynamicTexture {
+  private createWaterNormalTexture(name: string, phase: number): DynamicTexture {
     const size = 128;
     const texture = new DynamicTexture(
-      'waterNormalTex',
+      name,
       { width: size, height: size },
       this.scene,
       true,
@@ -741,11 +1008,11 @@ export class BabylonVoxelArena {
       for (let x = 0; x < size; x++) {
         const fx = (x / size) * Math.PI * 2;
         const dx =
-          Math.sin(fx * 2 + Math.sin(fz * 2) * 0.8) * 0.45 +
-          Math.sin((fx + fz) * 3) * 0.25;
+          Math.sin(fx * 2 + Math.sin(fz * 2 + phase) * 0.8) * 0.45 +
+          Math.sin((fx + fz) * 3 + phase) * 0.25;
         const dy =
-          Math.cos(fz * 2 + Math.sin(fx * 3) * 0.8) * 0.45 +
-          Math.cos((fx - fz) * 2) * 0.25;
+          Math.cos(fz * 2 + Math.sin(fx * 3 + phase) * 0.8) * 0.45 +
+          Math.cos((fx - fz) * 2 + phase * 1.3) * 0.25;
         const i = (y * size + x) * 4;
         image.data[i] = 128 + dx * 108;
         image.data[i + 1] = 128 + dy * 108;
@@ -892,6 +1159,86 @@ export class BabylonVoxelArena {
     this.ziplineGroup = group;
   }
 
+  private grassHash(x: number, z: number): number {
+    const n =
+      Math.sin(x * 127.1 + z * 311.7 + this.islandSeed * 0.017) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  /**
+   * Reconstrói os tufos numa grade determinística ao redor da câmera. Cada
+   * célula decide (hash) se tem mato, amostra o topo do terreno e só aceita
+   * GRASS/MOSS acima da água. Fora isso, a instância fica com escala zero.
+   */
+  private rebuildGrass(): void {
+    const cell = 0.8;
+    const radius =
+      this.quality.level === 'high' ? 13 : this.quality.level === 'medium' ? 10 : 7;
+    const cam = this.camera.position;
+    const baseX = Math.floor(cam.x / cell);
+    const baseZ = Math.floor(cam.z / cell);
+    let used = 0;
+
+    for (let dz = -radius; dz <= radius && used < this.GRASS_CAP; dz++) {
+      for (let dx = -radius; dx <= radius && used < this.GRASS_CAP; dx++) {
+        const dist = Math.hypot(dx, dz);
+        if (dist > radius) continue;
+        const cx = baseX + dx;
+        const cz = baseZ + dz;
+        const hash = this.grassHash(cx, cz);
+        // Rarefaz perto da borda para o corte de distância não "pipocar".
+        const edge = dist > radius - 2 ? (dist - (radius - 2)) / 2 : 0;
+        if (hash < 0.45 + edge * 0.5) continue;
+
+        const jitterX = this.grassHash(cx + 131, cz - 47);
+        const jitterZ = this.grassHash(cx - 71, cz + 193);
+        const wx = (cx + 0.15 + jitterX * 0.7) * cell;
+        const wz = (cz + 0.15 + jitterZ * 0.7) * cell;
+        const vx = Math.floor(wx / VOXEL_SIZE);
+        const vz = Math.floor(wz / VOXEL_SIZE);
+        const top = getGroundVoxelY(this.grid, vx, vz);
+        const mat = this.grid.get(vx, top, vz);
+        if (mat !== MAT.GRASS && mat !== MAT.MOSS) continue;
+        const y = (top + 1) * VOXEL_SIZE;
+        if (y < this.currentWaterY + 0.02) continue;
+
+        const scale = 0.65 + jitterX * 0.6;
+        this.scratchScale.set(scale, scale * (0.85 + hash * 0.45), scale);
+        this.scratchPos.set(wx, y, wz);
+        Quaternion.RotationYawPitchRollToRef(
+          0,
+          hash * Math.PI * 2,
+          0,
+          this.scratchQuat,
+        );
+        Matrix.ComposeToRef(
+          this.scratchScale,
+          this.scratchQuat,
+          this.scratchPos,
+          this.scratchMat,
+        );
+        this.scratchMat.copyToArray(this.grassMatrices, used * 16);
+
+        const flower = jitterZ > 0.945;
+        this.grassColors[used * 4] = flower ? 0.95 : 0.3 + jitterZ * 0.12;
+        this.grassColors[used * 4 + 1] = flower ? 0.86 : 0.58 + hash * 0.2;
+        this.grassColors[used * 4 + 2] = flower ? 0.4 : 0.24 + jitterX * 0.12;
+        this.grassColors[used * 4 + 3] = 1;
+        used += 1;
+      }
+    }
+
+    Matrix.ScalingToRef(0, 0, 0, this.scratchMat);
+    for (let i = used; i < this.GRASS_CAP; i++) {
+      this.scratchMat.copyToArray(this.grassMatrices, i * 16);
+    }
+    this.grassBaseMesh.setEnabled(used > 0);
+    this.grassBaseMesh.thinInstanceBufferUpdated('matrix');
+    this.grassBaseMesh.thinInstanceBufferUpdated('color');
+    this.lastGrassX = cam.x;
+    this.lastGrassZ = cam.z;
+  }
+
   private applyUnderwaterAtmosphere(): void {
     this.targetFogColor.set(0.04, 0.28, 0.45);
     this.targetClearColor.set(0.03, 0.2, 0.34, 1);
@@ -920,6 +1267,12 @@ export class BabylonVoxelArena {
     return hit.hit;
   }
 
+  /** Aplica `vfxScale` do perfil de qualidade a uma contagem de partículas. */
+  private scaledVfxCount(count: number): number {
+    if (count <= 0) return 0;
+    return Math.max(1, Math.round(count * this.quality.vfxScale));
+  }
+
   private spawnMaterialBurst(
     center: Vec3,
     color: [number, number, number],
@@ -927,7 +1280,7 @@ export class BabylonVoxelArena {
     scale: number,
     speed: number,
   ): void {
-    const n = Math.max(0, Math.min(24, Math.round(count)));
+    const n = Math.min(24, this.scaledVfxCount(count));
     for (let i = 0; i < n; i++) {
       const p = this.shrapnelPool[this.shrapnelCursor];
       this.shrapnelCursor = (this.shrapnelCursor + 1) % this.SHRAPNEL_CAP;
@@ -948,6 +1301,44 @@ export class BabylonVoxelArena {
     }
   }
 
+  /**
+   * Fumaça/fumo: sobe, expande e dissipa. Sem gravidade, então serve tanto
+   * para boca de cano quanto para bolhas submersas.
+   */
+  private spawnSmoke(
+    center: Vec3,
+    color: [number, number, number],
+    count: number,
+    size: number,
+    rise = 1,
+  ): void {
+    const n = Math.min(12, this.scaledVfxCount(count));
+    if (n <= 0) return;
+    for (let i = 0; i < n; i++) {
+      const index = this.smokeCursor;
+      this.smokeCursor = (this.smokeCursor + 1) % this.SMOKE_CAP;
+      if (this.smokeTtl[index] <= 0) this.activeSmoke += 1;
+      this.smokePositions[index * 3] = center.x + (Math.random() - 0.5) * 0.12;
+      this.smokePositions[index * 3 + 1] =
+        center.y + (Math.random() - 0.2) * 0.08;
+      this.smokePositions[index * 3 + 2] =
+        center.z + (Math.random() - 0.5) * 0.12;
+      this.smokeVelocities[index * 3] = (Math.random() - 0.5) * 0.45;
+      this.smokeVelocities[index * 3 + 1] = rise * (0.8 + Math.random() * 0.5);
+      this.smokeVelocities[index * 3 + 2] = (Math.random() - 0.5) * 0.45;
+      this.smokeSizes[index] = size * (0.8 + Math.random() * 0.45);
+      const ttl = 0.45 + Math.random() * 0.3;
+      this.smokeTtl[index] = ttl;
+      this.smokeMaxTtl[index] = ttl;
+      this.smokeColors[index * 4] = color[0];
+      this.smokeColors[index * 4 + 1] = color[1];
+      this.smokeColors[index * 4 + 2] = color[2];
+      this.smokeColors[index * 4 + 3] = 1;
+    }
+    this.smokeBaseMesh.thinInstanceBufferUpdated('color');
+    this.smokeBaseMesh.setEnabled(true);
+  }
+
   private spawnFootstepDust(
     mat: number,
     position: Vec3,
@@ -966,7 +1357,11 @@ export class BabylonVoxelArena {
     );
   }
 
-  private spawnShockwave(center: Vec3, radius: number): void {
+  private spawnShockwave(
+    center: Vec3,
+    radius: number,
+    colorHex = '#fde68a',
+  ): void {
     if (this.shockwaves.length === 0) return;
     const s = this.shockwaves[this.shockwaveCursor];
     this.shockwaveCursor = (this.shockwaveCursor + 1) % this.shockwaves.length;
@@ -976,27 +1371,70 @@ export class BabylonVoxelArena {
     s.ttl = 0.45;
     s.maxTtl = 0.45;
     s.radius = Math.max(0.6, radius);
-    s.mat.emissiveColor = Color3.FromHexString('#fde68a');
+    s.mat.emissiveColor = Color3.FromHexString(colorHex);
     s.mat.alpha = 0.6;
+  }
+
+  /**
+   * Orienta o quad do decal para a normal da face atingida (chão, parede ou
+   * teto) e aplica um giro aleatório em torno da própria normal.
+   */
+  private orientDecal(mesh: Mesh, nx: number, ny: number, nz: number): void {
+    const quaternion = mesh.rotationQuaternion ?? new Quaternion();
+    this.scratchNormal.set(nx, ny, nz);
+    const dot = Math.max(-1, Math.min(1, this.scratchNormal.y));
+    if (dot > 0.9995) {
+      this.scratchQuat.set(0, 0, 0, 1);
+    } else if (dot < -0.9995) {
+      Quaternion.RotationAxisToRef(this.upVec, Math.PI, this.scratchQuat);
+    } else {
+      Vector3.CrossToRef(this.upVec, this.scratchNormal, this.scratchAxis);
+      Quaternion.RotationAxisToRef(
+        this.scratchAxis,
+        Math.acos(dot),
+        this.scratchQuat,
+      );
+    }
+    Quaternion.RotationYawPitchRollToRef(
+      0,
+      Math.random() * Math.PI * 2,
+      0,
+      this.scratchSpin,
+    );
+    this.scratchQuat.multiplyToRef(this.scratchSpin, quaternion);
+    mesh.rotationQuaternion = quaternion;
   }
 
   private spawnDecal(
     position: Vec3,
     color: [number, number, number],
     size: number,
+    normal?: Vec3,
+    alpha = 0.62,
   ): void {
-    if (this.decals.length === 0) return;
+    const limit = Math.min(this.quality.decalCap, this.decals.length);
+    if (limit <= 0) return;
+    if (this.decalCursor >= limit) this.decalCursor = 0;
     const d = this.decals[this.decalCursor];
-    this.decalCursor = (this.decalCursor + 1) % this.decals.length;
-    d.mesh.position.set(position.x, position.y + 0.02, position.z);
-    d.mesh.rotation.y = Math.random() * Math.PI * 2;
+    this.decalCursor = (this.decalCursor + 1) % limit;
+
+    const nx = normal?.x ?? 0;
+    const ny = normal?.y ?? 1;
+    const nz = normal?.z ?? 0;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    d.mesh.position.set(
+      position.x + (nx / len) * 0.03,
+      position.y + (ny / len) * 0.03,
+      position.z + (nz / len) * 0.03,
+    );
+    this.orientDecal(d.mesh, nx / len, ny / len, nz / len);
     d.mesh.scaling.set(Math.max(0.25, size), 1, Math.max(0.25, size));
     d.mat.emissiveColor.set(
       Math.min(1, color[0] * 0.9),
       Math.min(1, color[1] * 0.9),
       Math.min(1, color[2] * 0.9),
     );
-    d.mat.alpha = 0.62;
+    d.mat.alpha = alpha;
     d.mesh.setEnabled(true);
     d.ttl = 9;
     d.maxTtl = 9;
@@ -1021,18 +1459,69 @@ export class BabylonVoxelArena {
   private spawnImpactVfx(
     material: number,
     point: Vec3,
-    ny: number,
+    normal: Vec3,
     local: boolean,
   ): void {
     if (material <= 0) return;
-    const color = materialColor(material);
+    const reaction = impactReactionFor(material);
     audioDirector.playImpact(material, point, { local });
-    this.spawnMaterialBurst(point, color, 4, 0.45, 2.6);
-    if (ny > 0.55) {
+    this.spawnMaterialBurst(
+      point,
+      reaction.color,
+      reaction.particles,
+      reaction.scale,
+      reaction.speed,
+    );
+    if (reaction.decal) {
       this.spawnDecal(
         point,
-        [color[0] * 0.4, color[1] * 0.4, color[2] * 0.4],
-        0.55 + Math.random() * 0.35,
+        reaction.decalTint,
+        Math.max(0.32, reaction.decalScale * (0.6 + Math.random() * 0.5)),
+        normal,
+        reaction.decalAlpha,
+      );
+    }
+  }
+
+  /**
+   * Faísca curta no ponto exato do acerto em jogador/entidade. `fx:hit` já
+   * carrega a posição; isto é puramente cosmético e não cria protocolo novo.
+   */
+  public spawnHitSpark(point: Vec3, heavy: boolean): void {
+    if (this.mode !== 'playing') return;
+    this.spawnMaterialBurst(
+      point,
+      heavy ? [1, 0.62, 0.24] : [1, 0.88, 0.52],
+      heavy ? 9 : 5,
+      heavy ? 0.5 : 0.32,
+      heavy ? 3.6 : 2.7,
+    );
+  }
+
+  /** Explosão de voxels na cor do jogador quando ele morre. */
+  public spawnKillBurst(position: Vec3, colorHex: string): void {
+    if (this.mode !== 'playing') return;
+    const color = Color3.FromHexString(colorHex || '#ef4444');
+    this.spawnMaterialBurst(
+      { x: position.x, y: position.y + 0.85, z: position.z },
+      [color.r, color.g, color.b],
+      18,
+      0.72,
+      4.6,
+    );
+    this.spawnShockwave(
+      { x: position.x, y: position.y + 0.12, z: position.z },
+      1.5,
+    );
+    const dist = Math.hypot(
+      position.x - this.camera.position.x,
+      position.y - this.camera.position.y,
+      position.z - this.camera.position.z,
+    );
+    if (dist < 30) {
+      this.cameraTrauma = Math.min(
+        1,
+        this.cameraTrauma + 0.16 * (1 - dist / 30),
       );
     }
   }
@@ -1049,6 +1538,7 @@ export class BabylonVoxelArena {
       this.localAudio.x = pos.x;
       this.localAudio.y = pos.y;
       this.localAudio.z = pos.z;
+      this.localAudio.underwater = pos.y + 1.0 < this.currentWaterY;
       this.localAudio.initialized = true;
       return;
     }
@@ -1062,6 +1552,68 @@ export class BabylonVoxelArena {
     const dy = (pos.y - this.localAudio.y) / 0.05;
     const moved = Math.hypot(pos.x - this.localAudio.x, pos.z - this.localAudio.z);
     const mat = this.grid.get(vx, Math.max(0, top), vz);
+
+    // Reações na água: splash ao entrar/sair e ondulação ao andar raso.
+    const wasUnderwater = this.localAudio.underwater;
+    this.localAudio.underwater = underwater;
+    if (underwater && !wasUnderwater) {
+      this.spawnShockwave(
+        { x: pos.x, y: this.currentWaterY + 0.02, z: pos.z },
+        1.3,
+        '#bae6fd',
+      );
+      this.spawnMaterialBurst(
+        { x: pos.x, y: this.currentWaterY + 0.04, z: pos.z },
+        [0.68, 0.9, 1],
+        10,
+        0.35,
+        2.6,
+      );
+      audioDirector.playWorld('sfx:water:splash', pos, {
+        volume: 0.5,
+        priority: 3,
+        hrtf: false,
+        occlusion: false,
+        maxDistance: 40,
+      });
+    } else if (!underwater && wasUnderwater) {
+      this.spawnShockwave(
+        { x: pos.x, y: this.currentWaterY + 0.02, z: pos.z },
+        1.0,
+        '#bae6fd',
+      );
+      this.spawnMaterialBurst(
+        { x: pos.x, y: this.currentWaterY + 0.04, z: pos.z },
+        [0.72, 0.92, 1],
+        8,
+        0.3,
+        2.2,
+      );
+    }
+
+    const feetInWater = pos.y < this.currentWaterY - 0.03 && !underwater;
+    if (feetInWater && moved > 0.01 && moved < 2.5) {
+      this.waterStepAccum += moved;
+      if (this.waterStepAccum >= 1.8) {
+        this.waterStepAccum = 0;
+        this.spawnShockwave(
+          { x: pos.x, y: this.currentWaterY + 0.02, z: pos.z },
+          0.45 + Math.random() * 0.2,
+          '#bae6fd',
+        );
+        if (Math.random() < 0.5) {
+          this.spawnMaterialBurst(
+            { x: pos.x, y: this.currentWaterY + 0.03, z: pos.z },
+            [0.7, 0.9, 1],
+            2,
+            0.14,
+            0.8,
+          );
+        }
+      }
+    } else {
+      this.waterStepAccum = 0;
+    }
 
     if (local.sliding && !this.localAudio.sliding) {
       audioDirector.playWorld('sfx:traversal:whoosh:1', pos, {
@@ -1102,6 +1654,7 @@ export class BabylonVoxelArena {
       }
     }
     if (grounded && this.localAudio.airborne && dy < -2.4) {
+      this.landDip = Math.min(1, -dy / 14);
       audioDirector.playLanding(mat, pos, true);
       this.spawnFootstepDust(mat, pos, underwater, 4);
     }
@@ -1265,7 +1818,12 @@ export class BabylonVoxelArena {
     );
     if (!hit.hit) return;
     const local = meta.ownerId === this.localPlayerId;
-    this.spawnImpactVfx(hit.material, hit.point, hit.ny, local);
+    this.spawnImpactVfx(
+      hit.material,
+      hit.point,
+      { x: hit.nx, y: hit.ny, z: hit.nz },
+      local,
+    );
   }
 
   public setMode(mode: 'title' | 'playing' | 'paused' | 'gameover'): void {
@@ -1278,6 +1836,13 @@ export class BabylonVoxelArena {
       this.lastMouseClientY = null;
       this.cursorEdgeTurn = 0;
       this.cursorOverCanvas = false;
+      this.swayX = 0;
+      this.swayY = 0;
+      this.landDip = 0;
+      this.cameraRoll = 0;
+      this.recoilKick = 0;
+      this.recoilRecoveryPitch = 0;
+      this.camera.rotation.z = 0;
       if (document.pointerLockElement === this.canvas) {
         document.exitPointerLock?.();
       }
@@ -1303,7 +1868,30 @@ export class BabylonVoxelArena {
 
   public setAssetManifest(manifest: AssetManifest | null): void {
     this.assetManifest = manifest;
+    this.assetIndex.clear();
+    if (manifest) {
+      for (const asset of manifest.assets) this.assetIndex.set(asset.id, asset);
+    }
     audioDirector.setManifest(manifest);
+    // Assets podem chegar depois da primeira malha (arma fora do pool, evento
+    // novo). Invalida só as visualizações que dependem de textura/asset.
+    for (const entry of this.playerRigs.values()) {
+      entry.equippedKey = '';
+      entry.equippedNode?.dispose();
+      entry.equippedNode = null;
+    }
+    this.viewModelKey = '';
+    this.viewModelNode?.dispose();
+    this.viewModelNode = null;
+    for (const mesh of this.lootMeshes.values()) mesh.dispose();
+    this.lootMeshes.clear();
+    for (const visual of this.eventWaypointMeshes.values()) visual.root.dispose(false, true);
+    this.eventWaypointMeshes.clear();
+  }
+
+  /** Prefetch de sons para assets que acabaram de entrar no working set. */
+  public prefetchAssets(ids: readonly string[]): void {
+    audioDirector.preloadAssets(ids);
   }
 
   /**
@@ -1316,6 +1904,7 @@ export class BabylonVoxelArena {
       gpuTier: this.gpuTier,
     });
     this.engine.setHardwareScalingLevel(this.quality.hardwareScaling);
+    audioDirector.setHrtfSourceCap(this.quality.hrtfSources);
     this.scene.shadowsEnabled =
       Boolean(this.shadowGenerator) && this.quality.shadows;
     if (this.quality.bloom) this.ensureBloomPipeline();
@@ -1323,11 +1912,38 @@ export class BabylonVoxelArena {
       this.bloomPipeline.bloomEnabled = this.quality.bloom;
       this.bloomPipeline.fxaaEnabled = this.quality.bloom;
     }
+    this.applyQualityCaps();
+    this.rebuildGrass();
     return this.quality;
   }
 
   public getQuality(): QualityProfile {
     return this.quality;
+  }
+
+  /**
+   * Zera instâncias de clima e desliga decals acima do cap do perfil atual.
+   * Os pools são alocados no maior perfil (180/64) e o preset pode mudar em
+   * runtime; sem isso sobram partículas antigas visíveis.
+   */
+  private applyQualityCaps(): void {
+    const weatherCap = Math.min(this.WEATHER_CAP, this.quality.weatherCap);
+    if (weatherCap < this.WEATHER_CAP) {
+      Matrix.ScalingToRef(0, 0, 0, this.scratchMat);
+      for (let i = weatherCap; i < this.WEATHER_CAP; i++) {
+        this.scratchMat.copyToArray(this.weatherMatrices, i * 16);
+      }
+      this.weatherBaseMesh.thinInstanceBufferUpdated('matrix');
+    }
+
+    const decalCap = Math.min(this.quality.decalCap, this.decals.length);
+    for (let i = decalCap; i < this.decals.length; i++) {
+      const decal = this.decals[i];
+      decal.ttl = 0;
+      decal.mat.alpha = 0;
+      decal.mesh.setEnabled(false);
+    }
+    if (this.decalCursor >= decalCap) this.decalCursor = 0;
   }
 
   public getPerfStats(): PerfStats {
@@ -1342,16 +1958,44 @@ export class BabylonVoxelArena {
   }
 
   private getAsset(id: string | undefined): AssetEntry | null {
-    if (!id || !this.assetManifest) return null;
-    return this.assetManifest.assets.find((asset) => asset.id === id) ?? null;
+    if (!id) return null;
+    return this.assetIndex.get(id) ?? null;
   }
 
   private getAssetUrl(id: string | undefined): string | null {
     return resolveAssetUrl(this.getAsset(id), this.assetManifest);
   }
 
+  /**
+   * Modelo de arma com receita modular: paleta base + acento + peças
+   * determinísticas por item. O modelo-base continua vindo do arquétipo.
+   */
+  private buildWeaponMesh(
+    name: string,
+    weapon: WeaponBlueprint,
+    voxelScale: number,
+    textureUrl: string | null,
+  ): Mesh {
+    const palette = weaponDisplayPalette(weapon);
+    const modules = weaponModuleRecipe(weapon, palette.length);
+    return buildBlueprintVoxelMesh(
+      this.scene,
+      name,
+      weapon.rleVoxels,
+      palette,
+      12,
+      12,
+      24,
+      voxelScale,
+      weapon.gripPos,
+      textureUrl,
+      modules,
+    );
+  }
+
   public loadRoomInit(init: RoomInitPayload): void {
     this.localPlayerId = init.playerId;
+    this.islandSeed = init.seed;
     this.nearbyZiplineId = null;
     this.callbacks.onZiplineNearby?.(null);
     this.islandMeta = { ziplines: [] };
@@ -1380,12 +2024,25 @@ export class BabylonVoxelArena {
     this.lootMeshes.clear();
     for (const e of this.entityMeshes.values()) e.node.dispose();
     this.entityMeshes.clear();
+    for (const visual of this.eventWaypointMeshes.values()) {
+      visual.root.dispose(false, true);
+    }
+    this.eventWaypointMeshes.clear();
     this.projectileMeta.clear();
     this.remoteAudio.clear();
     this.localAudio.initialized = false;
     this.localAudio.airborne = false;
     this.localAudio.sliding = false;
     this.localAudio.zipline = false;
+    this.localAudio.underwater = false;
+    this.waterStepAccum = 0;
+    this.bubbleTimer = 0;
+    this.swayX = 0;
+    this.swayY = 0;
+    this.landDip = 0;
+    this.cameraRoll = 0;
+    this.recoilKick = 0;
+    this.recoilRecoveryPitch = 0;
 
     const local = init.players.find((p) => p.id === init.playerId);
     if (local) {
@@ -1401,10 +2058,12 @@ export class BabylonVoxelArena {
     this.rebuildAllChunks();
     this.rebuildShoreFoam();
     this.rebuildZiplines();
+    this.rebuildGrass();
   }
 
   public applyVoxelDeltas(deltas: VoxelDelta[]): void {
     if (deltas.length === 0) return;
+    this.grassDirty = true;
     for (const d of deltas) {
       this.grid.set(d.vx, d.vy, d.vz, d.mat);
       const cx = Math.floor(d.vx / CHUNK_SIZE);
@@ -1826,16 +2485,10 @@ export class BabylonVoxelArena {
         }
         if (activeItem) {
           if (activeItem.kind === 'weapon' && activeItem.weapon) {
-            const wMesh = buildBlueprintVoxelMesh(
-              this.scene,
+            const wMesh = this.buildWeaponMesh(
               `av_wpn_${p.id}_${activeItem.weapon.id}`,
-              activeItem.weapon.rleVoxels,
-              activeItem.weapon.palette,
-              12,
-              12,
-              24,
+              activeItem.weapon,
               0.036,
-              activeItem.weapon.gripPos,
               this.getAssetUrl(
                 activeItem.weapon.assets?.find((id) => id.startsWith('texture:weapon:')),
               ),
@@ -1913,16 +2566,10 @@ export class BabylonVoxelArena {
 
     if (!item) return;
     if (item.kind === 'weapon' && item.weapon) {
-      const mesh = buildBlueprintVoxelMesh(
-        this.scene,
+      const mesh = this.buildWeaponMesh(
         `vm_wpn_${item.weapon.id}`,
-        item.weapon.rleVoxels,
-        item.weapon.palette,
-        12,
-        12,
-        24,
+        item.weapon,
         0.042,
-        item.weapon.gripPos,
         this.getAssetUrl(
           item.weapon.assets?.find((id) => id.startsWith('texture:weapon:')),
         ),
@@ -1936,10 +2583,59 @@ export class BabylonVoxelArena {
     }
   }
 
+  /**
+   * Preenche o vão entre dois ticks com segmentos de rastro orientados pela
+   * velocidade. Cosmético: não altera a posição autoritativa do projétil.
+   */
+  private spawnProjectileTrail(from: Vec3, to: Vec3, colorHex: string): void {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 0.05) return;
+    const segments = Math.min(3, Math.max(1, Math.ceil(dist / 1.1)));
+    const width = 0.055;
+    const length = (dist / segments) * 1.15;
+    this.scratchVec.set(dx / dist, dy / dist, dz / dist);
+    Quaternion.FromLookDirectionLHToRef(
+      this.scratchVec,
+      Math.abs(this.scratchVec.y) > 0.98 ? this.upAltVec : this.upVec,
+      this.scratchQuat,
+    );
+    const color = Color3.FromHexString(colorHex || '#38bdf8');
+    for (let s = 0; s < segments; s++) {
+      const t = (s + 0.5) / segments;
+      const i = this.trailCursor;
+      this.trailCursor = (this.trailCursor + 1) % this.TRAIL_CAP;
+      if (this.trailTtl[i] <= 0) this.activeTrails += 1;
+      this.trailPositions[i * 3] = from.x + dx * t;
+      this.trailPositions[i * 3 + 1] = from.y + dy * t;
+      this.trailPositions[i * 3 + 2] = from.z + dz * t;
+      this.trailQuats[i * 4] = this.scratchQuat.x;
+      this.trailQuats[i * 4 + 1] = this.scratchQuat.y;
+      this.trailQuats[i * 4 + 2] = this.scratchQuat.z;
+      this.trailQuats[i * 4 + 3] = this.scratchQuat.w;
+      this.trailSizes[i * 2] = width;
+      this.trailSizes[i * 2 + 1] = length;
+      this.trailTtl[i] = 0.13;
+      this.trailMaxTtl[i] = 0.13;
+      this.trailColors[i * 4] = color.r;
+      this.trailColors[i * 4 + 1] = color.g;
+      this.trailColors[i * 4 + 2] = color.b;
+      this.trailColors[i * 4 + 3] = 1;
+    }
+    this.trailBaseMesh.thinInstanceBufferUpdated('color');
+    this.trailBaseMesh.setEnabled(true);
+  }
+
   private syncProjectiles(projectiles: ProjectileNetState[]): void {
     const seen = new Set<string>();
     for (const pr of projectiles) {
       seen.add(pr.id);
+      const previous = this.projectileMeta.get(pr.id);
+      if (previous) {
+        this.spawnProjectileTrail(previous.position, pr.position, pr.color);
+      }
       this.projectileMeta.set(pr.id, {
         position: { x: pr.position.x, y: pr.position.y, z: pr.position.z },
         velocity: { x: pr.velocity.x, y: pr.velocity.y, z: pr.velocity.z },
@@ -2018,6 +2714,21 @@ export class BabylonVoxelArena {
       pr.position,
       this.getAssetUrl(sfxId),
     );
+    const dist = Math.hypot(
+      pr.position.x - this.camera.position.x,
+      pr.position.y - this.camera.position.y,
+      pr.position.z - this.camera.position.z,
+    );
+    if (dist > 32) return;
+    const vlen =
+      Math.hypot(pr.velocity.x, pr.velocity.y, pr.velocity.z) || 1;
+    const dir = {
+      x: pr.velocity.x / vlen,
+      y: pr.velocity.y / vlen,
+      z: pr.velocity.z / vlen,
+    };
+    this.spawnShellCasing(pr.position, dir.x, dir.z);
+    this.spawnMuzzleSmoke(pr.position, dir);
   }
 
   private syncLootDrops(drops: LootDropState[]): void {
@@ -2188,42 +2899,153 @@ export class BabylonVoxelArena {
   private syncEventWaypoints(events: MapEventState[]): void {
     const seen = new Set<string>();
     for (const evt of events) {
-      if (!evt.assets?.includes('waypoint:event')) continue;
+      const radiusMeters = Math.max(0, evt.params.radiusMeters || 0);
+      const lethal =
+        evt.archetype === 'WEATHER_HAZARD' ||
+        evt.archetype === 'TERRAIN_MUTATION' ||
+        evt.archetype === 'ENTITY_SPAWN';
+      const hasWaypoint = Boolean(evt.assets?.includes('waypoint:event'));
+      // Perigo sempre ganha telégrafo; suprimento/cenário só com asset.
+      if (!hasWaypoint && !(lethal && radiusMeters > 0)) continue;
       seen.add(evt.id);
-      let mesh = this.eventWaypointMeshes.get(evt.id);
-      if (!mesh) {
+      let visual = this.eventWaypointMeshes.get(evt.id);
+      if (!visual) {
+        const presentation = presentationForEvent(evt.archetype, evt.params);
         const waypoint = this.getAsset('waypoint:event');
-        const radius = Number(waypoint?.params.radius ?? 2.5);
-        mesh = MeshBuilder.CreateTorus(
+        const ringRadius = Math.max(
+          presentation.ringRadius,
+          Number(waypoint?.params.radius ?? 0),
+        );
+        const color = Color3.FromHexString(presentation.primaryColor);
+
+        const root = MeshBuilder.CreateTorus(
           `evt_wp_${evt.id}`,
-          { diameter: Math.max(1, radius * 2), thickness: 0.12, tessellation: 28 },
+          {
+            diameter: Math.max(1, ringRadius * 2),
+            thickness: presentation.ringThickness,
+            tessellation: 28,
+          },
           this.scene,
         );
-        const fxAsset = this.getAsset(
-          evt.assets.find((id) => id.startsWith('fx:event:')),
+        const ringMat = new StandardMaterial(
+          `evt_wp_mat_${evt.id}`,
+          this.scene,
         );
-        const colorHex =
-          typeof fxAsset?.params.color === 'string' ? fxAsset.params.color : '#f59e0b';
-        const mat = new StandardMaterial(`evt_wp_mat_${evt.id}`, this.scene);
-        const color = Color3.FromHexString(colorHex);
-        mat.emissiveColor = color;
-        mat.diffuseColor = color;
-        mat.disableLighting = true;
-        mat.alpha = 0.72;
-        mesh.material = mat;
-        this.eventWaypointMeshes.set(evt.id, mesh);
-        audioDirector.playEvent({
-          x: evt.center[0],
-          y: evt.center[1],
-          z: evt.center[2],
-        });
+        ringMat.emissiveColor = color;
+        ringMat.diffuseColor = color;
+        ringMat.disableLighting = true;
+        ringMat.alpha = 0.72;
+        root.material = ringMat;
+        root.isPickable = false;
+
+        // Anel de perigo com o raio real do evento (o servidor já usa esse
+        // raio para dano). É a leitura que faltava para o telégrafo ser justo.
+        const danger = MeshBuilder.CreateTorus(
+          `evt_danger_${evt.id}`,
+          {
+            diameter: Math.max(2, radiusMeters * 2),
+            thickness: lethal ? 0.12 : 0.06,
+            tessellation: 40,
+          },
+          this.scene,
+        );
+        danger.parent = root;
+        danger.position.y = -0.04;
+        danger.isPickable = false;
+        const dangerMat = new StandardMaterial(
+          `evt_danger_mat_${evt.id}`,
+          this.scene,
+        );
+        dangerMat.emissiveColor = color;
+        dangerMat.diffuseColor = color;
+        dangerMat.disableLighting = true;
+        dangerMat.alpha = 0.2;
+        danger.material = dangerMat;
+
+        // Sweep de contagem: cresce do centro até o raio real durante o aviso.
+        let sweep: Mesh | null = null;
+        let sweepMat: StandardMaterial | null = null;
+        if (lethal && radiusMeters > 0) {
+          sweep = MeshBuilder.CreateTorus(
+            `evt_sweep_${evt.id}`,
+            {
+              diameter: Math.max(2, radiusMeters * 2),
+              thickness: 0.16,
+              tessellation: 40,
+            },
+            this.scene,
+          );
+          sweep.parent = root;
+          sweep.position.y = -0.02;
+          sweep.isPickable = false;
+          sweepMat = new StandardMaterial(
+            `evt_sweep_mat_${evt.id}`,
+            this.scene,
+          );
+          const sweepColor = Color3.FromHexString(presentation.secondaryColor);
+          sweepMat.emissiveColor = sweepColor;
+          sweepMat.diffuseColor = sweepColor;
+          sweepMat.disableLighting = true;
+          sweepMat.alpha = 0.4;
+          sweep.material = sweepMat;
+          sweep.setEnabled(false);
+        }
+
+        // Feixe vertical: identifica o evento a distância e diferencia a cor
+        // por arquétipo/mutinação sem depender de um asset novo por evento.
+        if (hasWaypoint) {
+          const beam = MeshBuilder.CreateCylinder(
+            `evt_beam_${evt.id}`,
+            { diameter: 0.16, height: presentation.beamHeight },
+            this.scene,
+          );
+          beam.parent = root;
+          beam.position.y = presentation.beamHeight / 2;
+          beam.isPickable = false;
+          const beamMat = new StandardMaterial(
+            `evt_beam_mat_${evt.id}`,
+            this.scene,
+          );
+          const beamColor = Color3.FromHexString(presentation.secondaryColor);
+          beamMat.emissiveColor = beamColor;
+          beamMat.diffuseColor = beamColor;
+          beamMat.disableLighting = true;
+          beamMat.alpha = 0.34;
+          beam.material = beamMat;
+        }
+
+        visual = {
+          root,
+          ringMat,
+          dangerMat,
+          sweep,
+          sweepMat,
+          radiusMeters,
+          warningRemaining: evt.warningRemainingSec,
+          warningTotal: Math.max(1, evt.fun?.telegraphSec ?? 5),
+          lethal,
+        };
+        this.eventWaypointMeshes.set(evt.id, visual);
+        if (hasWaypoint) {
+          soundSynth.playEventCue(presentation.sound, {
+            x: evt.center[0],
+            y: evt.center[1],
+            z: evt.center[2],
+          });
+        }
       }
-      mesh.position.set(evt.center[0], evt.center[1] + 0.08, evt.center[2]);
-      mesh.setEnabled(true);
+      visual.warningRemaining = evt.warningRemainingSec;
+      visual.warningTotal = Math.max(1, evt.fun?.telegraphSec ?? 5);
+      visual.root.position.set(
+        evt.center[0],
+        evt.center[1] + 0.08,
+        evt.center[2],
+      );
+      visual.root.setEnabled(true);
     }
-    for (const [id, mesh] of this.eventWaypointMeshes) {
+    for (const [id, visual] of this.eventWaypointMeshes) {
       if (!seen.has(id)) {
-        mesh.dispose();
+        visual.root.dispose(false, true);
         this.eventWaypointMeshes.delete(id);
       }
     }
@@ -2320,6 +3142,71 @@ export class BabylonVoxelArena {
     }
     audioDirector.updateAmbience(dt, this.ambienceState);
 
+    // Bolhas submersas: sobem devagar e dão vida à câmera dentro d'água.
+    this.bubbleTimer -= dt;
+    if (
+      this.ambienceState.underwater &&
+      this.mode === 'playing' &&
+      this.bubbleTimer <= 0
+    ) {
+      this.bubbleTimer = 0.16 + Math.random() * 0.22;
+      const cam = this.camera.position;
+      this.spawnSmoke(
+        {
+          x: cam.x + (Math.random() - 0.5) * 0.5,
+          y: cam.y - 0.35,
+          z: cam.z + (Math.random() - 0.5) * 0.5,
+        },
+        [0.72, 0.9, 1],
+        1,
+        0.035,
+        1.4,
+      );
+    } else if (!this.ambienceState.underwater) {
+      this.bubbleTimer = 0;
+    }
+
+    // Vegetação segue a câmera em passos; parado não custa nada.
+    this.grassTimer -= dt;
+    if (this.grassTimer <= 0) {
+      this.grassTimer = 0.3;
+      const cam = this.camera.position;
+      if (
+        this.grassDirty ||
+        Math.abs(cam.x - this.lastGrassX) > 0.5 ||
+        Math.abs(cam.z - this.lastGrassZ) > 0.5
+      ) {
+        this.rebuildGrass();
+        this.grassDirty = false;
+      }
+    }
+
+    // Telégrafo: anel de perigo pulsa e o sweep mostra o tempo restante.
+    if (this.eventWaypointMeshes.size > 0) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.animTime * 5);
+      for (const visual of this.eventWaypointMeshes.values()) {
+        const warning = visual.warningRemaining > 0;
+        visual.ringMat.alpha = warning
+          ? 0.55 + pulse * 0.25
+          : 0.4 + pulse * 0.3;
+        visual.dangerMat.alpha =
+          (visual.lethal ? 0.16 : 0.08) + pulse * 0.16;
+        if (visual.sweep && visual.sweepMat) {
+          if (warning) {
+            const progress = Math.max(
+              0.04,
+              1 - visual.warningRemaining / visual.warningTotal,
+            );
+            visual.sweep.setEnabled(true);
+            visual.sweep.scaling.set(progress, 1, progress);
+            visual.sweepMat.alpha = 0.25 + pulse * 0.35;
+          } else {
+            visual.sweep.setEnabled(false);
+          }
+        }
+      }
+    }
+
     // Drift sky clouds lazily across larger island span
     for (let i = 0; i < this.clouds.length; i++) {
       const c = this.clouds[i];
@@ -2334,7 +3221,16 @@ export class BabylonVoxelArena {
     if (this.shoreFoamMesh) {
       this.shoreFoamMesh.position.y = this.currentWaterY + 0.02;
     }
-    if (this.waterNormalTexture) {
+    if (this.waterShader) {
+      this.waterShader.setFloat('uTime', this.animTime);
+      this.waterShader.setVector3('uCameraPos', this.camera.position);
+      this.waterShader.setColor3('uFogColor', this.scene.fogColor);
+      this.waterShader.setFloat('uFogDensity', this.scene.fogDensity);
+      this.waterShader.setFloat(
+        'uUnderwater',
+        this.camera.position.y < this.currentWaterY - 0.03 ? 1 : 0,
+      );
+    } else if (this.waterNormalTexture) {
       this.waterNormalTexture.uOffset =
         (this.waterNormalTexture.uOffset + dt * 0.012) % 1;
       this.waterNormalTexture.vOffset =
@@ -2418,7 +3314,8 @@ export class BabylonVoxelArena {
             ? [0.85, 0.72, 0.48]
             : [1.0, 0.45, 0.12];
 
-      for (let i = 0; i < this.WEATHER_CAP; i++) {
+      const weatherCap = Math.min(this.WEATHER_CAP, this.quality.weatherCap);
+      for (let i = 0; i < weatherCap; i++) {
         const wp = this.weatherPool[i];
         wp.y -= fallSpeed * wp.speed * dt;
         wp.x += driftX * wp.speed * dt;
@@ -2568,6 +3465,92 @@ export class BabylonVoxelArena {
       }
     }
 
+    // Rastro de projéteis: encolhe até sumir (fade sem alpha por instância).
+    if (this.activeTrails > 0) {
+      let active = 0;
+      for (let i = 0; i < this.TRAIL_CAP; i++) {
+        if (this.trailTtl[i] <= 0) continue;
+        this.trailTtl[i] -= dt;
+        if (this.trailTtl[i] <= 0) {
+          Matrix.ScalingToRef(0, 0, 0, this.scratchMat);
+          this.scratchMat.copyToArray(this.trailMatrices, i * 16);
+          continue;
+        }
+        active += 1;
+        const fade = this.trailTtl[i] / this.trailMaxTtl[i];
+        const w = this.trailSizes[i * 2] * fade;
+        const l = this.trailSizes[i * 2 + 1] * Math.max(0.35, fade);
+        this.scratchScale.set(w, w, l);
+        this.scratchPos.set(
+          this.trailPositions[i * 3],
+          this.trailPositions[i * 3 + 1],
+          this.trailPositions[i * 3 + 2],
+        );
+        this.scratchQuat.set(
+          this.trailQuats[i * 4],
+          this.trailQuats[i * 4 + 1],
+          this.trailQuats[i * 4 + 2],
+          this.trailQuats[i * 4 + 3],
+        );
+        Matrix.ComposeToRef(
+          this.scratchScale,
+          this.scratchQuat,
+          this.scratchPos,
+          this.scratchMat,
+        );
+        this.scratchMat.copyToArray(this.trailMatrices, i * 16);
+      }
+      this.activeTrails = active;
+      this.trailBaseMesh.setEnabled(active > 0);
+      this.trailBaseMesh.thinInstanceBufferUpdated('matrix');
+    }
+
+    // Fumaça: sobe, expande e some encolhendo no fim da vida.
+    if (this.activeSmoke > 0) {
+      let active = 0;
+      const drag = Math.exp(-2 * dt);
+      this.scratchQuat.set(0, 0, 0, 1);
+      for (let i = 0; i < this.SMOKE_CAP; i++) {
+        if (this.smokeTtl[i] <= 0) continue;
+        this.smokeTtl[i] -= dt;
+        if (this.smokeTtl[i] <= 0) {
+          Matrix.ScalingToRef(0, 0, 0, this.scratchMat);
+          this.scratchMat.copyToArray(this.smokeMatrices, i * 16);
+          continue;
+        }
+        active += 1;
+        const vx = this.smokeVelocities[i * 3] * drag;
+        const vy = this.smokeVelocities[i * 3 + 1] + 1.5 * dt;
+        const vz = this.smokeVelocities[i * 3 + 2] * drag;
+        this.smokeVelocities[i * 3] = vx;
+        this.smokeVelocities[i * 3 + 1] = vy;
+        this.smokeVelocities[i * 3 + 2] = vz;
+        const px = this.smokePositions[i * 3] + vx * dt;
+        const py = this.smokePositions[i * 3 + 1] + vy * dt;
+        const pz = this.smokePositions[i * 3 + 2] + vz * dt;
+        this.smokePositions[i * 3] = px;
+        this.smokePositions[i * 3 + 1] = py;
+        this.smokePositions[i * 3 + 2] = pz;
+        const age = 1 - this.smokeTtl[i] / this.smokeMaxTtl[i];
+        const grow = 0.7 + age * 1.6;
+        const fade =
+          age > 0.72 ? Math.max(0.02, 1 - (age - 0.72) / 0.28) : 1;
+        const size = this.smokeSizes[i] * grow * fade;
+        this.scratchScale.set(size, size, size);
+        this.scratchPos.set(px, py, pz);
+        Matrix.ComposeToRef(
+          this.scratchScale,
+          this.scratchQuat,
+          this.scratchPos,
+          this.scratchMat,
+        );
+        this.scratchMat.copyToArray(this.smokeMatrices, i * 16);
+      }
+      this.activeSmoke = active;
+      this.smokeBaseMesh.setEnabled(active > 0);
+      this.smokeBaseMesh.thinInstanceBufferUpdated('matrix');
+    }
+
     // Update shrapnel ring buffer
     let shrapDirty = false;
     for (let i = 0; i < this.SHRAPNEL_CAP; i++) {
@@ -2580,21 +3563,66 @@ export class BabylonVoxelArena {
         Matrix.Scaling(0, 0, 0).copyToArray(this.shrapnelMatrices, i * 16);
         continue;
       }
-      p.vy -= 22 * dt;
+      // Gravidade cosmética: acompanha low_gravity para os detritos flutuarem.
+      const gravity = this.activeWeatherKind === 'low_gravity' ? 8 : 22;
+      const prevPy = p.py;
+      p.vy -= gravity * dt;
       p.px += p.vx * dt;
       p.py += p.vy * dt;
       p.pz += p.vz * dt;
       p.rx += 5 * dt;
       p.ry += 4 * dt;
 
+      // Entrada na água: ondulação curta + arrasto.
+      if (
+        prevPy > this.currentWaterY &&
+        p.py <= this.currentWaterY &&
+        p.vy < 0
+      ) {
+        if (Math.random() < 0.4) {
+          this.spawnShockwave(
+            { x: p.px, y: this.currentWaterY + 0.02, z: p.pz },
+            0.3,
+            '#bae6fd',
+          );
+        }
+        p.vy *= 0.35;
+        p.vx *= 0.55;
+        p.vz *= 0.55;
+      }
+
       const gx = Math.floor(p.px / VOXEL_SIZE);
       const gy = Math.floor(p.py / VOXEL_SIZE);
       const gz = Math.floor(p.pz / VOXEL_SIZE);
-      if (this.grid.isSolid(gx, gy, gz) && p.vy < 0) {
-        p.vy *= -0.4;
-        p.vx *= 0.65;
-        p.vz *= 0.65;
-        p.py = (gy + 1) * VOXEL_SIZE + 0.08;
+      const insideSolid = this.grid.isSolid(gx, gy, gz);
+      // Tolerância de 8 cm: o detrito assenta estável em vez de oscilar entre
+      // "dentro" e "fora" do bloco a cada frame.
+      const belowCell = Math.floor((p.py - 0.08) / VOXEL_SIZE);
+      const nearGround =
+        !insideSolid &&
+        p.vy < 0 &&
+        this.grid.isSolid(gx, belowCell, gz) &&
+        p.py <= (belowCell + 1) * VOXEL_SIZE + 0.08;
+      if ((insideSolid && p.vy < 0) || nearGround) {
+        // Sobe até a primeira célula livre: evita detrito preso dentro do
+        // bloco quando o passo do frame penetra mais de um voxel.
+        let surfaceY = insideSolid ? gy : belowCell + 1;
+        if (insideSolid) {
+          for (let step = 0; step < 8 && this.grid.isSolid(gx, surfaceY, gz); step++) {
+            surfaceY += 1;
+          }
+        }
+        p.py = surfaceY * VOXEL_SIZE + (insideSolid ? 0.06 : 0.02);
+        if (Math.abs(p.vy) < 1.8) {
+          // Assenta: corta o quique e aplica atrito para o detrito parar.
+          p.vy = 0;
+          p.vx *= 0.42;
+          p.vz *= 0.42;
+        } else {
+          p.vy = Math.abs(p.vy) * 0.28;
+          p.vx *= 0.62;
+          p.vz *= 0.62;
+        }
       }
 
       const s = p.scale * Math.min(1, p.ttl * 2.5);
@@ -2605,7 +3633,7 @@ export class BabylonVoxelArena {
         this.scratchScale,
         this.scratchQuat,
         this.scratchPos,
-        Matrix.Identity(),
+        this.scratchMat,
       ).copyToArray(this.shrapnelMatrices, i * 16);
 
       this.shrapnelColors[i * 4] = p.color[0];
@@ -2711,19 +3739,46 @@ export class BabylonVoxelArena {
           (this.grid.dimZ * VOXEL_SIZE) / 2,
         );
 
+    // Decaimento de sway/dip e recuperação parcial do recoil.
+    const feelDecay = Math.exp(-8 * dt);
+    this.swayX *= feelDecay;
+    this.swayY *= feelDecay;
+    this.landDip = Math.max(0, this.landDip - dt * 3.2);
+    if (this.recoilRecoveryPitch > 0.0001) {
+      const give = Math.min(this.recoilRecoveryPitch, dt * 0.16);
+      this.recoilRecoveryPitch -= give;
+      this.pitch = Math.min(1.45, this.pitch + give);
+    }
+
     const targetEye = localPlayer?.crouching
       ? localPlayer.sliding
         ? 0.92
         : 1.1
       : 1.48;
     this.eyeHeight += (targetEye - this.eyeHeight) * (1 - Math.exp(-14 * dt));
-    const eyePos = new Vector3(anchorPos.x, anchorPos.y + this.eyeHeight, anchorPos.z);
+    const dip = this.landDip * (this.reducedMotion ? 0.3 : 1);
+    const eyePos = new Vector3(
+      anchorPos.x,
+      anchorPos.y + this.eyeHeight - dip * 0.1,
+      anchorPos.z,
+    );
     const cosP = Math.cos(this.pitch);
     const lookDir = new Vector3(
       Math.sin(this.yaw) * cosP,
       -Math.sin(this.pitch),
       Math.cos(this.yaw) * cosP,
     );
+
+    // Roll de câmera: strafe leve, slide/tirolesa e arrasto do mouse.
+    const strafe =
+      (this.keysPressed.has('KeyD') ? 1 : 0) -
+      (this.keysPressed.has('KeyA') ? 1 : 0);
+    let targetRoll = this.promptOpen ? 0 : -strafe * 0.012;
+    if (localPlayer?.sliding) targetRoll += 0.045;
+    if (localPlayer?.ziplineRouteId) targetRoll += 0.05;
+    targetRoll -= this.swayX * 0.45;
+    this.cameraRoll +=
+      (targetRoll - this.cameraRoll) * (1 - Math.exp(-7 * dt));
 
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer = Math.max(0, this.muzzleFlashTimer - dt);
@@ -2733,21 +3788,29 @@ export class BabylonVoxelArena {
     if (this.currentZoom < 0.25) {
       this.camera.position.copyFrom(eyePos);
       this.viewModelAnchor.setEnabled(Boolean(localPlayer?.alive));
-      this.recoilKick = Math.max(0, this.recoilKick - dt * 6);
+      this.recoilKick = Math.max(0, this.recoilKick - dt * 7);
+      const motionScale = this.reducedMotion ? 0.25 : 1;
       const isMoving =
         !this.promptOpen &&
         (this.keysPressed.has('KeyW') ||
           this.keysPressed.has('KeyA') ||
           this.keysPressed.has('KeyS') ||
           this.keysPressed.has('KeyD'));
-      const bobX = (isMoving ? Math.cos(this.animTime * 9) * 0.016 : Math.cos(this.animTime * 1.8) * 0.004) * (this.reducedMotion ? 0.35 : 1);
-      const bobY = (isMoving ? Math.abs(Math.sin(this.animTime * 9)) * 0.018 : Math.sin(this.animTime * 1.8) * 0.004) * (this.reducedMotion ? 0.35 : 1);
+      const bobX = (isMoving ? Math.cos(this.animTime * 9) * 0.016 : Math.cos(this.animTime * 1.8) * 0.004) * motionScale;
+      const bobY = (isMoving ? Math.abs(Math.sin(this.animTime * 9)) * 0.018 : Math.sin(this.animTime * 1.8) * 0.004) * motionScale;
+      const breath = Math.sin(this.animTime * 1.7) * 0.004 * motionScale;
+      const sprintTilt = localPlayer?.sprinting ? 0.06 : 0;
+      const kick = this.recoilKick * motionScale;
       this.viewModelAnchor.position.set(
-        0.32 + bobX,
-        -0.25 - bobY,
-        0.56 - this.recoilKick * 0.14,
+        0.32 + bobX + this.swayX * 0.35 * motionScale,
+        -0.25 - bobY + breath - dip * 0.05,
+        0.56 - kick * 0.16,
       );
-      this.viewModelAnchor.rotation.x = this.recoilKick * 0.35;
+      this.viewModelAnchor.rotation.set(
+        0.08 + kick * 0.4 - this.swayY * 0.6 * motionScale - dip * 0.05,
+        -0.14 - this.swayX * 0.9 * motionScale,
+        sprintTilt * motionScale + this.swayX * 0.25 * motionScale,
+      );
     } else {
       this.viewModelAnchor.setEnabled(false);
       // DDA wall pull-in so 3rd person never clips behind cliffs/walls
@@ -2786,6 +3849,8 @@ export class BabylonVoxelArena {
       eyePos.z + lookDir.z * 25,
     );
     this.camera.setTarget(this.scratchVec);
+    this.camera.rotation.z =
+      this.cameraRoll * (this.reducedMotion ? 0.3 : 1);
 
     // Throttled crosshair context detection (shovel/grapple/enemy target feedback)
     this.aimCheckAccum += dt;
@@ -2904,6 +3969,66 @@ export class BabylonVoxelArena {
     );
   }
 
+  /**
+   * Recoil real por tiro: dano/cadência/massa definem o chute de mira e a
+   * recuperação parcial. O impulso de mira vale sempre; só a apresentação
+   * (sway/kick visual) é reduzida por `reducedMotion`.
+   */
+  private applyWeaponRecoil(weapon: WeaponBlueprint): void {
+    const impulse = recoilImpulseFor(weapon.stats);
+    // Pitch positivo olha para baixo; o chute levanta a mira.
+    this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch - impulse.pitch));
+    this.yaw += impulse.yaw;
+    this.recoilRecoveryPitch += impulse.pitch * 0.45;
+    this.recoilKick = Math.min(1.3, this.recoilKick + impulse.viewKick);
+    this.cameraTrauma = Math.min(1, this.cameraTrauma + impulse.trauma);
+  }
+
+  private addLookSway(dx: number, dy: number, scale: number): void {
+    const k = 0.0008 * this.lookSensitivity * scale;
+    this.swayX = Math.max(-0.07, Math.min(0.07, this.swayX + dx * k));
+    this.swayY = Math.max(-0.05, Math.min(0.05, this.swayY + dy * k));
+  }
+
+  private spawnShellCasing(at: Vec3, dirX: number, dirZ: number): void {
+    const len = Math.hypot(dirX, dirZ) || 1;
+    const fx = dirX / len;
+    const fz = dirZ / len;
+    // Direita = forward × up no eixo horizontal.
+    const rx = fz;
+    const rz = -fx;
+    const p = this.shrapnelPool[this.shrapnelCursor];
+    this.shrapnelCursor = (this.shrapnelCursor + 1) % this.SHRAPNEL_CAP;
+    const speed = 1.3 + Math.random() * 0.7;
+    p.active = true;
+    p.px = at.x + rx * 0.22 + fx * 0.3;
+    p.py = at.y - 0.12;
+    p.pz = at.z + rz * 0.22 + fz * 0.3;
+    p.vx = rx * speed - fx * 0.25;
+    p.vy = 1.3 + Math.random() * 0.6;
+    p.vz = rz * speed - fz * 0.25;
+    p.rx = Math.random() * 6;
+    p.ry = Math.random() * 6;
+    p.scale = 0.16;
+    p.ttl = 1.1;
+    p.color = [0.86, 0.7, 0.32];
+  }
+
+  private spawnMuzzleSmoke(at: Vec3, dir: Vec3): void {
+    if (Math.random() > 0.6) return;
+    this.spawnSmoke(
+      {
+        x: at.x + dir.x * 0.62,
+        y: at.y + dir.y * 0.62 - 0.05,
+        z: at.z + dir.z * 0.62,
+      },
+      [0.74, 0.76, 0.8],
+      1,
+      0.09,
+      0.9,
+    );
+  }
+
   private triggerPrimaryAction(): void {
     const localRig = this.localPlayerId ? this.playerRigs.get(this.localPlayerId) : null;
     const camPos = this.camera.position;
@@ -2968,7 +4093,7 @@ export class BabylonVoxelArena {
       this.lastLocalActionFxAt = now;
       this.recoilKick = 0.9;
       soundSynth.playDig();
-    } else if (activeItem?.kind === 'weapon' && activeItem.weapon && localPlayer) {
+    } else if (activeItem?.kind === 'weapon' && activeItem.weapon && localPlayer?.alive) {
       if (now < localPlayer.overheatedUntil) {
         if (now - this.lastLocalActionFxAt >= 500) {
           this.lastLocalActionFxAt = now;
@@ -2979,7 +4104,9 @@ export class BabylonVoxelArena {
       const minMs = 1000 / Math.max(0.5, activeItem.weapon.stats.fireRate);
       if (now - this.lastLocalActionFxAt >= minMs) {
         this.lastLocalActionFxAt = now;
-        this.recoilKick = 1.0;
+        this.applyWeaponRecoil(activeItem.weapon);
+        this.spawnShellCasing(origin, Math.sin(this.yaw), Math.cos(this.yaw));
+        this.spawnMuzzleSmoke(origin, lookDir);
         this.muzzleFlashTimer = 0.06;
         this.muzzleFlashMesh.setEnabled(true);
         soundSynth.playShoot(
@@ -3071,6 +4198,7 @@ export class BabylonVoxelArena {
         );
         this.yaw = next.yaw;
         this.pitch = next.pitch;
+        this.addLookSway(e.movementX, dy, 1);
         this.cursorEdgeTurn = 0;
         return;
       }
@@ -3091,6 +4219,7 @@ export class BabylonVoxelArena {
         const next = applyPointerLookDelta(this.yaw, this.pitch, dx, dy, 0.0034 * this.lookSensitivity);
         this.yaw = next.yaw;
         this.pitch = next.pitch;
+        this.addLookSway(dx, dy, 1.3);
       }
 
       this.lastMouseClientX = e.clientX;
@@ -3208,6 +4337,12 @@ export class BabylonVoxelArena {
     this.shoreFoamTexture = null;
     this.waterNormalTexture?.dispose();
     this.waterNormalTexture = null;
+    this.waterNormalTextureB?.dispose();
+    this.waterNormalTextureB = null;
+    this.waterShader?.dispose();
+    this.waterShader = null;
+    this.waterMat?.dispose();
+    this.waterMat = null;
     this.ziplineGroup?.dispose(false, true);
     this.ziplineGroup = null;
     audioDirector.setOccluder(null);

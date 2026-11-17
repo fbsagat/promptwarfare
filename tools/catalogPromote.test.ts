@@ -8,6 +8,7 @@ import {
 import type { CatalogFile } from '../server/catalog.ts';
 import type { CatalogCandidate } from './catalog-candidates.ts';
 import { promoteCandidates } from './catalogPromote.ts';
+import { validateEventFunContract } from '../src/shared/eventFun.ts';
 import type { WeaponBlueprint } from '../src/shared/types.ts';
 
 const emptyCatalog: CatalogFile = { version: '1', weapons: [], events: [] };
@@ -95,6 +96,11 @@ test('promoteCandidates validates, publishes, and skips approved candidates', ()
   assert.equal(first.catalog.events[0].provenance, 'ai_assisted');
   assert.equal(first.catalog.events[0].introducedIn, '2');
   assert.equal(first.catalog.events[0].id, 'evt_teste_1');
+  assert.ok(first.catalog.events[0].payload.fun);
+  assert.deepEqual(
+    validateEventFunContract(first.catalog.events[0].payload.fun!),
+    [],
+  );
   assert.equal(first.promoted.length, 2);
   assert.equal(first.candidates[0].status, 'approved');
   assert.equal(first.candidates[1].status, 'approved');

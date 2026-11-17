@@ -1,4 +1,4 @@
-import { resolveAssetUrl, type AssetManifest } from '../../shared/assets.ts';
+import { resolveAssetUrl, type AssetEntry, type AssetManifest } from '../../shared/assets.ts';
 import {
   audioEngine,
   type AudioHandle,
@@ -79,10 +79,15 @@ const AMBIENCE_IDS = {
  */
 class AudioDirector {
   private manifest: AssetManifest | null = null;
+  private assetIndex = new Map<string, AssetEntry>();
+  private preloadedUrls = new Set<string>();
   private occluder: Occluder | null = null;
   private listener: SoundPosition = { x: 0, y: 0, z: 0 };
   private activeVoices = 0;
   private readonly maxVoices = 28;
+  /** Fontes HRTF simultâneas; vem do perfil de qualidade (`hrtfSources`). */
+  private hrtfSourceCap = 8;
+  private activeHrtf = 0;
   private played = 0;
   private dropped = 0;
   private occluded = 0;
@@ -93,17 +98,43 @@ class AudioDirector {
   >();
 
   public setManifest(manifest: AssetManifest | null): void {
+    if (this.manifest?.version !== manifest?.version) this.preloadedUrls.clear();
     this.manifest = manifest;
+    this.assetIndex.clear();
     if (!manifest) return;
-    const urls = [...CORE_SAMPLE_IDS, ...FOOTSTEP_IDS, ...IMPACT_IDS]
-      .map((id) => this.resolve(id))
-      .filter((url): url is string => Boolean(url));
-    audioEngine.preloadSamples(urls);
+    for (const asset of manifest.assets) this.assetIndex.set(asset.id, asset);
+    this.preloadAssets([...CORE_SAMPLE_IDS, ...FOOTSTEP_IDS, ...IMPACT_IDS]);
+  }
+
+  /**
+   * Pré-carrega sons de um lote de assets (arsenal da sala, arma equipada,
+   * evento). Ids de textura/efeito são ignorados; URLs já baixadas não repetem.
+   */
+  public preloadAssets(ids: readonly string[]): void {
+    if (!this.manifest || ids.length === 0) return;
+    const fresh: string[] = [];
+    for (const id of ids) {
+      const asset = this.assetIndex.get(id);
+      if (asset?.type !== 'sound') continue;
+      const url = resolveAssetUrl(asset, this.manifest);
+      if (!url || this.preloadedUrls.has(url)) continue;
+      this.preloadedUrls.add(url);
+      fresh.push(url);
+    }
+    if (fresh.length > 0) audioEngine.preloadSamples(fresh);
   }
 
   public setOccluder(occluder: Occluder | null): void {
     this.occluder = occluder;
     this.occlusionCache.clear();
+  }
+
+  /**
+   * Limita quantas fontes usam HRTF ao mesmo tempo. Acima do cap a fonte cai
+   * para equalpower (mais barato) em vez de ser descartada.
+   */
+  public setHrtfSourceCap(cap: number): void {
+    this.hrtfSourceCap = Math.max(0, Math.floor(Number.isFinite(cap) ? cap : 0));
   }
 
   public updateListener(position: SoundPosition, forward: SoundPosition): void {
@@ -125,7 +156,7 @@ class AudioDirector {
 
   private resolve(id: string): string | null {
     if (!this.manifest) return null;
-    const asset = this.manifest.assets.find((entry) => entry.id === id);
+    const asset = this.assetIndex.get(id);
     return resolveAssetUrl(asset, this.manifest);
   }
 
@@ -193,6 +224,11 @@ class AudioDirector {
       return false;
     }
     if (!this.acquireVoice(opts.priority ?? 3)) return false;
+    const useHrtf = Boolean(opts.hrtf) && this.activeHrtf < this.hrtfSourceCap;
+    if (useHrtf) this.activeHrtf += 1;
+    const releaseHrtf = () => {
+      if (useHrtf) this.activeHrtf = Math.max(0, this.activeHrtf - 1);
+    };
     const occlusion =
       opts.occlusion === false
         ? { gain: 1, lowpassHz: 20000 }
@@ -202,14 +238,18 @@ class AudioDirector {
       volume: opts.volume ?? 0.7,
       rate: opts.rate ?? 1,
       position,
-      hrtf: Boolean(opts.hrtf),
+      hrtf: useHrtf,
       refDistance: 4,
       maxDistance: opts.maxDistance ?? 110,
       lowpassHz: occlusion.lowpassHz,
-      onEnded: () => this.releaseVoice(),
+      onEnded: () => {
+        this.releaseVoice();
+        releaseHrtf();
+      },
     });
     if (!handle) {
       this.releaseVoice();
+      releaseHrtf();
       return false;
     }
     if (occlusion.gain < 1) {

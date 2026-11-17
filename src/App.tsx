@@ -20,10 +20,17 @@ import {
 } from './engine/settings.ts';
 import { soundSynth } from './engine/soundSynth.ts';
 import type { AssetManifest } from './shared/assets.ts';
+import { mergeAssetManifests } from './shared/assets.ts';
+import {
+  hydrateRoomInit,
+  hydrateRoomTick,
+  mergeWeaponContent,
+} from './shared/contentHydration.ts';
 import { isClientDevEnabled } from './shared/devMode.ts';
 import { buildHttpUrl, buildWsUrl } from './shared/endpoints.ts';
 import {
   VOXEL_SIZE,
+  type ContentItemsPayload,
   type DevActionPayload,
   type DevRoomState,
   type EventCycleState,
@@ -34,13 +41,14 @@ import {
   type PlayerNetState,
   type PromptKind,
   type RoomAccessMode,
-  type RoomInitPayload,
+  type RoomInitWirePayload,
   type RoomMatchSummary,
   type RoomPublicSummary,
-  type RoomTickPayload,
+  type RoomTickWirePayload,
   type SpawnedEntityNetState,
   type Vec3,
   type VoxelDelta,
+  type WeaponBlueprint,
 } from './shared/types.ts';
 
 type GamePhaseState = 'title' | 'waiting' | 'playing' | 'paused' | 'gameover';
@@ -48,6 +56,35 @@ type GamePhaseState = 'title' | 'waiting' | 'playing' | 'paused' | 'gameover';
 // Vite inlines these at build time. Empty values keep the API/WS same-origin.
 const API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const WS_URL = import.meta.env.VITE_WS_URL as string | undefined;
+const ASSET_FETCH_BATCH = 128;
+
+function collectSceneAssetIds(
+  players: PlayerNetState[],
+  lootDrops: LootDropState[],
+  events: MapEventState[],
+): string[] {
+  const ids = new Set<string>();
+  for (const player of players) {
+    for (const slot of player.slots) {
+      for (const id of slot?.weapon?.assets ?? []) ids.add(id);
+    }
+  }
+  for (const drop of lootDrops) {
+    for (const id of drop.item.weapon?.assets ?? []) ids.add(id);
+  }
+  for (const event of events) {
+    for (const id of event.assets ?? []) ids.add(id);
+  }
+  return Array.from(ids);
+}
+
+function chunkIds(ids: string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += size) {
+    chunks.push(ids.slice(index, index + size));
+  }
+  return chunks;
+}
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -84,6 +121,10 @@ export default function App() {
 
   const [players, setPlayers] = useState<PlayerNetState[]>([]);
   const assetManifestRef = useRef<AssetManifest | null>(null);
+  const loadedAssetIdsRef = useRef<Set<string>>(new Set());
+  const pendingAssetIdsRef = useRef<Set<string>>(new Set());
+  const failedAssetIdsRef = useRef<Map<string, number>>(new Map());
+  const assetStatsRef = useRef({ requests: 0, fetched: 0, failed: 0, bytes: 0 });
   const [activeEvents, setActiveEvents] = useState<MapEventState[]>([]);
   const [serverNow, setServerNow] = useState(() => Date.now());
   const [eventCycle, setEventCycle] = useState<EventCycleState>({
@@ -124,6 +165,7 @@ export default function App() {
   const pingSentAtRef = useRef(0);
   const [damageFlash, setDamageFlash] = useState(false);
   const [hitmarkerActive, setHitmarkerActive] = useState(false);
+  const [hitmarkerHeavy, setHitmarkerHeavy] = useState(false);
   const [aimContext, setAimContext] = useState<'neutral' | 'dig' | 'grapple' | 'enemy'>('neutral');
   const [nearbyLootName, setNearbyLootName] = useState<string | null>(null);
   const [nearbyZipline, setNearbyZipline] = useState<string | null>(null);
@@ -144,9 +186,11 @@ export default function App() {
   devEnabledRef.current = devEnabled;
 
   const playersRef = useRef<PlayerNetState[]>([]);
+  const weaponCacheRef = useRef<Map<string, WeaponBlueprint>>(new Map());
   const rafflePlayerIdRef = useRef<string | null>(null);
   const lastHudSyncRef = useRef<number>(0);
   const prevHpRef = useRef<number | null>(null);
+  const prevAliveRef = useRef<Map<string, boolean>>(new Map());
   const prevCanForgeRef = useRef<boolean>(false);
   const damageFlashTimerRef = useRef<number | null>(null);
   const hitmarkerTimerRef = useRef<number | null>(null);
@@ -183,22 +227,122 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [fetchRooms, gameState]);
 
+  const applyAssetManifest = useCallback((incoming: AssetManifest | null) => {
+    if (
+      incoming &&
+      assetManifestRef.current &&
+      incoming.version !== assetManifestRef.current.version
+    ) {
+      loadedAssetIdsRef.current.clear();
+      failedAssetIdsRef.current.clear();
+      assetManifestRef.current = null;
+    }
+    const merged = mergeAssetManifests(assetManifestRef.current, incoming);
+    if (!merged) return;
+    assetManifestRef.current = merged;
+    for (const asset of merged.assets) loadedAssetIdsRef.current.add(asset.id);
+    arenaRef.current?.setAssetManifest(merged);
+  }, []);
+
+  const ensureAssets = useCallback(
+    (ids: string[]) => {
+      const missing: string[] = [];
+      const seen = new Set<string>();
+      const now = Date.now();
+      for (const id of ids) {
+        if (
+          !id ||
+          seen.has(id) ||
+          loadedAssetIdsRef.current.has(id) ||
+          pendingAssetIdsRef.current.has(id)
+        ) {
+          continue;
+        }
+        const failedAt = failedAssetIdsRef.current.get(id);
+        if (failedAt && now - failedAt < 30_000) continue;
+        seen.add(id);
+        missing.push(id);
+      }
+      if (missing.length === 0) return;
+
+      for (const batch of chunkIds(missing, ASSET_FETCH_BATCH)) {
+        for (const id of batch) pendingAssetIdsRef.current.add(id);
+        assetStatsRef.current.requests += 1;
+        const url = buildHttpUrl(
+          `/api/assets?ids=${encodeURIComponent(batch.join(','))}`,
+          API_URL,
+        );
+        void fetch(url)
+          .then(async (res) => {
+            if (!res.ok) return null;
+            const size = Number(res.headers.get('content-length') ?? 0);
+            const data = (await res.json()) as AssetManifest;
+            return { data, size: Number.isFinite(size) ? size : 0 };
+          })
+          .then((result) => {
+            if (!result?.data?.assets) {
+              assetStatsRef.current.failed += batch.length;
+              for (const id of batch) failedAssetIdsRef.current.set(id, Date.now());
+              return;
+            }
+            const data = result.data;
+            assetStatsRef.current.fetched += data.assets.length;
+            assetStatsRef.current.bytes += result.size;
+            applyAssetManifest(data);
+            const returned = new Set(data.assets.map((asset) => asset.id));
+            for (const id of batch) {
+              if (returned.has(id)) failedAssetIdsRef.current.delete(id);
+              else {
+                assetStatsRef.current.failed += 1;
+                failedAssetIdsRef.current.set(id, Date.now());
+              }
+            }
+            arenaRef.current?.prefetchAssets(data.assets.map((asset) => asset.id));
+          })
+          .catch(() => {
+            // Assets são opcionais; o jogo segue com fallback visual/sintetizado.
+            assetStatsRef.current.failed += batch.length;
+            for (const id of batch) failedAssetIdsRef.current.set(id, Date.now());
+          })
+          .finally(() => {
+            for (const id of batch) pendingAssetIdsRef.current.delete(id);
+          });
+      }
+    },
+    [applyAssetManifest],
+  );
+
   useEffect(() => {
     let cancelled = false;
-    void fetch(buildHttpUrl('/api/assets', API_URL))
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: AssetManifest | null) => {
-        if (cancelled || !data?.assets) return;
-        assetManifestRef.current = data;
-        arenaRef.current?.setAssetManifest(data);
-      })
-      .catch(() => {
-        // Manifesto é opcional no cliente; o jogo segue com fallback visual.
-      });
+    const load = async () => {
+      let data: AssetManifest | null = null;
+      try {
+        const coreRes = await fetch(buildHttpUrl('/api/assets/core', API_URL));
+        if (coreRes.ok) {
+          const parsed = (await coreRes.json()) as AssetManifest | null;
+          if (parsed?.assets) data = parsed;
+        }
+      } catch {
+        // servidor antigo sem /core: cai no manifesto completo abaixo
+      }
+      if (!data) {
+        try {
+          const fullRes = await fetch(buildHttpUrl('/api/assets', API_URL));
+          if (fullRes.ok) {
+            const parsed = (await fullRes.json()) as AssetManifest | null;
+            if (parsed?.assets) data = parsed;
+          }
+        } catch {
+          // Manifesto é opcional no cliente; o jogo segue com fallback visual.
+        }
+      }
+      if (!cancelled && data?.assets) applyAssetManifest(data);
+    };
+    void load();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyAssetManifest]);
 
   useEffect(() => {
     promptModeRef.current = promptMode;
@@ -210,6 +354,29 @@ export default function App() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const stats = assetStatsRef.current;
+      ws.send(
+        JSON.stringify({
+          type: 'client:perf',
+          payload: {
+            assets: {
+              loaded: loadedAssetIdsRef.current.size,
+              requests: stats.requests,
+              fetched: stats.fetched,
+              failed: stats.failed,
+              bytes: stats.bytes,
+            },
+          },
+        }),
+      );
+    }, 15_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const openWeaponPrompt = useCallback(() => {
@@ -372,7 +539,13 @@ export default function App() {
         }
 
         if (msg.type === 'room:init') {
-          const init = msg.payload as RoomInitPayload;
+          const init = msg.payload as RoomInitWirePayload;
+          weaponCacheRef.current.clear();
+          const view = hydrateRoomInit(init, weaponCacheRef.current);
+          ensureAssets(init.contentPool?.assetIds ?? []);
+          ensureAssets(
+            collectSceneAssetIds(view.players, view.lootDrops, view.activeEvents),
+          );
           setConnecting(false);
           setErrorMessage(null);
           setLobbyState(null);
@@ -384,23 +557,27 @@ export default function App() {
           if (init.devState) setDevState(init.devState);
           setLocalPlayerId(init.playerId);
           localPlayerIdRef.current = init.playerId;
-          playersRef.current = init.players;
+          playersRef.current = view.players;
           rafflePlayerIdRef.current = init.rafflePlayerId;
-          setPlayers(init.players);
-          setActiveEvents(init.activeEvents);
+          setPlayers(view.players);
+          setActiveEvents(view.activeEvents);
           setServerNow(init.serverNow);
           setEventCycle(init.event);
           setEventCooldownSec(init.eventCooldownSec);
           setZoomMeters(0);
           setIslandSizeMeters(init.dimX * VOXEL_SIZE);
-          setLootDrops(init.lootDrops);
+          setLootDrops(view.lootDrops);
           setEntities(init.entities);
           prevHpRef.current = null;
           prevCanForgeRef.current = false;
+          prevAliveRef.current = new Map(
+            view.players.map((p) => [p.id, p.alive] as const),
+          );
           setDamageFlash(false);
           setHitmarkerActive(false);
+          setHitmarkerHeavy(false);
           setNearbyLootName(null);
-          arenaRef.current?.loadRoomInit(init);
+          arenaRef.current?.loadRoomInit(view);
           setGameState('playing');
           if (document.activeElement instanceof HTMLElement) {
             document.activeElement.blur();
@@ -430,7 +607,11 @@ export default function App() {
           };
           const heavy = Boolean(payload?.heavy);
           arenaRef.current?.triggerHitstop(heavy ? 0.052 : 0.032);
+          if (payload?.position) {
+            arenaRef.current?.spawnHitSpark(payload.position, heavy);
+          }
           soundSynth.playHitConfirm(heavy);
+          setHitmarkerHeavy(heavy);
           setHitmarkerActive(true);
           if (hitmarkerTimerRef.current) window.clearTimeout(hitmarkerTimerRef.current);
           hitmarkerTimerRef.current = window.setTimeout(() => {
@@ -499,8 +680,22 @@ export default function App() {
           return;
         }
 
+        if (msg.type === 'content:items') {
+          const payload = msg.payload as ContentItemsPayload;
+          mergeWeaponContent(weaponCacheRef.current, payload?.weapons);
+          if (payload?.weapons) {
+            ensureAssets(payload.weapons.flatMap((weapon) => weapon.assets ?? []));
+          }
+          return;
+        }
+
         if (msg.type === 'ai:weapon_ready') {
           soundSynth.playForgeComplete();
+          if (msg.payload?.weapon) {
+            const weapon = msg.payload.weapon as WeaponBlueprint;
+            mergeWeaponContent(weaponCacheRef.current, [weapon]);
+            ensureAssets(weapon.assets ?? []);
+          }
           if (typeof msg.payload?.slotIndex === 'number') {
             arenaRef.current?.selectSlot(msg.payload.slotIndex);
           }
@@ -531,8 +726,29 @@ export default function App() {
         }
 
         if (msg.type === 'room:tick') {
-          const tick = msg.payload as RoomTickPayload;
+          const tick = hydrateRoomTick(
+            msg.payload as RoomTickWirePayload,
+            weaponCacheRef.current,
+          );
+          ensureAssets(
+            collectSceneAssetIds(tick.players, tick.lootDrops, tick.activeEvents),
+          );
           arenaRef.current?.applyRoomTick(tick);
+
+          // Reação de morte: o tick é a única fonte; sem protocolo novo.
+          const wasAlive = prevAliveRef.current;
+          const nowAlive = new Map<string, boolean>();
+          for (const p of tick.players) {
+            nowAlive.set(p.id, p.alive);
+            if (wasAlive.get(p.id) === true && !p.alive) {
+              arenaRef.current?.spawnKillBurst(
+                { x: p.position.x, y: p.position.y + 0.9, z: p.position.z },
+                p.color,
+              );
+            }
+          }
+          prevAliveRef.current = nowAlive;
+
           playersRef.current = tick.players;
           rafflePlayerIdRef.current = tick.rafflePlayerId;
           setHostId(tick.hostId);
@@ -970,6 +1186,7 @@ export default function App() {
           isFullscreen={isFullscreen}
           damageFlash={damageFlash}
           hitmarkerActive={hitmarkerActive}
+          hitmarkerHeavy={hitmarkerHeavy}
           aimContext={aimContext}
           nearbyLootName={nearbyLootName}
           nearbyZipline={nearbyZipline}

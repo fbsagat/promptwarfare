@@ -59,6 +59,21 @@ function exposePlayer(
   for (let vy = startVy; vy < room.dimY - 1; vy++) room.grid.set(vx, vy, vz, MAT.AIR);
 }
 
+/** Coloca um teto sólido acima do jogador. */
+function shelterPlayer(
+  room: any,
+  player: { position: { x: number; y: number; z: number } },
+): void {
+  const vx = Math.floor(player.position.x / VOXEL_SIZE);
+  const vz = Math.floor(player.position.z / VOXEL_SIZE);
+  const roofVy = Math.ceil((player.position.y + 3) / VOXEL_SIZE);
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      room.grid.set(vx + dx, roofVy, vz + dz, MAT.STONE);
+    }
+  }
+}
+
 test('new terrain mutation kinds carve or build distinct materials', () => {
   const manager = new RoomManager({ devEnabled: true });
   try {
@@ -83,6 +98,75 @@ test('new terrain mutation kinds carve or build distinct materials', () => {
         `${label} não aplicou o material esperado`,
       );
     }
+  } finally {
+    manager.disposeAll();
+  }
+});
+
+test('blizzard and hail are blocked by a roof', () => {
+  const manager = new RoomManager({ devEnabled: true });
+  try {
+    const { room, playerId, center } = createRoom(manager, 'HAZSHELTER');
+    const player = room.players.get(playerId);
+    assert.ok(player);
+    shelterPlayer(room, player);
+
+    for (const prompt of ['Nevasca congelante', 'Tempestade de granizo']) {
+      room.activeEvents.length = 0;
+      player.hp = 100;
+      enqueueEvent(manager, room, prompt, center);
+      tickEvents(manager, room, 0.05); // ativa
+      tickEvents(manager, room, 1.3); // pulso de perigo
+      assert.equal(player.hp, 100, `${prompt} ignorou o teto`);
+    }
+  } finally {
+    manager.disposeAll();
+  }
+});
+
+test('bots flee tornado and lava hazards', () => {
+  const manager = new RoomManager({ devEnabled: true });
+  try {
+    const created = manager.createAndJoinRoom(new MockSocket(), {
+      roomId: 'HAZBOTS',
+      playerName: 'Ana',
+      targetPlayers: 4,
+      fillWithBots: true,
+      startImmediately: true,
+    });
+    assert.ok(created);
+    const room: any = created.room;
+    const bot = Array.from(room.players.values()).find((player: any) => player.isBot);
+    assert.ok(bot, 'sala sem bot para testar');
+    const centerX = (room.dimX * VOXEL_SIZE) / 2 + Math.cos(room.elapsedSec * 0.35) * 10;
+    const centerZ = (room.dimZ * VOXEL_SIZE) / 2 + Math.sin(room.elapsedSec * 0.35) * 10;
+    (bot as any).position.x = centerX;
+    (bot as any).position.z = centerZ;
+
+    const event = resolveEventFromCatalog('Tornado', 'p1', 'Ana', [
+      centerX,
+      (bot as any).position.y,
+      centerZ,
+    ]).event;
+    event.warningRemainingSec = 0;
+    room.activeEvents.push(event);
+
+    const action = {
+      intent: 'roam' as const,
+      moveX: 0,
+      moveZ: 0,
+      jump: false,
+      targetYaw: 0,
+      targetPitch: 0,
+      activeSlot: 0,
+      firePrimary: false,
+      startTypingPrompt: false,
+      finishTypingPrompt: false,
+    };
+    (manager as any).applyBotHazardAvoidance(room, bot, action);
+    assert.equal(action.intent, 'retreat');
+    assert.equal(action.moveZ, 1);
+    assert.equal(action.jump, true);
   } finally {
     manager.disposeAll();
   }
@@ -120,6 +204,38 @@ test('new weather kinds damage players through the authoritative hazard pulse', 
     tickEvents(manager, room, 1.3); // pulso de perigo
     assert.ok(player.hp < 100, 'tornado não causou dano no centro do vórtice');
     assert.ok(player.velocity.y > 0, 'tornado não aplicou impulso vertical');
+  } finally {
+    manager.disposeAll();
+  }
+});
+
+test('event kills are recorded as content usage', () => {
+  const usage: any[] = [];
+  const manager = new RoomManager({
+    devEnabled: true,
+    ledger: {
+      record(): void {},
+      recordUsage(event: any): void {
+        usage.push(event);
+      },
+      close(): void {},
+    },
+  });
+  try {
+    const { room, playerId, center } = createRoom(manager, 'HAZKILL');
+    const player = room.players.get(playerId);
+    assert.ok(player);
+    exposePlayer(room, player);
+    player.hp = 1;
+    enqueueEvent(manager, room, 'Tempestade de granizo', center);
+    tickEvents(manager, room, 0.05); // ativa
+    tickEvents(manager, room, 1.3); // pulso de perigo mata
+    assert.equal(player.alive, false);
+    const kill = usage.find(
+      (entry) => entry.role === 'kill' && entry.kind === 'event' && entry.itemId === 'evt_weather_hail',
+    );
+    assert.ok(kill, 'abate por evento não foi registrado no ledger');
+    assert.equal(kill.targetRef, playerId);
   } finally {
     manager.disposeAll();
   }

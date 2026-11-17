@@ -6,6 +6,7 @@ import type {
   PaletteColor,
   ProjectileBehavior,
   SelfRiskFlag,
+  SceneryKind,
   StatusEffect,
   WeaponAllocation,
   WeaponBlueprint,
@@ -353,7 +354,7 @@ export function computeEventPoints(params: EventParams, archetype: EventArchetyp
   const durPts = params.durationSec * 0.45;
   const lethPts = params.lethality * 1.1;
   const qtyPts =
-    archetype === 'ENTITY_SPAWN' || archetype === 'SUPPLY_DROP'
+    archetype === 'ENTITY_SPAWN' || archetype === 'SUPPLY_DROP' || archetype === 'SCENERY_SPAWN'
       ? params.quantity * 3.5
       : 0;
   return Math.round((radiusPts + durPts + lethPts + qtyPts) * 10) / 10;
@@ -372,6 +373,14 @@ export function validateAndClampEventParams(
     'explosive_kamikaze',
     'static_pickup',
   ];
+  const validScenery: SceneryKind[] = [
+    'tree',
+    'grove',
+    'house',
+    'tower',
+    'skyscraper',
+    'ruins',
+  ];
 
   const params: EventParams = {
     radiusMeters: Math.round(clamp(raw.radiusMeters ?? 18, 6, 45)),
@@ -386,6 +395,11 @@ export function validateAndClampEventParams(
         ? 'static_pickup'
         : 'aggressive_nearest',
     ammoRestore: Math.round(clamp(raw.ammoRestore ?? 28, 10, 60)),
+    sceneryKind: validScenery.includes(raw.sceneryKind as SceneryKind)
+      ? (raw.sceneryKind as SceneryKind)
+      : archetype === 'SCENERY_SPAWN'
+        ? 'tree'
+        : undefined,
   };
 
   let budgetUsed = computeEventPoints(params, archetype);

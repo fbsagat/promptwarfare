@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-16.4","kind":"event","items":{"evt_weather_low_gravity":{"archetype":"WEATHER_HAZARD","params":{"radiusMeters":34,"durationSec":40,"lethality":8,"quantity":1,"weatherKind":"low_gravity","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":57.4,"wasClamped":false}}}

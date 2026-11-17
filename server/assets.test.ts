@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getAssetIds, getAssetManifest, getAssetVersion } from './assets.ts';
+import {
+  getAssetIds,
+  getAssetManifest,
+  getAssetManifestByIds,
+  getAssetVersion,
+  getCoreAssetManifest,
+} from './assets.ts';
 import { getCatalog } from './catalog.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -32,6 +38,24 @@ test('asset manifest is valid and covers every catalog item', () => {
       assert.ok(ids.has(assetId), `${item.id} referencia asset inexistente: ${assetId}`);
     }
   }
+});
+
+test('asset manifest subsets return only requested ids and keep core small', () => {
+  const full = getAssetManifest();
+  const ids = [full.assets[0].id, full.assets[1].id, 'asset:inexistente'];
+  const subset = getAssetManifestByIds(ids);
+  assert.equal(subset.version, full.version);
+  assert.equal(subset.baseUrl, full.baseUrl);
+  assert.deepEqual(
+    subset.assets.map((asset) => asset.id),
+    [full.assets[0].id, full.assets[1].id],
+  );
+
+  const core = getCoreAssetManifest();
+  assert.ok(core.assets.length > 0);
+  assert.ok(core.assets.length < full.assets.length);
+  assert.ok(core.assets.some((asset) => asset.id.startsWith('sfx:footstep:')));
+  assert.ok(core.assets.some((asset) => asset.id === 'waypoint:event'));
 });
 
 test('sound assets with url exist on disk and carry hash/mime', () => {

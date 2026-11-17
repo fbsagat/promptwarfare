@@ -1,6 +1,7 @@
 # Plano: ciclo de conteúdo por prompts
 
-> **Status:** Fases 0, 1, 2 e 3 implementadas (UX, prompt de texto livre, catálogo versionado, resolvedor determinístico, ledger, pipeline offline, telemetria de uso/qualidade, feedback, manifesto de assets e ligação inicial do cliente por ID). Restam decisões de escala e retenção.
+> **Status:** Fases 0, 1, 2 e 3 implementadas (UX, prompt de texto livre, catálogo versionado, resolvedor determinístico, ledger, pipeline offline, telemetria de uso/qualidade, feedback, manifesto de assets e ligação inicial do cliente por ID). Fases de escala 1–6 implementadas: streaming de armas por referência, catálogo em índice + shards, resolvedor por índice invertido, assets sob demanda, contrato de diversão e observabilidade. Receitas visuais/sonoras por evento e armas modulares implementadas como primeira camada; eventos de cenário (`SCENERY_SPAWN`) adicionados ao catálogo com 6 estruturas que sobem do chão. Ainda faltam assets dedicados/gravados por evento e peças de modelo com arte autoral.
+> **Próximos incrementos obrigatórios:** (1) substituir a receita procedural de evento por assets dedicados (textura/som/VFX por evento) mantendo o contrato `fun`; (2) evoluir as peças modulares para um catálogo de módulos autorais e variações de silhueta por arquétipo.
 > **Última revisão:** 16/11/2026.
 > **Fase 0 entregue:** contadores globais/individuais, `PromptBar` mínima, `prompt:open`/`prompt:cancel`, deadlines e timeout no servidor, freeze de movimento/ação durante a escrita, remoção de `allocation` da UI/protocolo/blueprint e testes de fluxo em `server/promptFlow.test.ts`.
 > **Fase 1 entregue:** `content/catalog/catalog.json` versionado, `server/catalog.ts` com resolução por aliases/tags, `catalogVersion` no tick, remoção da IA do runtime (ferramenta movida para `tools/`), `/api/catalog` e `/api/ai/preview-weapon` servindo o catálogo, e testes em `server/catalog.test.ts`.
@@ -268,6 +269,29 @@ Removidos:
 - `entity`
 - `objective` (missões/waypoints, se entrarem no escopo)
 - `asset` (apresentação: textura, som, efeito, waypoint, malha)
+
+#### Eventos de cenário (`SCENERY_SPAWN`)
+
+Além de clima, terreno, criaturas e suprimentos, o catálogo tem eventos que **constroem cenário** a partir do chão:
+
+| Evento | `sceneryKind` | Exemplos de prompt |
+| --- | --- | --- |
+| Árvore emergente | `tree` | “árvore”, “surja uma árvore” |
+| Bosque repentino | `grove` | “bosque”, “floresta” |
+| Casa do chão | `house` | “casa”, “cabana”, “chalé” |
+| Torre emergente | `tower` | “torre”, “prédio”, “edifício” |
+| Arranha-céu do chão | `skyscraper` | “arranha-céu”, “edifício gigante” |
+| Ruínas emergentes | `ruins` | “ruínas”, “templo antigo” |
+
+Regras de design:
+
+- a estrutura é gerada em voxels determinísticos (`src/shared/scenery.ts`), não é um asset binário;
+- o servidor reserva uma área livre de jogadores, apoia no `groundY` e aplica **uma camada por tick**, então o objeto sobe do chão;
+- a estrutura **permanece no mapa** depois do evento e vira cobertura/verticalidade/rota;
+- escadas internas (`MAT.LADDER`) em torres e arranha-céus tornam a subida parte da contra-jogada;
+- `quantity` limita quantas estruturas nascem e entra no orçamento de 100 pontos;
+- o evento usa o contrato de diversão `SCENERY_SPAWN` (`climb`, `high_ground`, `shelter`) e a receita visual/sonora de `eventPresentation.ts`;
+- o catálogo usa a tag `terrain` para o pool, mas o arquétipo é separado para a geração e para o HUD.
 
 ### 8.3 Formato conceitual de um item
 

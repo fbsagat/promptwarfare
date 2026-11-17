@@ -108,6 +108,7 @@ test('buildContentPool is deterministic and keeps the mandatory core', () => {
   assert.equal(a.hash, b.hash);
   assert.ok(a.weaponCount >= 16 && a.weaponCount <= 26);
   assert.ok(a.eventCount >= 7 && a.eventCount <= 11);
+  assert.equal(new Set(a.assetIds).size, a.assetIds.length);
   assert.ok(a.weaponIds.includes('wpn_rifle_standard'));
   assert.ok(a.eventIds.includes('evt_weather_meteor_shower'));
 
@@ -152,6 +153,9 @@ test('real catalog pool stays within targets and covers every event category', (
     );
     assert.equal(new Set(pool.weaponIds).size, pool.weaponIds.length);
     assert.equal(new Set(pool.eventIds).size, pool.eventIds.length);
+    assert.ok(pool.assetIds.length > 0);
+    assert.equal(new Set(pool.assetIds).size, pool.assetIds.length);
+    assert.ok(pool.assetIds.some((id) => id.startsWith('texture:weapon:')));
     for (const category of EVENT_CATEGORIES) {
       assert.ok(
         pool.eventIds.some((id) => id.startsWith(`evt_${category}_`)),

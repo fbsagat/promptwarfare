@@ -204,6 +204,9 @@ npm run ledger:prune -- --days 90 --redact-prompts
 # Regerar o catálogo procedural base, se necessário
 # (preserva itens promovidos; use --reset para descartar)
 npm run catalog:build -- 2026-11-20.1
+
+# Regenerar só o índice/sharding depois de editar catalog.json manualmente
+npm run catalog:index
 ```
 
 Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria. Eventos também compõem: quando o prompt pede duas categorias (ex.: meteoros + criaturas), o servidor combina componentes, escala o secundário para caber nos 100 pontos e aplica todos os efeitos no mundo.
@@ -215,7 +218,8 @@ vercel.json               Build estático do frontend na Vercel
 server.ts                 Entrada única: API REST, WebSocket e cliente opcional
 server/
   roomManager.ts          Estado autoritativo: salas, loop de 20 Hz, combate, bots, eventos
-  catalog.ts              Catálogo read-only + resolvedor determinístico
+  catalog.ts              Índice quente + resolvedor determinístico (payloads sob demanda)
+  catalogArtifacts.ts     Gera/valida index.json e shards content-addressed
   contentPool.ts          Arsenal determinístico por sala (uso + novidade)
   semantic.ts             Embeddings lexicais/sinônimos offline
   semanticDuplicates.ts   Busca de quase-duplicatas
@@ -229,11 +233,14 @@ server/
   httpCors.ts             Origens permitidas para CORS e WebSocket
 content/
   assets/manifest.json    Manifesto de texturas, sons, efeitos e waypoints
-  catalog/catalog.json    Fonte de verdade versionada do conteúdo
+  catalog/catalog.json    Fonte de verdade versionada do conteúdo (build/testes/ferramentas)
+  catalog/index.json      Índice quente usado pelo runtime
+  catalog/shards/         Payloads imutáveis, carregados sob demanda (LRU)
   seeds/initial-demand.json Demanda inicial sintética
   reports/                Relatórios gerados offline
 tools/
-  build-catalog.ts        Gera o catálogo procedural offline
+  build-catalog.ts        Gera o catálogo procedural offline + índice/sharding
+  catalog-index.ts        Regenera só índice/sharding a partir do catalog.json
   seed-demand.ts          Gera o relatório da demanda inicial
   ledger-report.ts        Exporta clusters, lacunas e briefs
   loop-report.ts          Cruza demanda, uso e versões do catálogo

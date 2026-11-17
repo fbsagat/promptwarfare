@@ -2,15 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getCatalog,
+  getCatalogIndex,
   getCatalogItem,
   getCatalogItemName,
   getCatalogSummary,
+  getCatalogRuntimeStats,
   getCatalogVersion,
+  getResolverStats,
   hasCatalogItem,
   reloadCatalog,
   resolveEventFromCatalog,
   resolveWeaponFromCatalog,
 } from './catalog.ts';
+import { normalizePrompt } from '../src/shared/prompt.ts';
+import {
+  deriveEventFunContract,
+  validateEventFunContract,
+} from '../src/shared/eventFun.ts';
 
 test('catalog version and budgets are valid', () => {
   const catalog = getCatalog();
@@ -19,6 +27,17 @@ test('catalog version and budgets are valid', () => {
   assert.equal(getCatalogVersion(), catalog.version);
   assert.ok(catalog.weapons.length >= 30);
   assert.ok(catalog.events.length >= 10);
+
+  const index = getCatalogIndex();
+  assert.ok(index, 'o runtime deve usar index.json quando ele existe');
+  assert.equal(index.version, catalog.version);
+  assert.equal(index.weapons.length, catalog.weapons.length);
+  assert.equal(index.events.length, catalog.events.length);
+  assert.ok(Object.keys(index.shards).length > 0);
+  for (const item of [...catalog.weapons, ...catalog.events]) {
+    assert.ok(item.summary, `${item.id} sem summary no índice`);
+    assert.ok(item.summary.budgetUsed <= 100);
+  }
 
   for (const weapon of catalog.weapons) {
     assert.ok(
@@ -206,6 +225,70 @@ test('reloadCatalog revalidates the artifact without losing the current version'
   assert.equal(result.events, before.events.length);
   assert.equal(getCatalogVersion(), before.version);
   assert.equal(getCatalog().weapons.length, before.weapons.length);
+});
+
+test('catalog summary reads the hot index without loading payload shards', () => {
+  reloadCatalog();
+  const before = getCatalogRuntimeStats();
+  assert.equal(before.usingIndex, true);
+  assert.equal(before.cachedShards, 0);
+
+  const summary = getCatalogSummary();
+  assert.ok(summary.stats.totalWeapons > 0);
+
+  const after = getCatalogRuntimeStats();
+  assert.equal(after.cachedShards, 0);
+  assert.equal(after.shardCount, before.shardCount);
+});
+
+test('every catalog event derives a valid fun contract', () => {
+  const catalog = getCatalog();
+  for (const event of catalog.events) {
+    const fun = deriveEventFunContract(event.payload.archetype, event.payload.params);
+    assert.deepEqual(
+      validateEventFunContract(fun),
+      [],
+      `${event.id} com contrato de diversão inválido`,
+    );
+  }
+
+  const tornado = resolveEventFromCatalog('Tornado', 'p1', 'Ana', [0, 0, 0]).event;
+  assert.ok(tornado.fun);
+  assert.ok(tornado.fun.counterplay.includes('sprint'));
+  assert.equal(tornado.fun.fairness.unavoidableDamage, false);
+});
+
+test('resolver index resolves every catalog alias to one of its owners', () => {
+  const catalog = getCatalog();
+  const stats = getResolverStats();
+  assert.ok(stats.weaponTokens > 0);
+  assert.ok(stats.eventTokens > 0);
+
+  const center: [number, number, number] = [0, 0, 0];
+  for (const kind of ['weapon', 'event'] as const) {
+    const items = kind === 'weapon' ? catalog.weapons : catalog.events;
+    for (const item of items) {
+      for (const alias of item.aliases) {
+        const norm = normalizePrompt(alias);
+        if (!norm) continue;
+        const owners = new Set(
+          items
+            .filter((other) =>
+              other.aliases.some((candidate) => normalizePrompt(candidate) === norm),
+            )
+            .map((other) => other.id),
+        );
+        const resolvedId =
+          kind === 'weapon'
+            ? resolveWeaponFromCatalog(alias).itemId
+            : resolveEventFromCatalog(alias, 'p1', 'Ana', center).itemId;
+        assert.ok(
+          owners.has(resolvedId),
+          `${item.id} alias "${alias}" resolveu para ${resolvedId}`,
+        );
+      }
+    }
+  }
 });
 
 test('exact prompts bypass the pool; fuzzy ones stay pool-bound', () => {

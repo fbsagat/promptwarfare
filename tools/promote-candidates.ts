@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CatalogFile } from '../server/catalog.ts';
+import { writeCatalogArtifacts } from '../server/catalogArtifacts.ts';
 import type { CatalogCandidate } from './catalog-candidates.ts';
 import { promoteCandidates } from './catalogPromote.ts';
 
@@ -50,6 +51,7 @@ const ids = approveAll
 
 const result = promoteCandidates(catalog, candidateFile.candidates, ids, version);
 fs.writeFileSync(catalogPath, `${JSON.stringify(result.catalog, null, 2)}\n`, 'utf8');
+const artifacts = writeCatalogArtifacts(result.catalog, path.dirname(catalogPath));
 fs.writeFileSync(
   candidatesPath,
   `${JSON.stringify({ ...candidateFile, candidates: result.candidates }, null, 2)}\n`,
@@ -57,6 +59,7 @@ fs.writeFileSync(
 );
 
 console.log(`Catálogo publicado como ${version}.`);
+console.log(`Índice/sharding: ${artifacts.indexPath} (${artifacts.shardCount} shards)`);
 console.log(`Promovidos: ${result.promoted.length}`);
 for (const id of result.promoted) console.log(`  + ${id}`);
 console.log(`Aliases mesclados em itens existentes: ${result.merged.length}`);

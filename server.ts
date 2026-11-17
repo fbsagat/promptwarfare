@@ -4,10 +4,17 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { getAssetManifest, getAssetVersion } from './server/assets.ts';
 import {
+  getAssetManifest,
+  getAssetManifestByIds,
+  getAssetVersion,
+  getCoreAssetManifest,
+} from './server/assets.ts';
+import {
+  getCatalogRuntimeStats,
   getCatalogSummary,
   getCatalogVersion,
+  getResolverStats,
   reloadCatalog,
   resolveWeaponFromCatalog,
   startCatalogWatcher,
@@ -82,6 +89,14 @@ async function startServer() {
   const metricsToken = process.env.METRICS_TOKEN?.trim() || '';
   let metricsLoop: ReturnType<typeof buildLoopReport> | null = null;
   let metricsCache: MetricsSnapshot | null = null;
+  const assetMetrics = {
+    coreRequests: 0,
+    subsetRequests: 0,
+    fullRequests: 0,
+    requestedIds: 0,
+    servedAssets: 0,
+    rejectedRequests: 0,
+  };
 
   const refreshMetrics = async (): Promise<void> => {
     try {
@@ -96,6 +111,9 @@ async function startServer() {
         uptimeSec: process.uptime(),
         catalogVersion: getCatalogVersion(),
         assetVersion: getAssetVersion(),
+        catalog: getCatalogRuntimeStats(),
+        resolver: getResolverStats(),
+        assets: assetMetrics,
       });
     } catch (err) {
       console.warn('[Métricas] falha ao atualizar snapshot:', (err as Error).message);
@@ -154,6 +172,9 @@ async function startServer() {
           uptimeSec: process.uptime(),
           catalogVersion: getCatalogVersion(),
           assetVersion: getAssetVersion(),
+          catalog: getCatalogRuntimeStats(),
+          resolver: getResolverStats(),
+          assets: assetMetrics,
           generatedAt: metricsLoop.generatedAt,
         })
       : metricsCache;
@@ -192,8 +213,39 @@ async function startServer() {
     res.json(getCatalogSummary());
   });
 
-  app.get('/api/assets', (_req, res) => {
-    res.json(getAssetManifest());
+  app.get('/api/assets/core', (_req, res) => {
+    assetMetrics.coreRequests += 1;
+    const core = getCoreAssetManifest();
+    assetMetrics.servedAssets += core.assets.length;
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    res.json(core);
+  });
+
+  app.get('/api/assets', (req, res) => {
+    const raw = typeof req.query.ids === 'string' ? req.query.ids.trim() : '';
+    if (!raw) {
+      assetMetrics.fullRequests += 1;
+      const manifest = getAssetManifest();
+      assetMetrics.servedAssets += manifest.assets.length;
+      res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+      res.json(manifest);
+      return;
+    }
+    const ids = raw
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (ids.length > 256) {
+      assetMetrics.rejectedRequests += 1;
+      res.status(400).json({ error: 'Muitos assets por requisição (máximo 256).' });
+      return;
+    }
+    assetMetrics.subsetRequests += 1;
+    assetMetrics.requestedIds += ids.length;
+    const subset = getAssetManifestByIds(ids);
+    assetMetrics.servedAssets += subset.assets.length;
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    res.json(subset);
   });
 
   app.post('/api/ai/preview-weapon', (req, res) => {

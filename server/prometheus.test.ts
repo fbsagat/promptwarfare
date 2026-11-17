@@ -23,6 +23,12 @@ test('renderPrometheusMetrics exposes gauges, labels and active alerts', () => {
   assert.match(text, /promptwarfare_catalog_info\{version="2026-11-16\.3"\} 1/);
   assert.match(text, /promptwarfare_ledger_backend_info\{backend="sqlite"\} 1/);
   assert.match(text, /promptwarfare_metrics_generated_at_seconds 1700000000/);
+  assert.match(text, /promptwarfare_catalog_index_loaded 0/);
+  assert.match(text, /promptwarfare_catalog_shards\{state="total"\} 0/);
+  assert.match(text, /promptwarfare_resolver_calls_total\{scope="pool"\} 0/);
+  assert.match(text, /promptwarfare_asset_requests_total\{kind="core"\} 0/);
+  assert.match(text, /promptwarfare_event_kills_total 0/);
+  assert.match(text, /promptwarfare_counterplay_blocks_total 0/);
   assert.match(text, /# TYPE promptwarfare_alert_active gauge/);
   assert.doesNotMatch(text, /promptwarfare_alert_active\{/);
 });
