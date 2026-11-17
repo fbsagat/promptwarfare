@@ -561,12 +561,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                 ))}
             </div>
           )}
-
-          {!pointerLocked && (
-            <div className="pointer-events-none rounded-lg bg-[#0b101b]/80 border border-white/15 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap">
-              Clique para capturar o mouse · Esc pausa
-            </div>
-          )}
         </div>
 
         {/* Top-Right: Utility Controls + Compact Killfeed */}
@@ -726,6 +720,11 @@ export const GameHud: React.FC<GameHudProps> = ({
         <span className="mt-1.5 text-[10px] font-mono-tabular text-white/75 drop-shadow">
           {zoomMeters < 0.3 ? '1P' : `3P · ${zoomMeters.toFixed(1)}m`}
         </span>
+        {!pointerLocked && (
+          <div className="mt-2 rounded-lg bg-[#0b101b]/85 border border-white/20 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap shadow-lg">
+            Clique para capturar o mouse · Esc pausa
+          </div>
+        )}
       </div>
 
       {/* BOTTOM ROW: Loot Cue + Weapon Forge Status + Weapon Telemetry + 4-Slot Hotbar */}
