@@ -227,6 +227,10 @@ export interface PerfStats {
   fps: number;
   frameMs: number;
   chunks: number;
+  /** Chunks com malha agregada 2×2×2 (LOD distante). */
+  chunksCoarse: number;
+  /** Chunks enfileirados ou com job em andamento no worker. */
+  chunksPending: number;
   activeMeshes: number;
   vertices: number;
 }
@@ -259,6 +263,69 @@ export interface ArenaCallbacks {
   onPointerLockChange?: (locked: boolean) => void;
 }
 
+/** Nível 0 = voxel inteiro (5 m), nível 1 = agregado 2×2×2 (célula de 10 m). */
+type ChunkLevel = 0 | 1;
+
+interface ChunkAddress {
+  cx: number;
+  cy: number;
+  cz: number;
+  lod: ChunkLevel;
+}
+
+interface ChunkMeta {
+  /** Tempo de animação em que o chunk foi considerado necessário pela última vez. */
+  lastNeeded: number;
+  /** Revisão da última amostra enviada ao worker (detecta deltas durante o job). */
+  revision: number;
+}
+
+interface WorkerChunkResult {
+  jobId: number;
+  epoch?: number;
+  revision?: number;
+  cx: number;
+  cy: number;
+  cz: number;
+  positions: Float32Array;
+  normals: Float32Array;
+  colors: Float32Array;
+  matIds: Float32Array;
+  indices: Uint32Array;
+}
+
+const CHUNK_WORLD_SPAN = CHUNK_SIZE * VOXEL_SIZE;
+const LOD_STEP = 2;
+const COARSE_CHUNK_SIZE = CHUNK_SIZE * LOD_STEP;
+const COARSE_WORLD_SPAN = COARSE_CHUNK_SIZE * VOXEL_SIZE;
+const COARSE_HYSTERESIS = 2.5;
+const LOD_MAX_MATERIAL = 32;
+/** Materiais funcionais sobrevivem à amostragem; índice menor = prioridade maior. */
+const LOD_PRIORITY_MATERIALS: number[] = [
+  MAT.LADDER,
+  MAT.CRYSTAL,
+  MAT.GOLD,
+  MAT.LAVA,
+  MAT.SLUDGE,
+  MAT.SNOW,
+  MAT.GRASS,
+];
+
+function makeChunkKey(cx: number, cy: number, cz: number, lod: ChunkLevel): string {
+  return `${cx},${cy},${cz}@${lod}`;
+}
+
+function parseChunkKey(key: string): ChunkAddress {
+  const at = key.indexOf('@');
+  const parts = key.slice(0, at).split(',');
+  return {
+    cx: Number(parts[0]),
+    cy: Number(parts[1]),
+    cz: Number(parts[2]),
+    lod: at >= 0 && key.slice(at + 1) === '1' ? 1 : 0,
+  };
+}
+
 export class BabylonVoxelArena {
   private canvas: HTMLCanvasElement;
   private engine: Engine;
@@ -271,6 +338,15 @@ export class BabylonVoxelArena {
 
   private grid: VoxelGrid;
   private chunkMeshes = new Map<string, Mesh>();
+  private chunkMeta = new Map<string, ChunkMeta>();
+  private chunkRevisions = new Map<string, number>();
+  private chunkCooldowns = new Map<string, number>();
+  private culledChunkKeys = new Set<string>();
+  /** Chunks considerados necessários no frame atual (atualizado pelo streaming). */
+  private streamDesired = new Set<string>();
+  /** Invalida respostas do worker pertencentes a uma sala/reconstrução anterior. */
+  private streamEpoch = 1;
+  private lodTally = new Uint8Array(LOD_MAX_MATERIAL);
   private chunkMat: StandardMaterial;
   private mesherWorker: Worker;
   private mesherJobSeq = 1;
@@ -1893,7 +1969,13 @@ export class BabylonVoxelArena {
   }
 
   public setMode(mode: 'title' | 'playing' | 'paused' | 'gameover'): void {
+    const changed = this.mode !== mode;
     this.mode = mode;
+    if (changed) {
+      // Título mostra a ilha inteira; jogo mantém só o vizinhança do jogador.
+      this.chunkCooldowns.clear();
+      this.updateChunkStreaming();
+    }
     if (mode !== 'playing') {
       this.keysPressed.clear();
       this.mouseDown = false;
@@ -1980,6 +2062,8 @@ export class BabylonVoxelArena {
     }
     this.applyQualityCaps();
     this.rebuildGrass();
+    // Raios de streaming mudam com o preset; recalcula imediatamente.
+    this.updateChunkStreaming();
     return this.quality;
   }
 
@@ -2014,10 +2098,16 @@ export class BabylonVoxelArena {
 
   public getPerfStats(): PerfStats {
     const activeMeshes = this.scene.getActiveMeshes();
+    let chunksCoarse = 0;
+    for (const key of this.chunkMeshes.keys()) {
+      if (parseChunkKey(key).lod === 1) chunksCoarse++;
+    }
     return {
       fps: this.engine.getFps(),
       frameMs: this.engine.getDeltaTime(),
       chunks: this.chunkMeshes.size,
+      chunksCoarse,
+      chunksPending: this.pendingChunkQueue.length + this.pendingJobs.size,
       activeMeshes: activeMeshes.length,
       vertices: this.scene.getTotalVertices(),
     };
@@ -2077,6 +2167,8 @@ export class BabylonVoxelArena {
   }
 
   public loadRoomInit(init: RoomInitPayload): void {
+    // Descarta malhas e jobs da sala anterior antes de trocar a VoxelGrid.
+    this.clearChunkState();
     this.localPlayerId = init.playerId;
     this.islandSeed = init.seed;
     this.nearbyZiplineId = null;
@@ -2166,22 +2258,9 @@ export class BabylonVoxelArena {
     this.grassDirty = true;
     for (const d of deltas) {
       this.grid.set(d.vx, d.vy, d.vz, d.mat);
-      const cx = Math.floor(d.vx / CHUNK_SIZE);
-      const cy = Math.floor(d.vy / CHUNK_SIZE);
-      const cz = Math.floor(d.vz / CHUNK_SIZE);
-      const lx = d.vx - cx * CHUNK_SIZE;
-      const ly = d.vy - cy * CHUNK_SIZE;
-      const lz = d.vz - cz * CHUNK_SIZE;
-
-      this.markChunkDirty(cx, cy, cz);
-      if (lx === 0) this.markChunkDirty(cx - 1, cy, cz);
-      if (lx === CHUNK_SIZE - 1) this.markChunkDirty(cx + 1, cy, cz);
-      if (ly === 0) this.markChunkDirty(cx, cy - 1, cz);
-      if (ly === CHUNK_SIZE - 1) this.markChunkDirty(cx, cy + 1, cz);
-      if (lz === 0) this.markChunkDirty(cx, cy, cz - 1);
-      if (lz === CHUNK_SIZE - 1) this.markChunkDirty(cx, cy, cz + 1);
+      this.markVoxelAreaDirty(d.vx, d.vy, d.vz);
     }
-    this.flushDirtyChunks();
+    this.flushDirtyChunks(this.quality.chunkJobsPerFrame);
   }
 
   public triggerHitstop(durationSec = 0.048): void {
@@ -2336,45 +2415,177 @@ export class BabylonVoxelArena {
     };
   }
 
-  private rebuildAllChunks(): void {
+  /** Remove todas as malhas e cancela o estado de streaming (a VoxelGrid permanece intacta). */
+  private clearChunkState(): void {
     for (const m of this.chunkMeshes.values()) m.dispose();
     this.chunkMeshes.clear();
+    this.chunkMeta.clear();
+    this.chunkRevisions.clear();
+    this.chunkCooldowns.clear();
+    this.culledChunkKeys.clear();
+    this.streamDesired.clear();
     this.dirtyChunks.clear();
     this.pendingChunkQueue = [];
     this.pendingChunkSet.clear();
+    this.pendingJobs.clear();
+  }
 
-    const cxMax = Math.ceil(this.grid.dimX / CHUNK_SIZE);
-    const cyMax = Math.ceil(this.grid.dimY / CHUNK_SIZE);
-    const czMax = Math.ceil(this.grid.dimZ / CHUNK_SIZE);
+  private rebuildAllChunks(): void {
+    this.streamEpoch++;
+    this.clearChunkState();
 
+    // Começa agregado: o streaming refina só a vizinhança da câmera.
+    const cxMax = Math.ceil(this.grid.dimX / COARSE_CHUNK_SIZE);
+    const cyMax = Math.ceil(this.grid.dimY / COARSE_CHUNK_SIZE);
+    const czMax = Math.ceil(this.grid.dimZ / COARSE_CHUNK_SIZE);
     for (let cy = 0; cy < cyMax; cy++) {
       for (let cz = 0; cz < czMax; cz++) {
         for (let cx = 0; cx < cxMax; cx++) {
-          this.markChunkDirty(cx, cy, cz);
+          this.markChunkDirty(cx, cy, cz, 1);
         }
       }
     }
-    this.flushDirtyChunks(220);
+    this.flushDirtyChunks(this.quality.chunkJobsPerFrame);
   }
 
-  private markChunkDirty(cx: number, cy: number, cz: number): void {
-    const cxMax = Math.ceil(this.grid.dimX / CHUNK_SIZE);
-    const cyMax = Math.ceil(this.grid.dimY / CHUNK_SIZE);
-    const czMax = Math.ceil(this.grid.dimZ / CHUNK_SIZE);
+  private markChunkDirty(cx: number, cy: number, cz: number, lod: ChunkLevel = 0): void {
+    const size = lod === 0 ? CHUNK_SIZE : COARSE_CHUNK_SIZE;
+    const cxMax = Math.ceil(this.grid.dimX / size);
+    const cyMax = Math.ceil(this.grid.dimY / size);
+    const czMax = Math.ceil(this.grid.dimZ / size);
     if (cx < 0 || cy < 0 || cz < 0 || cx >= cxMax || cy >= cyMax || cz >= czMax) {
       return;
     }
-    this.dirtyChunks.add(`${cx},${cy},${cz}`);
+    this.dirtyChunks.add(makeChunkKey(cx, cy, cz, lod));
+  }
+
+  /** Uma edição de voxel invalida o nível fino e o agregado que o contém. */
+  private markVoxelAreaDirty(vx: number, vy: number, vz: number): void {
+    for (const lod of [0, 1] as ChunkLevel[]) {
+      const size = lod === 0 ? CHUNK_SIZE : COARSE_CHUNK_SIZE;
+      const cx = Math.floor(vx / size);
+      const cy = Math.floor(vy / size);
+      const cz = Math.floor(vz / size);
+      const lx = vx - cx * size;
+      const ly = vy - cy * size;
+      const lz = vz - cz * size;
+      const coords: Array<[number, number, number]> = [[cx, cy, cz]];
+      if (lx === 0) coords.push([cx - 1, cy, cz]);
+      if (lx === size - 1) coords.push([cx + 1, cy, cz]);
+      if (ly === 0) coords.push([cx, cy - 1, cz]);
+      if (ly === size - 1) coords.push([cx, cy + 1, cz]);
+      if (lz === 0) coords.push([cx, cy, cz - 1]);
+      if (lz === size - 1) coords.push([cx, cy, cz + 1]);
+      for (const [nx, ny, nz] of coords) {
+        const key = makeChunkKey(nx, ny, nz, lod);
+        this.chunkRevisions.set(key, (this.chunkRevisions.get(key) ?? 0) + 1);
+        if (nx >= 0 && ny >= 0 && nz >= 0) this.markChunkDirty(nx, ny, nz, lod);
+      }
+    }
+  }
+
+  /**
+   * Amostra determinística 2×2×2: um material por célula grossa, priorizando
+   * materiais funcionais e, entre eles, o mais presente. Nunca faz média de matId.
+   */
+  private sampleCoarseChunk(cx: number, cy: number, cz: number, padded: Uint8Array, pSize: number): boolean {
+    this.lodTally.fill(0);
+    let hasSolid = false;
+    const baseX = cx * COARSE_CHUNK_SIZE;
+    const baseY = cy * COARSE_CHUNK_SIZE;
+    const baseZ = cz * COARSE_CHUNK_SIZE;
+    for (let ly = -1; ly <= COARSE_CHUNK_SIZE; ly++) {
+      for (let lz = -1; lz <= COARSE_CHUNK_SIZE; lz++) {
+        for (let lx = -1; lx <= COARSE_CHUNK_SIZE; lx++) {
+          let bestMat = 0;
+          let bestScore = 0;
+          for (let dy = 0; dy < LOD_STEP; dy++) {
+            for (let dz = 0; dz < LOD_STEP; dz++) {
+              for (let dx = 0; dx < LOD_STEP; dx++) {
+                const mat = this.grid.get(
+                  baseX + lx * LOD_STEP + dx,
+                  baseY + ly * LOD_STEP + dy,
+                  baseZ + lz * LOD_STEP + dz,
+                );
+                if (mat === 0) continue;
+                const priority = LOD_PRIORITY_MATERIALS.indexOf(mat);
+                const score = priority >= 0 ? 1000 - priority * 10 : 0;
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestMat = mat;
+                }
+              }
+            }
+          }
+          if (bestMat === 0) continue;
+          hasSolid = true;
+          padded[lx + 1 + (lz + 1) * pSize + (ly + 1) * pSize * pSize] = 255;
+          const tallyMat = bestMat < LOD_MAX_MATERIAL ? bestMat : 1;
+          this.lodTally[tallyMat]++;
+        }
+      }
+    }
+    if (!hasSolid) return false;
+
+    let representative = 1;
+    let bestScore = -1;
+    for (let mat = 1; mat < LOD_MAX_MATERIAL; mat++) {
+      const priority = LOD_PRIORITY_MATERIALS.indexOf(mat);
+      const score = this.lodTally[mat] + (priority >= 0 ? 1000 - priority * 10 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        representative = mat;
+      }
+    }
+    for (let i = 0; i < padded.length; i++) {
+      if (padded[i] === 255) padded[i] = representative;
+    }
+    return true;
   }
 
   private dispatchChunkKey(key: string): void {
-    const [cx, cy, cz] = key.split(',').map(Number);
-    const pSize = CHUNK_SIZE + 2;
+    if (this.disposed || this.chunkCooldowns.has(key)) return;
+    const { cx, cy, cz, lod } = parseChunkKey(key);
+    const chunkSize = lod === 0 ? CHUNK_SIZE : COARSE_CHUNK_SIZE;
+    const pSize = chunkSize + 2;
     const padded = new Uint8Array(pSize * pSize * pSize);
+    const hasSolid =
+      lod === 0
+        ? this.sampleFineChunk(cx, cy, cz, padded, pSize)
+        : this.sampleCoarseChunk(cx, cy, cz, padded, pSize);
+
+    if (!hasSolid) {
+      const existing = this.chunkMeshes.get(key);
+      if (existing) {
+        existing.dispose();
+        this.chunkMeshes.delete(key);
+        this.chunkMeta.delete(key);
+      }
+      return;
+    }
+
+    const jobId = this.mesherJobSeq++;
+    this.pendingJobs.set(jobId, key);
+    this.mesherWorker.postMessage(
+      {
+        jobId,
+        epoch: this.streamEpoch,
+        revision: this.chunkRevisions.get(key) ?? 0,
+        cx,
+        cy,
+        cz,
+        chunkSize,
+        voxelSize: lod === 0 ? VOXEL_SIZE : VOXEL_SIZE * LOD_STEP,
+        padded,
+      },
+      [padded.buffer],
+    );
+  }
+
+  private sampleFineChunk(cx: number, cy: number, cz: number, padded: Uint8Array, pSize: number): boolean {
     const baseX = cx * CHUNK_SIZE;
     const baseY = cy * CHUNK_SIZE;
     const baseZ = cz * CHUNK_SIZE;
-
     let hasSolid = false;
     for (let ly = -1; ly <= CHUNK_SIZE; ly++) {
       for (let lz = -1; lz <= CHUNK_SIZE; lz++) {
@@ -2387,51 +2598,31 @@ export class BabylonVoxelArena {
         }
       }
     }
-
-    if (!hasSolid) {
-      const existing = this.chunkMeshes.get(key);
-      if (existing) {
-        existing.dispose();
-        this.chunkMeshes.delete(key);
-      }
-      return;
-    }
-
-    const jobId = this.mesherJobSeq++;
-    this.pendingJobs.set(jobId, key);
-    this.mesherWorker.postMessage(
-      {
-        jobId,
-        cx,
-        cy,
-        cz,
-        chunkSize: CHUNK_SIZE,
-        voxelSize: VOXEL_SIZE,
-        padded,
-      },
-      [padded.buffer],
-    );
+    return hasSolid;
   }
 
-  private flushDirtyChunks(immediateLimit = 72): void {
+  private flushDirtyChunks(immediateLimit = this.quality.chunkJobsPerFrame): void {
     if (this.dirtyChunks.size === 0) return;
 
     const camX = this.camera.position.x;
     const camY = this.camera.position.y;
     const camZ = this.camera.position.z;
-    const chunkWorldSpan = CHUNK_SIZE * VOXEL_SIZE;
     const sorted = Array.from(this.dirtyChunks)
       .map((key) => {
-        const [cx, cy, cz] = key.split(',').map(Number);
-        const dx = (cx + 0.5) * chunkWorldSpan - camX;
-        const dy = (cy + 0.5) * chunkWorldSpan - camY;
-        const dz = (cz + 0.5) * chunkWorldSpan - camZ;
+        const addr = parseChunkKey(key);
+        const span = addr.lod === 0 ? CHUNK_WORLD_SPAN : COARSE_WORLD_SPAN;
+        const dx = (addr.cx + 0.5) * span - camX;
+        const dy = (addr.cy + 0.5) * span - camY;
+        const dz = (addr.cz + 0.5) * span - camZ;
         return { key, distSq: dx * dx + dy * dy + dz * dz };
       })
       .sort((a, b) => a.distSq - b.distSq);
 
     let sent = 0;
     for (const item of sorted) {
+      // Fora da área de interesse a revisão já foi invalidada; não gasta job.
+      if (this.streamDesired.size > 0 && !this.streamDesired.has(item.key)) continue;
+      if (this.chunkCooldowns.has(item.key)) continue;
       if (sent < immediateLimit) {
         this.pendingChunkSet.delete(item.key);
         this.dispatchChunkKey(item.key);
@@ -2444,7 +2635,108 @@ export class BabylonVoxelArena {
     this.dirtyChunks.clear();
   }
 
-  private drainPendingChunks(maxPerFrame = 20): void {
+  /**
+   * Culling + streaming: a cada frame recalcula o conjunto desejado a partir da
+   * câmera, desliga malhas fora do frustum e libera (dispose) as que ficaram
+   * além do raio de descarga. A VoxelGrid completa permanece para raycast/deltas.
+   */
+  private updateChunkStreaming(): void {
+    if (!this.grid || this.disposed) return;
+    const cam = this.camera.position;
+    const scale = this.mode === 'title' ? 2.5 : 1;
+    const loadRadius = this.quality.chunkLoadRadius * scale * CHUNK_WORLD_SPAN;
+    const unloadRadius = this.quality.chunkUnloadRadius * scale * CHUNK_WORLD_SPAN;
+    const nearRadius = this.quality.chunkNearLodRadius * scale * COARSE_WORLD_SPAN;
+    const loadSq = loadRadius * loadRadius;
+    const unloadSq = unloadRadius * unloadRadius;
+    const desired = new Set<string>();
+    const retained = new Set<string>();
+
+    const maxX = Math.ceil(this.grid.dimX / CHUNK_SIZE);
+    const maxY = Math.ceil(this.grid.dimY / CHUNK_SIZE);
+    const maxZ = Math.ceil(this.grid.dimZ / CHUNK_SIZE);
+    for (let cy = 0; cy < maxY; cy++) {
+      for (let cz = 0; cz < maxZ; cz++) {
+        for (let cx = 0; cx < maxX; cx++) {
+          const centerX = (cx + 0.5) * CHUNK_WORLD_SPAN;
+          const centerY = (cy + 0.5) * CHUNK_WORLD_SPAN;
+          const centerZ = (cz + 0.5) * CHUNK_WORLD_SPAN;
+          const dx = centerX - cam.x;
+          const dy = centerY - cam.y;
+          const dz = centerZ - cam.z;
+          const distSq = dx * dx + dy * dy + dz * dz;
+          if (distSq > unloadSq) continue;
+
+          // Determina se este chunk fine pertence a um chunk coarse
+          const cxCoarse = Math.floor(cx / LOD_STEP);
+          const cyCoarse = Math.floor(cy / LOD_STEP);
+          const czCoarse = Math.floor(cz / LOD_STEP);
+
+          const fineKey = makeChunkKey(cx, cy, cz, 0);
+          const coarseKey = makeChunkKey(cxCoarse, cyCoarse, czCoarse, 1);
+          
+          const hasFine = this.chunkMeshes.has(fineKey);
+          const hasCoarse = this.chunkMeshes.has(coarseKey);
+          
+          if (distSq > loadSq) {
+            if (hasFine) retained.add(fineKey);
+            if (hasCoarse) retained.add(coarseKey);
+            continue;
+          }
+
+          const dist = Math.sqrt(distSq);
+          const wantFine = dist <= nearRadius;
+          const chosen = wantFine ? fineKey : coarseKey;
+          desired.add(chosen);
+
+          if (!this.chunkMeshes.has(chosen) && !this.pendingChunkSet.has(chosen)) {
+            this.markChunkDirty(
+              wantFine ? cx : cxCoarse,
+              wantFine ? cy : cyCoarse,
+              wantFine ? cz : czCoarse,
+              wantFine ? 0 : 1,
+            );
+          }
+          if (wantFine && this.chunkMeshes.has(coarseKey)) retained.add(coarseKey);
+          if (!wantFine && this.chunkMeshes.has(fineKey)) retained.add(fineKey);
+        }
+              }
+            }
+            this.streamDesired = new Set([...desired, ...retained]);
+
+    for (const [key, mesh] of this.chunkMeshes) {
+      if (desired.has(key)) {
+        if (this.culledChunkKeys.delete(key)) mesh.setEnabled(true);
+        continue;
+      }
+      const addr = parseChunkKey(key);
+      const span = addr.lod === 0 ? CHUNK_WORLD_SPAN : COARSE_WORLD_SPAN;
+      const dx = (addr.cx + 0.5) * span - cam.x;
+      const dy = (addr.cy + 0.5) * span - cam.y;
+      const dz = (addr.cz + 0.5) * span - cam.z;
+      if (retained.has(key) || dx * dx + dy * dy + dz * dz <= unloadSq) {
+        if (!this.culledChunkKeys.has(key)) {
+          mesh.setEnabled(false);
+          this.culledChunkKeys.add(key);
+        }
+        continue;
+      }
+      // Descarga real: libera GPU/RAM; um cooldown evita thrash de ida e volta.
+      mesh.dispose();
+      this.chunkMeshes.delete(key);
+      this.chunkMeta.delete(key);
+      this.culledChunkKeys.delete(key);
+      this.chunkCooldowns.set(key, this.animTime + this.quality.chunkUnloadCooldownSec);
+    }
+    if (this.chunkCooldowns.size > 0) {
+      for (const [key, until] of this.chunkCooldowns) {
+        if (until <= this.animTime) this.chunkCooldowns.delete(key);
+      }
+    }
+    this.flushDirtyChunks(this.quality.chunkJobsPerFrame);
+  }
+
+  private drainPendingChunks(maxPerFrame = this.quality.chunkJobsPerFrame): void {
     let processed = 0;
     while (processed < maxPerFrame && this.pendingChunkQueue.length > 0) {
       const key = this.pendingChunkQueue.shift()!;
@@ -2454,21 +2746,20 @@ export class BabylonVoxelArena {
     }
   }
 
-  private handleWorkerChunkBuilt(data: {
-    jobId: number;
-    cx: number;
-    cy: number;
-    cz: number;
-    positions: Float32Array;
-    normals: Float32Array;
-    colors: Float32Array;
-    matIds: Float32Array;
-    indices: Uint32Array;
-  }): void {
+  private handleWorkerChunkBuilt(data: WorkerChunkResult): void {
     if (this.disposed) return;
     const key = this.pendingJobs.get(data.jobId);
     this.pendingJobs.delete(data.jobId);
     if (!key) return;
+    // Sala/reconstrução diferente ou chunk descarregado enquanto o job corria.
+    if (data.epoch !== undefined && data.epoch !== this.streamEpoch) return;
+    if (this.chunkCooldowns.has(key)) return;
+    if (this.streamDesired.size > 0 && !this.streamDesired.has(key)) return;
+    if (data.revision !== undefined && data.revision !== (this.chunkRevisions.get(key) ?? 0)) {
+      const addr = parseChunkKey(key);
+      this.markChunkDirty(addr.cx, addr.cy, addr.cz, addr.lod);
+      return;
+    }
 
     let mesh = this.chunkMeshes.get(key);
     if (data.indices.length === 0) {
@@ -2476,6 +2767,8 @@ export class BabylonVoxelArena {
         mesh.dispose();
         this.chunkMeshes.delete(key);
       }
+      this.chunkMeta.delete(key);
+      this.culledChunkKeys.delete(key);
       return;
     }
 
@@ -2486,6 +2779,7 @@ export class BabylonVoxelArena {
       mesh.receiveShadows = Boolean(this.shadowGenerator);
       this.chunkMeshes.set(key, mesh);
     }
+    this.chunkMeta.set(key, { lastNeeded: this.animTime, revision: data.revision ?? 0 });
 
     const vData = new VertexData();
     vData.positions = data.positions;
@@ -4371,6 +4665,7 @@ export class BabylonVoxelArena {
   private updateFrame(dt: number): void {
     this.animTime += dt;
     this.drainPendingChunks(36);
+    this.updateChunkStreaming();
 
     // Transições suaves de atmosfera (clima, bioma e submerso).
     const fogK = 1 - Math.exp(-2.2 * dt);

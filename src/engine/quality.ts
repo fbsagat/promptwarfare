@@ -27,6 +27,16 @@ export interface QualityProfile {
   readonly decalCap: number;
   /** Reservado: máximo de fontes HRTF simultâneas. */
   readonly hrtfSources: number;
+  /**
+   * Streaming de chunks (raios em unidades de chunk de 5 m). O raio de descarga
+   * é maior que o de carga (histerese) e `chunkNearLodRadius` define até onde a
+   * malha em resolução completa substitui a malha agregada 2×2×2.
+   */
+  readonly chunkLoadRadius: number;
+  readonly chunkUnloadRadius: number;
+  readonly chunkNearLodRadius: number;
+  readonly chunkUnloadCooldownSec: number;
+  readonly chunkJobsPerFrame: number;
 }
 
 export const QUALITY_STORAGE_KEY = 'pw.quality.v1';
@@ -50,19 +60,29 @@ const PROFILES: Record<ResolvedQualityLevel, QualityProfile> = {
     weatherCap: 72,
     decalCap: 24,
     hrtfSources: 4,
+    chunkLoadRadius: 4,
+    chunkUnloadRadius: 6,
+    chunkNearLodRadius: 3,
+    chunkUnloadCooldownSec: 3.5,
+    chunkJobsPerFrame: 12,
   },
   medium: {
-    level: 'medium',
-    hardwareScaling: 1,
-    shadows: true,
-    shadowMapSize: 1024,
-    bloom: true,
-    antialias: true,
-    vfxScale: 1,
-    weatherCap: 120,
-    decalCap: 48,
-    hrtfSources: 8,
-  },
+      level: 'medium',
+      hardwareScaling: 1,
+      shadows: true,
+      shadowMapSize: 1024,
+      bloom: true,
+      antialias: true,
+      vfxScale: 1,
+      weatherCap: 120,
+      decalCap: 48,
+      hrtfSources: 8,
+      chunkLoadRadius: 12,
+      chunkUnloadRadius: 18,
+      chunkNearLodRadius: 8,
+      chunkUnloadCooldownSec: 2.5,
+      chunkJobsPerFrame: 24,
+    },
   high: {
     level: 'high',
     hardwareScaling: 1,
@@ -74,6 +94,11 @@ const PROFILES: Record<ResolvedQualityLevel, QualityProfile> = {
     weatherCap: 180,
     decalCap: 64,
     hrtfSources: 12,
+    chunkLoadRadius: 10,
+    chunkUnloadRadius: 14,
+    chunkNearLodRadius: 7,
+    chunkUnloadCooldownSec: 2,
+    chunkJobsPerFrame: 28,
   },
 };
 
