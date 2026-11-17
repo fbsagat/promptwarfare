@@ -161,6 +161,16 @@ Passo a passo completo, proxy reverso e checklist em [docs/DEPLOY.md](docs/DEPLO
 | Mutar áudio | `M` |
 | Painel de desenvolvimento (fora de produção) | `F8` |
 
+### Testar armas e eventos (dev)
+
+Com `npm run dev` e o painel `F8` aberto numa partida (`room:start` com `devSolo` também funciona sem bots):
+
+- **Catálogo Exato**: busque por nome, id ou tag e clique no item. Armas são equipadas na hora; eventos disparam com 1 s de aviso. O botão com ícone de bot equipa a arma no primeiro bot vivo.
+- **Eventos Automáticos**: pause para isolar um evento sem sorteios nem catástrofes de estagnação. **Pular Espera** força o próximo sorteio quando o modo automático está ativo.
+- **Alvo à Frente**: cria um bot imóvel com 250 de vida para medir dano, cadência, recuo e status.
+- **Munição & Forja Infinita** + **Modo Deus** permitem testar várias armas seguidas sem morrer.
+- Cada item do catálogo é resolvido pelo id, sem passar pela pontuação de prompts. Use o prompt/alias exibido no tooltip quando quiser validar o fluxo real de digitação.
+
 ## Loop de jogo
 
 1. O Master cria a sala, define de 4 a 14 jogadores, ativa ou não bots e inicia a partida.
@@ -209,7 +219,7 @@ npm run catalog:build -- 2026-11-20.1
 npm run catalog:index
 ```
 
-Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. Cada sala recebe um **arsenal determinístico** (`contentPool` no `room:init`/`room:tick`); pedidos que existem no catálogo mas ficaram fora do pool aparecem como “fora do arsenal”, não como lacuna de produção. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria. Eventos também compõem: quando o prompt pede duas categorias (ex.: meteoros + criaturas), o servidor combina componentes, escala o secundário para caber nos 100 pontos e aplica todos os efeitos no mundo.
+Prompts com match fraco ou ambíguo são registrados como **cobertura duvidosa** (`partial`) e entram nas lacunas do relatório. **Não existe fallback default**: o jogador sempre recebe o item mais próximo (por tokens/tags e, no pior caso, por similaridade de trigramas) e a lacuna fica no ledger para curadoria. O catálogo publicado carrega `status` e `provenance`, e itens `deprecated` deixam de ser resolvidos sem sumir do arquivo. Quando o pedido combina uma capacidade que o item-base já tem com outra que existe em outro item, o resolvedor tenta uma **composição** segura; se o resultado estourar o orçamento, ele volta a ser lacuna. A promoção mescla aliases em itens existentes em vez de duplicar conteúdo, e `loop:report` mostra quais lacunas fecharam, persistiram ou regrediram por versão. **Cada partida recebe o catálogo ativo inteiro** (`contentPool` no `room:init`/`room:tick`), com payloads e assets carregados sob demanda. A deduplicação semântica é offline e determinística: `server/semantic.ts` usa sinônimos do domínio + n-gramas, e `catalog:dedupe` lista quase-duplicatas para curadoria. Eventos também compõem: quando o prompt pede duas categorias (ex.: meteoros + criaturas), o servidor combina componentes, escala o secundário para caber nos 100 pontos e aplica todos os efeitos no mundo.
 
 ## Estrutura
 
@@ -220,7 +230,7 @@ server/
   roomManager.ts          Estado autoritativo: salas, loop de 20 Hz, combate, bots, eventos
   catalog.ts              Índice quente + resolvedor determinístico (payloads sob demanda)
   catalogArtifacts.ts     Gera/valida index.json e shards content-addressed
-  contentPool.ts          Arsenal determinístico por sala (uso + novidade)
+  contentPool.ts          Catálogo ativo inteiro por sala + assets do arsenal
   semantic.ts             Embeddings lexicais/sinônimos offline
   semanticDuplicates.ts   Busca de quase-duplicatas
   loopReport.ts           Demanda x uso x versão do catálogo

@@ -81,8 +81,8 @@ O relabel do Netdata adiciona `stack="promptwarfare"` a containers `pw_*`, permi
 | `promptwarfare_coverage_ratio` | gauge | Cobertura de catálogo (0..1) |
 | `promptwarfare_partial_prompts` | gauge | Cobertura duvidosa |
 | `promptwarfare_catalog_gaps` | gauge | Lacunas de catálogo |
-| `promptwarfare_pool_misses` | gauge | Pedidos fora do pool |
-| `promptwarfare_pool_miss_ratio` | gauge | Proporção de pool miss |
+| `promptwarfare_pool_misses` | gauge | Pedidos fora de `allowedIds` restrito (não ocorre em partidas normais) |
+| `promptwarfare_pool_miss_ratio` | gauge | Proporção de pool miss em chamadas restritas |
 | `promptwarfare_loop_versions` | gauge | Versões observadas |
 | `promptwarfare_items{kind}` | gauge | Itens com demanda/uso |
 | `promptwarfare_gap_status{status}` | gauge | Fechadas/persistentes/regredidas |
@@ -176,7 +176,7 @@ A imagem Docker já instala `pg`. As tabelas são criadas no boot. Salas continu
 | `ContainerDown` sem stack | Relabel do Netdata em `prometheus.yml`; container deve se chamar `pw_*` |
 | Dashboard vazio | Datasource `prometheus` e job `promptwarfare` no Prometheus |
 | `PromptWarfareMetricsStale` | Ledger travado, refresh de 60 s falhando ou processo sem acesso ao banco |
-| `pool_miss_ratio` alto | Pool pequeno/núcleo errado; revisar `server/contentPool.ts` |
+| `pool_miss_ratio` alto | Só ocorre com `allowedIds` restrito (ferramentas/testes); em partidas normais o catálogo ativo inteiro está no pool |
 | Cobertura baixa | Rodar `npm run loop:report`, revisar lacunas e promover candidatos |
 | Uptime Kuma não alcança | Containers na mesma rede? use `pw_api:3000`; não use `localhost` |
 | `/metrics` acessível publicamente | Remover location do nginx; é interno |

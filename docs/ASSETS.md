@@ -60,7 +60,7 @@ npm run assets:check -- --remote
 - `src/shared/assets.ts` expõe `resolveAssetUrl` (com `?v=<hash>` em URLs relativas para cache imutável) e `mergeAssetManifests`.
 - `GET /api/assets/core` entrega o núcleo pequeno (passos, impactos, ambiência, UI, waypoint e forja). O jogo não baixa o manifesto inteiro no boot.
 - `GET /api/assets?ids=a,b,c` entrega só os assets pedidos; ids desconhecidos são ignorados e o limite é 256 por requisição.
-- No início da partida, `contentPool.assetIds` (enviado apenas em `room:init`) pré-carrega o arsenal da sala. Durante o jogo, o cliente coleta assets das armas/loot/eventos visíveis e busca os que faltam em lotes.
+- No início da partida, `contentPool.assetIds` (enviado apenas em `room:init`) pré-carrega os assets do catálogo ativo que podem aparecer. Durante o jogo, o cliente coleta assets das armas/loot/eventos visíveis e busca os que faltam em lotes.
 - `babylonArena` aplica `texture:weapon:*` no material da arma quando há URL; se o download falhar, mantém a paleta. Quando um lote de assets chega, as visualizações dependentes de asset são invalidadas e reconstruídas no próximo tick.
 - `audioDirector` pré-carrega sons do núcleo e dos lotes sob demanda, com deduplicação por URL; usa os SFX espacialmente (HRTF/equalpower), escolhe passos/impactos por `MAT` e faz crossfade de loops de ambiência; `soundSynth` segue para tiros procedurais, UI e feedback local.
 - Eventos/waypoints continuam usando `waypoint:event` e `fx:event:*` do manifesto.

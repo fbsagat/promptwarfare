@@ -5,11 +5,7 @@ import type {
   CatalogFile,
   CatalogWeaponItem,
 } from './catalog.ts';
-import {
-  aggregateUsageWeights,
-  buildContentPool,
-  poolUsageFactor,
-} from './contentPool.ts';
+import { aggregateUsageWeights, buildContentPool } from './contentPool.ts';
 import { getCatalog } from './catalog.ts';
 import type { ContentUsageRow } from './ledger.ts';
 
@@ -77,6 +73,14 @@ function makeCatalog(): CatalogFile {
   return { schemaVersion: 3, version: 'test-1', weapons, events };
 }
 
+function activeWeapons(catalog: CatalogFile): CatalogWeaponItem[] {
+  return catalog.weapons.filter((item) => item.status !== 'deprecated');
+}
+
+function activeEvents(catalog: CatalogFile): CatalogEventItem[] {
+  return catalog.events.filter((item) => item.status !== 'deprecated');
+}
+
 function usage(
   itemId: string,
   role: ContentUsageRow['role'] = 'equip',
@@ -98,7 +102,7 @@ function usage(
   };
 }
 
-test('buildContentPool is deterministic and keeps the mandatory core', () => {
+test('buildContentPool gives every match the full active catalog', () => {
   const catalog = makeCatalog();
   const a = buildContentPool({ seed: 42, targetPlayers: 6, catalog });
   const b = buildContentPool({ seed: 42, targetPlayers: 6, catalog });
@@ -106,8 +110,16 @@ test('buildContentPool is deterministic and keeps the mandatory core', () => {
   assert.deepEqual(a.weaponIds, b.weaponIds);
   assert.deepEqual(a.eventIds, b.eventIds);
   assert.equal(a.hash, b.hash);
-  assert.ok(a.weaponCount >= 16 && a.weaponCount <= 26);
-  assert.ok(a.eventCount >= 7 && a.eventCount <= 11);
+  assert.equal(a.weaponCount, activeWeapons(catalog).length);
+  assert.equal(a.eventCount, activeEvents(catalog).length);
+  assert.deepEqual(
+    a.weaponIds,
+    activeWeapons(catalog).map((item) => item.id).sort(),
+  );
+  assert.deepEqual(
+    a.eventIds,
+    activeEvents(catalog).map((item) => item.id).sort(),
+  );
   assert.equal(new Set(a.assetIds).size, a.assetIds.length);
   assert.ok(a.weaponIds.includes('wpn_rifle_standard'));
   assert.ok(a.eventIds.includes('evt_weather_meteor_shower'));
@@ -132,25 +144,38 @@ test('buildContentPool is deterministic and keeps the mandatory core', () => {
   }
 });
 
-test('different seeds produce different pools', () => {
+test('pool content is content-addressed: seed and player count do not shrink it', () => {
   const catalog = makeCatalog();
-  const a = buildContentPool({ seed: 1, targetPlayers: 6, catalog });
-  const b = buildContentPool({ seed: 2, targetPlayers: 6, catalog });
-  assert.notEqual(a.hash, b.hash);
+  const a = buildContentPool({ seed: 1, targetPlayers: 4, catalog });
+  const b = buildContentPool({ seed: 2, targetPlayers: 14, catalog });
+  assert.deepEqual(a.weaponIds, b.weaponIds);
+  assert.deepEqual(a.eventIds, b.eventIds);
+  assert.equal(a.hash, b.hash);
+  assert.notEqual(a.seed, b.seed);
+  assert.notEqual(a.targetPlayers, b.targetPlayers);
 });
 
-test('real catalog pool stays within targets and covers every event category', () => {
+test('usage snapshot is diagnostic and never removes items from the arsenal', () => {
+  const catalog = makeCatalog();
+  const plain = buildContentPool({ seed: 7, targetPlayers: 6, catalog });
+  const withUsage = buildContentPool({
+    seed: 7,
+    targetPlayers: 6,
+    catalog,
+    usage: { wpn_pistol_ice: 1000 },
+  });
+  assert.deepEqual(withUsage.weaponIds, plain.weaponIds);
+  assert.deepEqual(withUsage.eventIds, plain.eventIds);
+  assert.equal(withUsage.hash, plain.hash);
+  assert.notEqual(withUsage.usageHash, plain.usageHash);
+});
+
+test('real catalog pool exposes every approved weapon and event', () => {
   const catalog = getCatalog();
   for (const targetPlayers of [4, 8, 14]) {
     const pool = buildContentPool({ seed: 7, targetPlayers, catalog });
-    assert.ok(
-      pool.weaponCount >= 16 && pool.weaponCount <= 26,
-      `${targetPlayers} jogadores: ${pool.weaponCount} armas no pool`,
-    );
-    assert.ok(
-      pool.eventCount >= 7 && pool.eventCount <= 11,
-      `${targetPlayers} jogadores: ${pool.eventCount} eventos no pool`,
-    );
+    assert.equal(pool.weaponCount, activeWeapons(catalog).length);
+    assert.equal(pool.eventCount, activeEvents(catalog).length);
     assert.equal(new Set(pool.weaponIds).size, pool.weaponIds.length);
     assert.equal(new Set(pool.eventIds).size, pool.eventIds.length);
     assert.ok(pool.assetIds.length > 0);
@@ -165,40 +190,6 @@ test('real catalog pool stays within targets and covers every event category', (
   }
 });
 
-test('pool usage factor penalizes used items and boosts unused ones', () => {
-  const usageMap = { wpn_pistol_ice: 100 };
-  const used = poolUsageFactor('wpn_pistol_ice', usageMap, 36);
-  const unused = poolUsageFactor('wpn_sniper_void', usageMap, 36);
-  assert.ok(used < 0.5);
-  assert.ok(unused > 1);
-  assert.equal(poolUsageFactor('wpn_sniper_void', undefined, 36), 1);
-});
-
-test('pool includes introducedIn novelty outside the core', () => {
-  const catalog = makeCatalog();
-  catalog.weapons.push({
-    ...weapon('pistol', 'ice'),
-    id: 'wpn_novidade_especial',
-    tags: ['weapon', 'especial'],
-    provenance: 'procedural',
-    introducedIn: catalog.version,
-  });
-  const pool = buildContentPool({ seed: 7, targetPlayers: 6, catalog });
-  assert.ok(pool.weaponIds.includes('wpn_novidade_especial'));
-});
-
-test('pool includes legacy ai_assisted novelty outside the core', () => {
-  const catalog = makeCatalog();
-  catalog.weapons.push({
-    ...weapon('pistol', 'ice'),
-    id: 'wpn_novidade_legacy',
-    tags: ['weapon', 'especial'],
-    provenance: 'ai_assisted',
-  });
-  const pool = buildContentPool({ seed: 8, targetPlayers: 6, catalog });
-  assert.ok(pool.weaponIds.includes('wpn_novidade_legacy'));
-});
-
 test('pool skips deprecated items', () => {
   const catalog = makeCatalog();
   const pool = buildContentPool({ seed: 9, targetPlayers: 6, catalog });
@@ -208,6 +199,8 @@ test('pool skips deprecated items', () => {
   item.status = 'deprecated';
   const next = buildContentPool({ seed: 9, targetPlayers: 6, catalog: deprecated });
   assert.equal(next.weaponIds.includes(id), false);
+  assert.equal(next.weaponCount, pool.weaponCount - 1);
+  assert.notEqual(next.hash, pool.hash);
 });
 
 test('aggregateUsageWeights counts only human equip/event exposure', () => {

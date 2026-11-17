@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { isClientDevEnabled, isServerDevEnabled } from '../src/shared/devMode.ts';
+import { getCatalogVersion } from './catalog.ts';
 import { RoomManager, type SocketLike } from './roomManager.ts';
 
 interface CapturedMsg {
@@ -90,6 +91,11 @@ test('RoomManager with devEnabled=false blocks dev:action and solo dev start cle
     });
     assert.equal(ws.last('room:error')?.payload.code, 'DEV_DISABLED');
     assert.equal(created.room.phase, 'playing');
+
+    ws.clear();
+    manager.handleClientMessage('PROD1', created.playerId, { type: 'dev:catalog' });
+    assert.equal(ws.last('room:error')?.payload.code, 'DEV_DISABLED');
+    assert.equal(ws.last('dev:catalog'), undefined);
   } finally {
     manager.disposeAll();
   }
@@ -184,6 +190,121 @@ test('RoomManager with devEnabled=true enables solo sandbox start, weapon/event 
     });
     assert.equal(created.room.phase, 'ended');
     assert.equal(created.room.summary?.winnerId, created.playerId);
+  } finally {
+    manager.disposeAll();
+  }
+});
+
+test('dev catalog lists exact items and spawns weapons, bot loadouts, events, and training dummies', async () => {
+  const manager = new RoomManager({ devEnabled: true });
+  try {
+    const ws = new MockSocket();
+    const created = manager.createAndJoinRoom(ws, {
+      roomId: 'DEV2',
+      roomName: 'Catálogo Dev',
+      playerName: 'DevUser',
+      fillWithBots: false,
+    });
+    assert.ok(created);
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'room:start',
+      payload: { devSolo: true },
+    });
+    const host = created.room.players.get(created.playerId)!;
+
+    // Catálogo compacto, sem carregar shards no payload do tick.
+    ws.clear();
+    manager.handleClientMessage('DEV2', created.playerId, { type: 'dev:catalog' });
+    const catalogMsg = ws.last('dev:catalog');
+    assert.ok(catalogMsg);
+    assert.equal(catalogMsg.payload.catalogVersion, getCatalogVersion());
+    assert.ok(catalogMsg.payload.weapons.some((w: any) => w.id === 'wpn_pistol_ice'));
+    assert.ok(catalogMsg.payload.events.some((e: any) => e.id === 'evt_terrain_rising_tide'));
+
+    // Arma exata por id, sem passar pela pontuação de prompts.
+    const pistol = catalogMsg.payload.weapons.find((w: any) => w.id === 'wpn_pistol_ice');
+    assert.equal(pistol.name.length > 0, true);
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'spawn_catalog_weapon', itemId: 'wpn_pistol_ice' },
+    });
+    assert.ok(host.slots.some((slot) => slot?.weapon?.catalogId === 'wpn_pistol_ice'));
+    assert.equal(host.slots[host.activeSlot]?.weapon?.catalogId, 'wpn_pistol_ice');
+
+    // Item desconhecido não equipa nada nem quebra a partida.
+    const beforeSlots = host.slots.filter(Boolean).length;
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'spawn_catalog_weapon', itemId: 'wpn_does_not_exist' },
+    });
+    assert.equal(host.slots.filter(Boolean).length, beforeSlots);
+
+    // Arma exata em um bot vivo, para testar o comportamento ofensivo.
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'spawn_bot' },
+    });
+    const bot = Array.from(created.room.players.values()).find((p) => p.isBot && p.alive);
+    assert.ok(bot);
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'equip_bot_weapon', itemId: 'wpn_rifle_standard' },
+    });
+    assert.ok(bot.slots.some((slot) => slot?.weapon?.catalogId === 'wpn_rifle_standard'));
+
+    // Evento exato por id, com aviso reduzido para testar na hora.
+    ws.clear();
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'spawn_catalog_event', itemId: 'evt_terrain_rising_tide' },
+    });
+    assert.equal(created.room.activeEvents.length, 1);
+    assert.equal(created.room.activeEvents[0].catalogId, 'evt_terrain_rising_tide');
+    assert.ok(created.room.activeEvents[0].warningRemainingSec <= 1);
+
+    // Pausa dos eventos automáticos e pulo da espera de sorteio.
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'toggle_auto_events' },
+    });
+    assert.equal(created.room.devAutoEventsPaused, true);
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'skip_event_cooldown' },
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(created.room.rafflePlayerId, null);
+
+    // Alvo de treino: imóvel, com vida extra, visível na partida.
+    const beforeDummy = created.room.players.size;
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'spawn_dummy' },
+    });
+    assert.equal(created.room.players.size, beforeDummy + 1);
+    const dummy = Array.from(created.room.players.values()).find((p) => p.devDummy);
+    assert.ok(dummy);
+    assert.equal(dummy!.hp, 250);
+    assert.equal(dummy!.name.startsWith('Alvo '), true);
+
+    // Dano de teste no jogador humano.
+    host.hp = 100;
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'damage_player', amount: 25 },
+    });
+    assert.equal(host.hp, 75);
+
+    // Modo Deus continua bloqueando dano de dev.
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'toggle_god_mode' },
+    });
+    manager.handleClientMessage('DEV2', created.playerId, {
+      type: 'dev:action',
+      payload: { action: 'damage_player', amount: 100 },
+    });
+    assert.equal(host.hp, 100);
   } finally {
     manager.disposeAll();
   }

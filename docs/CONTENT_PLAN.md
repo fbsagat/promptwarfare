@@ -10,7 +10,8 @@
 > **Endurecimento P0:** `schemaVersion` versionado com `status`/`provenance` por item, `catalog:build` preservando itens promovidos, resolvedor com `partial` para cobertura duvidosa, relatórios por janela recente (`--days`), validação/rate limit de feedback, rate limit de `prompt:open` e nome do catálogo no lugar do prompt cru em eventos.
 > **Fechamento P1:** feedback de eventos no HUD, relatório `loop:report` cruzando demanda × uso × versão, detecção de lacunas fechadas/persistentes/regredidas, expansão de aliases nos candidatos, mesclagem de aliases em itens existentes na promoção e composição conservadora de capacidades no resolvedor.
 > **Operação P2:** hot reload atômico do catálogo (`CATALOG_WATCH`/`SIGHUP`), `/api/metrics` com agregados e token opcional, health check ampliado e agendamento documentado de `loop:report`/`ledger:prune`.
-> **Pool P2:** arsenal determinístico por sala (`server/contentPool.ts`) com núcleo obrigatório, peso inverso ao uso humano, quota de novidade (`introducedIn`/provenance), `pool_hash`/`pool_miss` no ledger e separação entre “fora do pool” e lacuna de catálogo nos relatórios.
+> **Pool P2:** `server/contentPool.ts` com `pool_hash`/`pool_miss` no ledger e separação entre “fora do pool” e lacuna de catálogo nos relatórios.
+> **Pool v3:** toda partida recebe o **catálogo ativo inteiro** (armas e eventos aprovados). O pool deixou de filtrar por seed/uso e virou um descritor content-addressed do arsenal + assets; `pool_miss` fica para chamadas restritas por `allowedIds`. O resolvedor nunca usa item default: devolve o candidato mais próximo (trigramas no pior caso) e marca `partial`.
 > **Observabilidade P2:** `introducedIn` no schema 3 do catálogo, alertas agregados em `/api/metrics` (baixa cobertura, pool miss alto, lacunas regredidas, cobertura duvidosa e ausência de uso).
 > **Dedup P2:** embeddings lexicais determinísticos (`server/semantic.ts`), quase-duplicatas (`server/semanticDuplicates.ts`), `catalog:dedupe` e merge semântico na promoção com tag/arquétipo compartilhados.
 > **Composição de eventos:** `MapEventState.components` combina categorias, escala o componente secundário para o orçamento total de 100 e aplica todos os efeitos no tick.
@@ -334,17 +335,16 @@ Campos de controle:
 - O runtime faz correspondência determinística por prompt normalizado, aliases e tags.
 - Não há embedding de prompt em tempo real; se embeddings forem usados, são pré-computados no catálogo.
 
-### 8.6 Pool por partida
+### 8.6 Catálogo por partida
 
-O servidor monta um pool de conteúdo aprovado por partida, considerando:
+A partir do Pool v3, toda partida disponibiliza o **catálogo ativo inteiro** — todas as armas e eventos `approved` — e o pool passa a ser um descritor content-addressed do arsenal:
 
-- tamanho da sala e duração esperada;
-- tema/season;
-- diversidade e novidade;
-- itens recém-publicados (quota de exploração);
-- fairness e orçamento.
+- o mesmo catálogo gera o mesmo `hash` em qualquer sala;
+- `seed`, tamanho da sala e uso humano ficam como proveniência/diagnóstico e não removem itens;
+- `assetIds` lista os assets do catálogo ativo para prefetch; payloads continuam vindo dos shards sob demanda;
+- itens `deprecated` nunca entram.
 
-O prompt do jogador resolve **contra esse pool**, não contra o catálogo inteiro. A exceção é o pedido explícito: nome/alias exato ou chave canônica de um item aprovado é honrado mesmo fora do pool (registrado como `pool_miss`); prompts vagos continuam limitados ao arsenal da sala.
+O prompt do jogador resolve contra esse catálogo. `allowedIds` continua existindo para ferramentas/testes restritos; pedido explícito (alias/canônico) vence a restrição e o desvio é registrado como `pool_miss`.
 
 ## 9. Resolvedor determinístico
 
@@ -354,13 +354,13 @@ O prompt do jogador resolve **contra esse pool**, não contra o catálogo inteir
 | Tag/canonical | tags ou chave canônica batem | baixo |
 | Composição | capacidades existentes cobrem o pedido | baixo |
 | Família/template | cai numa família segura | baixo |
-| Default | nada cobriu | ~0 |
+| Mais próximo | nada pontuou; similaridade de trigramas no catálogo ativo | baixo |
 
 Regras:
 
 - Sem rede, sem LLM, sem geração em tempo real.
 - A resposta é imediata; a arma é equipada ou o evento enfileirado no mesmo tick.
-- Se não houver cobertura: adapta o item mais próximo, marca `fromCatalog` e registra a lacuna no ledger. Proposta: nunca bloquear o jogador.
+- Se não houver cobertura: serve o item mais próximo (tokens/tags e, no pior caso, trigramas), marca `fromCatalog` e registra a lacuna no ledger. Nunca bloqueia nem cai em default.
 - A UI mostra “catálogo”/“adaptado”, não “banco”.
 - Testes golden cobrem cada degrau e o comportamento sem cobertura.
 
@@ -407,7 +407,7 @@ Texto de rascunho cancelado não é enviado por padrão; cancelamento/timeout re
 ### 10.4 Métricas
 
 - **Cobertura:** % de prompts resolvidos por item aprovado.
-- **Reuso:** % servido pelo catálogo vs. adaptação/default.
+- **Reuso:** % servido por match exato/alias vs. adaptação para o item mais próximo.
 - **Lacunas:** prompts sem cobertura, agrupados.
 - **Qualidade:** dano/abate/sobrevivência por item, troca imediata, feedback.
 - **UX:** taxa de abertura, cancelamento, timeout, tempo de escrita.
@@ -554,7 +554,7 @@ Entregas (quando necessário):
 - [ ] `allocation` não existe na UI, no protocolo nem no blueprint.
 - [ ] Catálogo é versionado, read-only no runtime e reversível por deploy.
 - [ ] Resolvedor é determinístico, local e testado nos cinco degraus.
-- [ ] Sem cobertura, o jogador recebe adaptação/default e a lacuna é registrada.
+- [ ] Sem cobertura, o jogador recebe o item mais próximo e a lacuna é registrada.
 - [ ] Bots/dev/preview não entram na demanda humana.
 
 ### Pipeline
@@ -574,7 +574,7 @@ Entregas (quando necessário):
 
 | Risco | Mitigação |
 | --- | --- |
-| Cauda longa de prompts sem cobertura | Aliases, composição, famílias, default adaptado e cadência de releases. |
+| Cauda longa de prompts sem cobertura | Aliases, composição, famílias, item mais próximo e cadência de releases. |
 | Catálogo pequeno e partidas repetitivas | Packs temáticos, variações de paleta/malha, quota de novidade. |
 | Gargalo no dev | Priorizar clusters, não prompts; packs reutilizáveis. |
 | Dados sem sinal de qualidade | Telemetria de uso, feedback e curadoria; frequência sozinha não basta. |
@@ -597,7 +597,7 @@ Itens ainda não fechados, com recomendação:
 6. **Tutorial:** como ensinar o `Enter` na primeira partida.
 7. **Assets no cliente:** som por elemento e waypoint já usam o manifesto; ainda faltam texturas/efeitos completos no rendering.
 
-Decididos durante a implementação: catálogo em JSON no repositório, sem cobertura → adaptação/default registrada, killfeed mantém `x/100` como leitura de poder e evento sem claim é pulado.
+Decididos durante a implementação: catálogo em JSON no repositório, sem cobertura → item mais próximo com lacuna registrada, killfeed mantém `x/100` como leitura de poder e evento sem claim é pulado.
 
 ## 18. Referências
 

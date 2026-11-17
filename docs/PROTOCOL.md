@@ -52,9 +52,10 @@ Tratadas em `RoomManager.handleClientMessage`:
 | `room:kick` | `{ targetPlayerId }` | Master expulsa um jogador. |
 | `room:transfer_host` | `{ targetPlayerId }` | Master transfere a liderança. |
 | `room:restart` | — | Master reinicia a partida. |
-| `dev:action` | `DevActionPayload` | Ferramentas de desenvolvimento; ignorado se o dev mode estiver desligado. |
+| `dev:action` | `DevActionPayload` | Ferramentas de desenvolvimento; rejeitado com `DEV_DISABLED` se o dev mode estiver desligado. |
+| `dev:catalog` | — | Pede a lista compacta do catálogo (`dev:catalog` na resposta); rejeitado com `DEV_DISABLED` em produção. |
 
-`DevActionPayload` aceita: `toggle_god_mode`, `toggle_infinite_sandbox`, `toggle_freeze_bots`, `unlock_forge`, `refill_player`, `quick_forge`, `win_event_raffle`, `trigger_event`, `clear_events`, `teleport_center`, `spawn_bot`, `kill_bots` e `force_restart`.
+`DevActionPayload` aceita: `toggle_god_mode`, `toggle_infinite_sandbox`, `toggle_freeze_bots`, `toggle_auto_events`, `unlock_forge`, `refill_player`, `damage_player` (`amount`), `quick_forge` (`prompt`), `spawn_catalog_weapon` (`itemId`), `equip_bot_weapon` (`itemId`), `win_event_raffle`, `trigger_event` (`prompt`), `spawn_catalog_event` (`itemId`), `skip_event_cooldown`, `clear_events`, `teleport_center`, `spawn_bot`, `spawn_dummy`, `kill_bots` e `force_restart`.
 
 `content:feedback` só aceita `itemId` existente no catálogo e do `kind` correspondente, com limite de 10 eventos por 10 s. `prompt:open` aceita no máximo 12 aberturas por 10 s por jogador.
 
@@ -81,9 +82,10 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 | `ai:weapon_ready` | `{ weapon, slotIndex }` quando a arma do catálogo é equipada. |
 | `ai:error` | `{ message }` em falhas de permissão/tempo da forja ou evento. |
 | `ai:event_raffle_won` | Jogador local foi sorteado para propor um evento. |
+| `dev:catalog` | `DevCatalogPayload`: `{ catalogVersion, weapons, events }` com `id`, nome, aliases, tags, `budgetUsed` e resumo. Só existe em dev mode; enviado sob demanda ao abrir o painel F8. |
 | `player:select_slot` | `{ slotIndex }` quando o servidor força a troca de slot. |
 
-Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala; `assetIds` aparece só no `room:init` para prefetch. No fio, `activeEvents` é `NetMapEventState`: os campos estáticos `components` e `entityBlueprint` foram removidos do tick (o cliente não os usa para exibição); `fun` permanece para o HUD mostrar contra-jogadas. `entities` continua carregando o blueprint da criatura porque o renderizador precisa dele para montar a malha.
+Cada jogador carrega `prompt: { kind, endsAt } | null` e `forge: { phase, endsAt }`. O evento da sala carrega `event: { phase, endsAt, rafflePlayerId, rafflePlayerName }`. Use `serverNow` para interpolar os contadores; os campos antigos em segundos continuam no payload durante a migração. O campo `prompt` de um evento ativo é o nome do item do catálogo, não o texto cru digitado pelo jogador. `room:init`/`room:tick` incluem `contentPool: { hash, algorithmVersion, catalogVersion, weaponCount, eventCount } | null`, o arsenal da sala — hoje o catálogo ativo inteiro; `assetIds` aparece só no `room:init` para prefetch. No fio, `activeEvents` é `NetMapEventState`: os campos estáticos `components` e `entityBlueprint` foram removidos do tick (o cliente não os usa para exibição); `fun` permanece para o HUD mostrar contra-jogadas. `entities` continua carregando o blueprint da criatura porque o renderizador precisa dele para montar a malha.
 
 Cada jogador também traz `stamina`, `sprinting`, `crouching`, `sliding`, `slideCooldownSec`, `climbing` e `ziplineRouteId` para HUD/câmera. As rotas de tirolesa **não** vão no protocolo: cliente e servidor derivam a mesma lista determinística da seed/dimensões via `createProceduralIsland(..., meta)`.
 

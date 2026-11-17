@@ -434,6 +434,37 @@ export interface DevRoomState {
   godMode: boolean;
   infiniteSandbox: boolean;
   botsFrozen: boolean;
+  /** Eventos automáticos (sorteio e catástrofes de estagnação) pausados. */
+  autoEventsPaused: boolean;
+  /** Versão do catálogo em uso; muda sozinha após um hot reload. */
+  catalogVersion: string;
+}
+
+export interface DevCatalogWeaponEntry {
+  id: string;
+  name: string;
+  aliases: string[];
+  tags: string[];
+  status: 'approved' | 'deprecated';
+  budgetUsed: number;
+  damage: number;
+  projectiles: number;
+}
+
+export interface DevCatalogEventEntry {
+  id: string;
+  name: string;
+  aliases: string[];
+  tags: string[];
+  status: 'approved' | 'deprecated';
+  budgetUsed: number;
+  archetype: string;
+}
+
+export interface DevCatalogPayload {
+  catalogVersion: string;
+  weapons: DevCatalogWeaponEntry[];
+  events: DevCatalogEventEntry[];
 }
 
 export type DevActionPayload =
@@ -448,6 +479,13 @@ export type DevActionPayload =
   | { action: 'clear_events' }
   | { action: 'teleport_center' }
   | { action: 'spawn_bot' }
+  | { action: 'spawn_dummy' }
+  | { action: 'equip_bot_weapon'; itemId: string }
+  | { action: 'spawn_catalog_weapon'; itemId: string }
+  | { action: 'spawn_catalog_event'; itemId: string }
+  | { action: 'toggle_auto_events' }
+  | { action: 'skip_event_cooldown' }
+  | { action: 'damage_player'; amount: number }
   | { action: 'kill_bots' }
   | { action: 'force_restart' };
 

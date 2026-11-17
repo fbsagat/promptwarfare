@@ -66,10 +66,13 @@ import {
 import { getAssetVersion } from './assets.ts';
 import {
   getCatalog,
+  getCatalogDevIndex,
   getCatalogItem,
   getCatalogItemName,
   getCatalogVersion,
+  resolveEventById,
   resolveEventFromCatalog,
+  resolveWeaponById,
   resolveWeaponFromCatalog,
 } from './catalog.ts';
 import {
@@ -110,6 +113,8 @@ interface ServerPlayer extends PlayerNetState {
   botThinkTimer: number;
   botForgePrompted: boolean;
   botBrain: BotBrainState | null;
+  /** Alvo de treino criado pelo dev mode: não anda, não atira, só recebe dano. */
+  devDummy: boolean;
   grappleTimerSec: number;
   grappleMode: 'pull_self' | 'pull_target' | null;
   grappleTargetId: string | null;
@@ -186,6 +191,7 @@ interface GameRoom {
   devGodMode: boolean;
   devInfiniteSandbox: boolean;
   devBotsFrozen: boolean;
+  devAutoEventsPaused: boolean;
 }
 
 const PROMPT_OPEN_RATE_LIMIT = 12;
@@ -573,6 +579,7 @@ export class RoomManager {
       devGodMode: false,
       devInfiniteSandbox: false,
       devBotsFrozen: false,
+      devAutoEventsPaused: false,
     };
 
     const hostPlayer = this.createHumanPlayer(
@@ -788,6 +795,7 @@ export class RoomManager {
       botThinkTimer: 0,
       botForgePrompted: false,
       botBrain: null,
+      devDummy: false,
       grappleTimerSec: 0,
       grappleMode: null,
       grappleTargetId: null,
@@ -977,6 +985,7 @@ export class RoomManager {
       botThinkTimer: 0.4 + Math.random() * 0.8,
       botForgePrompted: false,
       botBrain: createBotBrainState(personality, spawn),
+      devDummy: false,
       grappleTimerSec: 0,
       grappleMode: null,
       grappleTargetId: null,
@@ -1191,9 +1200,8 @@ export class RoomManager {
         }
         const prompt = String(msg.payload?.prompt ?? '').slice(0, 90);
         if (!prompt.trim()) return;
-        const resolution = resolveWeaponFromCatalog(prompt, {
-          allowedIds: room.contentPool?.weaponIds,
-        });
+        // O catálogo ativo inteiro está disponível: sem restrição de pool.
+        const resolution = resolveWeaponFromCatalog(prompt);
         const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
         this.recordPromptEvent(room, player, 'submitted', 'weapon', {
           prompt,
@@ -1234,9 +1242,7 @@ export class RoomManager {
           10,
           (room.dimZ * VOXEL_SIZE) / 2,
         ];
-        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center, {
-          allowedIds: room.contentPool?.eventIds,
-        });
+        const resolution = resolveEventFromCatalog(prompt, player.id, player.name, center);
         const elapsedMs = player.promptOpenedAt ? Date.now() - player.promptOpenedAt : null;
         this.recordPromptEvent(room, player, 'submitted', 'event', {
           prompt,
@@ -1277,6 +1283,22 @@ export class RoomManager {
           return;
         }
         this.startRoomMatch(room);
+        break;
+      }
+
+      case 'dev:catalog': {
+        if (!this.devEnabled) {
+          this.sendRoomError(
+            player.ws,
+            'DEV_DISABLED',
+            'Modo desenvolvimento indisponível em produção.',
+          );
+          return;
+        }
+        this.sendToPlayer(player, {
+          type: 'dev:catalog',
+          payload: getCatalogDevIndex(),
+        });
         break;
       }
 
@@ -2352,7 +2374,6 @@ export class RoomManager {
               botWinner.id,
               botWinner.name,
               center,
-              { allowedIds: room.contentPool?.eventIds },
             );
             this.recordPromptEvent(room, botWinner, 'submitted', 'event', {
               prompt,
@@ -2378,14 +2399,17 @@ export class RoomManager {
         }
         this.resetEventCycle(room);
       }
-    } else {
+    } else if (!(this.devEnabled && room.devAutoEventsPaused)) {
       room.eventCooldownSec = Math.max(0, Math.ceil((room.eventEndsAt - now) / 1000));
       if (room.eventEndsAt <= now) {
         this.raffleEventPlayer(room);
       }
     }
 
-    if (room.elapsedSec - room.lastKillElapsedSec > 120 + room.stagnationLevel * 45) {
+    if (
+      !(this.devEnabled && room.devAutoEventsPaused) &&
+      room.elapsedSec - room.lastKillElapsedSec > 120 + room.stagnationLevel * 45
+    ) {
       room.stagnationLevel += 1;
       const center: [number, number, number] = [
         (room.dimX * VOXEL_SIZE) / 2,
@@ -2421,7 +2445,7 @@ export class RoomManager {
       if (!player.alive) continue;
 
       if (player.isBot) {
-        if (this.devEnabled && room.devBotsFrozen) {
+        if (this.devEnabled && (room.devBotsFrozen || player.devDummy)) {
           player.moveX = 0;
           player.moveZ = 0;
           player.jumpQueued = false;
@@ -2788,6 +2812,8 @@ export class RoomManager {
       godMode: room.devGodMode,
       infiniteSandbox: room.devInfiniteSandbox,
       botsFrozen: room.devBotsFrozen,
+      autoEventsPaused: room.devAutoEventsPaused,
+      catalogVersion: getCatalogVersion(),
     };
   }
 
@@ -2859,6 +2885,119 @@ export class RoomManager {
           reason: null,
         });
         this.equipForgedWeapon(room, player, resolution.blueprint);
+        break;
+      }
+
+      case 'spawn_catalog_weapon': {
+        if (room.phase !== 'playing') return;
+        const resolution = resolveWeaponById(String(payload.itemId || '').slice(0, 80));
+        if (!resolution) return;
+        this.recordPromptEvent(room, player, 'submitted', 'weapon', {
+          actorType: 'dev',
+          prompt: resolution.blueprint.name,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.blueprint.budgetUsed,
+          wasClamped: resolution.blueprint.wasClamped,
+          elapsedMs: null,
+          reason: null,
+        });
+        this.equipForgedWeapon(room, player, resolution.blueprint);
+        break;
+      }
+
+      case 'equip_bot_weapon': {
+        if (room.phase !== 'playing') return;
+        const resolution = resolveWeaponById(String(payload.itemId || '').slice(0, 80));
+        if (!resolution) return;
+        const bots = Array.from(room.players.values()).filter(
+          (candidate) => candidate.isBot && candidate.alive && candidate.id !== player.id,
+        );
+        const target = bots.find((candidate) => !candidate.devDummy) ?? bots[0];
+        if (!target) return;
+        this.equipForgedWeapon(room, target, resolution.blueprint);
+        this.broadcastKillfeed(room, {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          text: `🧪 [DEV] ${target.name} equipado com "${resolution.blueprint.name}"`,
+          tone: 'event',
+          ts: Date.now(),
+        });
+        break;
+      }
+
+      case 'spawn_catalog_event': {
+        if (room.phase !== 'playing') return;
+        const center: [number, number, number] = [
+          (room.dimX * VOXEL_SIZE) / 2,
+          10,
+          (room.dimZ * VOXEL_SIZE) / 2,
+        ];
+        const resolution = resolveEventById(
+          String(payload.itemId || '').slice(0, 80),
+          player.id,
+          player.name,
+          center,
+        );
+        if (!resolution) return;
+        this.recordPromptEvent(room, player, 'submitted', 'event', {
+          actorType: 'dev',
+          prompt: resolution.event.prompt,
+          itemId: resolution.itemId,
+          strategy: resolution.strategy,
+          budgetUsed: resolution.event.budgetUsed,
+          wasClamped: resolution.event.wasClamped,
+          elapsedMs: null,
+          reason: null,
+        });
+        resolution.event.warningRemainingSec = 1;
+        this.enqueueMapEvent(room, resolution.event);
+        break;
+      }
+
+      case 'toggle_auto_events': {
+        room.devAutoEventsPaused = !room.devAutoEventsPaused;
+        break;
+      }
+
+      case 'skip_event_cooldown': {
+        if (room.phase !== 'playing') return;
+        room.eventEndsAt = Date.now();
+        room.eventCooldownSec = 0;
+        break;
+      }
+
+      case 'spawn_dummy': {
+        if (room.phase !== 'playing') return;
+        if (room.players.size >= 18) return;
+        const targetX = player.position.x + Math.sin(player.yaw) * 4;
+        const targetZ = player.position.z + Math.cos(player.yaw) * 4;
+        const groundY = getGroundVoxelY(
+          room.grid,
+          Math.max(0, Math.floor(targetX / VOXEL_SIZE)),
+          Math.max(0, Math.floor(targetZ / VOXEL_SIZE)),
+        );
+        const dummy = this.spawnSingleBot(room, {
+          x: targetX,
+          y: (groundY + 3) * VOXEL_SIZE,
+          z: targetZ,
+        });
+        dummy.name = `Alvo ${dummy.name}`.slice(0, 24);
+        dummy.hp = 250;
+        dummy.color = '#94a3b8';
+        dummy.devDummy = true;
+        this.broadcastKillfeed(room, {
+          id: `kf_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          text: `🧪 [DEV] Alvo de treino posicionado à sua frente`,
+          tone: 'event',
+          ts: Date.now(),
+        });
+        break;
+      }
+
+      case 'damage_player': {
+        if (room.phase !== 'playing') return;
+        const amount = Math.max(1, Math.min(100, Number(payload.amount) || 25));
+        this.damagePlayer(room, player, amount, null, 'comando dev');
         break;
       }
 
@@ -3949,9 +4088,7 @@ export class RoomManager {
       bot.weaponCooldownSec = WEAPON_CYCLE_COOLDOWN_SEC + 1 + Math.random() * 2;
       const prompts = brain.personality.weaponPrompts;
       const prompt = prompts[Math.floor(Math.random() * prompts.length)];
-      const resolution = resolveWeaponFromCatalog(prompt, {
-        allowedIds: room.contentPool?.weaponIds,
-      });
+      const resolution = resolveWeaponFromCatalog(prompt);
       this.recordPromptEvent(room, bot, 'submitted', 'weapon', {
         prompt,
         itemId: resolution.itemId,

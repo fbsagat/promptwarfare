@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { buildCanonicalKey, normalizePrompt } from '../src/shared/prompt.ts';
 import { computeEventPoints, validateAndClampWeapon } from '../src/shared/budget.ts';
 import type {
+  DevCatalogPayload,
   EntityBlueprint,
   EventArchetype,
   EventFunContract,
@@ -37,6 +38,7 @@ export type CatalogResolutionStrategy =
   | 'tags'
   | 'composition'
   | 'partial'
+  /** Legado: o resolvedor não emite mais `default`; mantido para linhas antigas do ledger. */
   | 'default';
 
 export interface CatalogItemMeta {
@@ -112,9 +114,9 @@ const CATALOG_INDEX_PATH = path.join(CATALOG_DIR, 'index.json');
 const CATALOG_SHARD_DIR = path.join(CATALOG_DIR, 'shards');
 /** Shards mantidos em memória; cada um é imutável e content-addressed. */
 const SHARD_CACHE_MAX = 8;
+/** Itens-núcleo históricos (assets/core e relatórios antigos); não são mais fallback. */
 export const DEFAULT_WEAPON_ID = 'wpn_rifle_standard';
-export const DEFAULT_EVENT_ID = 'evt_weather_meteor_shower';
-const GENERIC_TAGS = new Set(['weapon', 'event', 'weather', 'terrain', 'entity']);
+export const DEFAULT_EVENT_ID = 'evt_weather_meteor_shower';const GENERIC_TAGS = new Set(['weapon', 'event', 'weather', 'terrain', 'entity']);
 // Evita falsa cobertura: token overlap fraco não conta como match de catálogo.
 const MIN_COVER_SCORE = 60;
 // Abaixo disto o match existe, mas é ambíguo: registra como lacuna parcial.
@@ -796,6 +798,8 @@ interface ResolverEntry<T extends CatalogWeaponItem | CatalogEventItem> {
   tokens: Set<string>;
   tagNorms: string[];
   keywordEntries: Array<{ tag: string; words: string[] }>;
+  /** Trigramas de nome+aliases+tags+sinônimos; usados só no desempate por proximidade. */
+  searchGrams: Set<string>;
 }
 
 interface ResolverWordPosting<T extends CatalogWeaponItem | CatalogEventItem> {
@@ -891,7 +895,21 @@ function buildResolverEntries<T extends CatalogWeaponItem | CatalogEventItem>(
           .map((word) => normalizePrompt(word))
           .filter((word) => word.length > 0),
       }));
-    return { item, ordinal, aliasNorms, canonicalKeys, tokens, tagNorms, keywordEntries };
+    const searchText = normalizePrompt(
+      [item.name, ...item.aliases, ...item.tags, ...keywordEntries.flatMap((entry) => entry.words)].join(
+        ' ',
+      ),
+    );
+    return {
+      item,
+      ordinal,
+      aliasNorms,
+      canonicalKeys,
+      tokens,
+      tagNorms,
+      keywordEntries,
+      searchGrams: buildTrigrams(searchText),
+    };
   });
 }
 
@@ -1001,6 +1019,72 @@ function recordResolverCall(
   if (elapsed > catalogStats.resolverMsMax) catalogStats.resolverMsMax = elapsed;
 }
 
+function buildTrigrams(text: string): Set<string> {
+  const padded = ` ${text} `;
+  const grams = new Set<string>();
+  for (let i = 0; i + 3 <= padded.length; i++) {
+    grams.add(padded.slice(i, i + 3));
+  }
+  return grams;
+}
+
+function trigramSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const gram of a) {
+    if (b.has(gram)) shared += 1;
+  }
+  return shared / Math.sqrt(a.size * b.size);
+}
+
+function promptHash(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * "Mais próximo" quando o prompt não gera nenhum candidato pelo índice
+ * invertido (typo, palavra inventada, sinônimo fora do domínio). Compara
+ * trigramas contra nome+aliases+tags+sinônimos de todos os itens ativos e
+ * desempata pela ordem do catálogo. Se absolutamente nada compartilha
+ * trigramas, usa o hash do prompt para espalhar a escolha — assim não existe
+ * um "default" fixo para textos sem sinal algum.
+ */
+function nearestEntry<T extends CatalogWeaponItem | CatalogEventItem>(
+  activeEntries: ResolverEntry<T>[],
+  promptGrams: Set<string>,
+  promptNorm: string,
+): ScoredEntry<T> | null {
+  let bestEntry: ResolverEntry<T> | null = null;
+  let bestScore = -1;
+  for (const entry of activeEntries) {
+    const score = trigramSimilarity(promptGrams, entry.searchGrams);
+    if (
+      bestEntry === null ||
+      score > bestScore + 1e-9 ||
+      (Math.abs(score - bestScore) <= 1e-9 && entry.ordinal < bestEntry.ordinal)
+    ) {
+      bestEntry = entry;
+      bestScore = score;
+    }
+  }
+  if (!bestEntry) return null;
+  if (bestScore <= 1e-9) {
+    bestEntry = activeEntries[promptHash(promptNorm) % activeEntries.length];
+    bestScore = 0;
+  }
+  return {
+    item: bestEntry.item,
+    entry: bestEntry,
+    score: Math.round(bestScore * 1000) / 10,
+    strategy: 'partial',
+  };
+}
+
 function scoreEntry<T extends CatalogWeaponItem | CatalogEventItem>(
   entry: ResolverEntry<T>,
   promptNorm: string,
@@ -1016,7 +1100,7 @@ function scoreEntry<T extends CatalogWeaponItem | CatalogEventItem>(
   for (const keywordEntry of entry.keywordEntries) {
     if (keywordEntry.words.some((word) => promptNorm.includes(word))) score += 60;
   }
-  return { item: entry.item, entry, score, strategy: score > 0 ? 'tags' : 'default' };
+  return { item: entry.item, entry, score, strategy: score > 0 ? 'tags' : 'partial' };
 }
 
 function collectCandidates<T extends CatalogWeaponItem | CatalogEventItem>(
@@ -1069,8 +1153,8 @@ function pickBestEntry<T extends CatalogWeaponItem | CatalogEventItem>(
   candidates: CandidateCollection<T>,
   promptNorm: string,
   promptTokens: Set<string>,
+  promptGrams: Set<string>,
   activeEntries: ResolverEntry<T>[],
-  defaultId: string,
   ambiguous: boolean,
 ): ScoredEntry<T> {
   let best: ScoredEntry<T> | null = null;
@@ -1090,9 +1174,14 @@ function pickBestEntry<T extends CatalogWeaponItem | CatalogEventItem>(
     if (best.score >= CONFIDENT_COVER_SCORE && !ambiguous) return best;
     return { ...best, strategy: 'partial' };
   }
-  const fallback =
-    activeEntries.find((entry) => entry.item.id === defaultId) ?? activeEntries[0];
-  return { item: fallback.item, entry: fallback, score: 0, strategy: 'default' };
+  // Nunca cai em item default: se algum candidato pontuou, ele é o mais
+  // próximo; se nenhum pontuou, usa similaridade de trigramas sobre o catálogo
+  // inteiro. Em ambos os casos a lacuna fica marcada como `partial`.
+  if (best) return { ...best, strategy: 'partial' };
+  const nearest = nearestEntry(activeEntries, promptGrams, promptNorm);
+  if (nearest) return nearest;
+  const first = activeEntries[0] ?? candidates.entries[0];
+  return { item: first.item, entry: first, score: 0, strategy: 'partial' };
 }
 
 function cloneWeapon(item: CatalogWeaponItem, prompt: string): WeaponBlueprint {
@@ -1225,6 +1314,7 @@ function resolveWeaponInternal(
   const promptNorm = normalizePrompt(cleanPrompt);
   const promptCanonical = buildCanonicalKey(cleanPrompt);
   const promptTokens = tokenSet([cleanPrompt]);
+  const promptGrams = buildTrigrams(promptNorm);
   const ambiguous = isAmbiguousIntent(promptNorm, 'weapon');
   const fullCatalog = getCatalog();
   const resolver = getResolverIndex(fullCatalog).weapons;
@@ -1254,8 +1344,8 @@ function resolveWeaponInternal(
     candidates,
     promptNorm,
     promptTokens,
+    promptGrams,
     activeEntries,
-    DEFAULT_WEAPON_ID,
     ambiguous,
   );
 
@@ -1352,7 +1442,7 @@ export function resolveWeaponFromCatalog(
     );
     if (preferred.length > 0) {
       const preferredResolution = resolveWeaponInternal(prompt, new Set(preferred));
-      if (preferredResolution.strategy !== 'default') result = preferredResolution;
+      result = preferredResolution;
     }
   }
   return { ...result, poolMiss, fullItemId: full.itemId };
@@ -1370,6 +1460,7 @@ function resolveEventInternal(
   const promptNorm = normalizePrompt(cleanPrompt);
   const promptCanonical = buildCanonicalKey(cleanPrompt);
   const promptTokens = tokenSet([cleanPrompt]);
+  const promptGrams = buildTrigrams(promptNorm);
   const ambiguous = isAmbiguousIntent(promptNorm, 'event');
   const fullCatalog = getCatalog();
   const resolver = getResolverIndex(fullCatalog).events;
@@ -1399,8 +1490,8 @@ function resolveEventInternal(
     candidates,
     promptNorm,
     promptTokens,
+    promptGrams,
     activeEntries,
-    DEFAULT_EVENT_ID,
     ambiguous,
   );
 
@@ -1409,7 +1500,6 @@ function resolveEventInternal(
   if (
     picked.strategy !== 'alias' &&
     picked.strategy !== 'canonical' &&
-    picked.strategy !== 'default' &&
     requestedCategories.size >= 2 &&
     baseCategory !== null &&
     requestedCategories.has(baseCategory)
@@ -1489,7 +1579,7 @@ export function resolveEventFromCatalog(
         center,
         new Set(preferred),
       );
-      if (preferredResolution.strategy !== 'default') result = preferredResolution;
+      result = preferredResolution;
     }
   }
   return { ...result, poolMiss, fullItemId: full.itemId };
@@ -1531,5 +1621,68 @@ export function getCatalogSummary() {
       totalReuses: 0,
       catalogVersion: catalog.version,
     },
+  };
+}
+
+/**
+ * Lista compacta usada pelo painel de desenvolvimento (F8). Lê apenas o índice
+ * quente: não carrega shards de payload, então abrir o painel não tem custo de
+ * memória nem risco de bloquear o tick de 20 Hz.
+ */
+export function getCatalogDevIndex(): DevCatalogPayload {
+  const catalog = getCatalog();
+  return {
+    catalogVersion: catalog.version,
+    weapons: catalog.weapons.map((item) => ({
+      id: item.id,
+      name: item.name,
+      aliases: item.aliases.slice(0, 3),
+      tags: item.tags.slice(0, 6),
+      status: item.status ?? 'approved',
+      budgetUsed: item.summary?.budgetUsed ?? 0,
+      damage: item.summary?.damage ?? 0,
+      projectiles: item.summary?.projectiles ?? 0,
+    })),
+    events: catalog.events.map((item) => ({
+      id: item.id,
+      name: item.name,
+      aliases: item.aliases.slice(0, 3),
+      tags: item.tags.slice(0, 6),
+      status: item.status ?? 'approved',
+      budgetUsed: item.summary?.budgetUsed ?? 0,
+      archetype: item.summary?.archetype ?? '',
+    })),
+  };
+}
+
+/**
+ * Resolve um item exato por id, sem passar pela pontuação de prompts. Usado
+ * apenas pelo dev mode para testar uma arma/evento específico do catálogo.
+ */
+export function resolveWeaponById(itemId: string): WeaponResolution | null {
+  const item = getCatalog().weapons.find((entry) => entry.id === itemId);
+  if (!item || item.status === 'deprecated') return null;
+  return {
+    blueprint: cloneWeapon(item, item.name),
+    itemId: item.id,
+    strategy: 'alias',
+    score: 1000,
+  };
+}
+
+/** Igual a `resolveWeaponById`, mas para eventos de mapa. */
+export function resolveEventById(
+  itemId: string,
+  authorId: string,
+  authorName: string,
+  center: [number, number, number],
+): EventResolution | null {
+  const item = getCatalog().events.find((entry) => entry.id === itemId);
+  if (!item || item.status === 'deprecated') return null;
+  return {
+    event: cloneEvent(item, authorId, authorName, center),
+    itemId: item.id,
+    strategy: 'alias',
+    score: 1000,
   };
 }

@@ -73,7 +73,7 @@ O runtime não gera conteúdo. Ele carrega o **índice quente** `content/catalog
 2. Tenta alias exato, depois chave canônica, depois tokens/tags e palavras-chave de arquétipo/elemento. Aliases, chaves canônicas, tokens e palavras-chave são pré-computados uma vez por versão do catálogo; um índice invertido restringe a pontuação aos candidatos, sem varrer todos os itens.
 3. Se o pedido combina uma capacidade já presente no item-base com outra existente em outro item, tenta uma **composição** validada pelo orçamento. Combinações impossíveis (dois status ou dois comportamentos) não são compostas.
 4. Match fraco (< 120 pontos), ambíguo ou composição que estourou o orçamento vira `partial`: o item mais próximo é servido, mas o pedido é registrado como lacuna duvidosa.
-5. Se nada casar, usa um item default do catálogo. Nunca chama rede ou LLM.
+5. Se nenhum candidato pontuar (typo, palavra inventada), o resolvedor escolhe o item com maior similaridade de trigramas contra nome+aliases+tags+sinônimos de todo o catálogo ativo; empate usa a ordem do catálogo e, se nada compartilha trigramas, o hash do prompt espalha a escolha. **Nunca existe fallback default**; o resultado continua `partial`. Nunca chama rede ou LLM.
 6. Devolve uma cópia do blueprint/evento com ID novo e `fromCatalog: true`.
 
 `content/catalog/catalog.json` continua sendo o artefato completo para build, testes e ferramentas offline. O runtime usa `index.json` (metadados + `budgetUsed`/resumo visual) e carrega o payload do item sob demanda de `content/catalog/shards/*.json`. Cada shard tem nome content-addressed e é imutável; o `catalog.ts` mantém um LRU de 8 shards. `getCatalogSummary()`/`/api/catalog` leem apenas o índice, sem carregar payloads.
@@ -84,15 +84,15 @@ O estado do evento transmitido à sala usa o **nome do item do catálogo**, não
 
 ### `server/contentPool.ts`
 
-Cada partida recebe um arsenal determinístico a partir de `room.seed`, `catalogVersion`, versão do algoritmo e snapshot de uso:
+Cada partida recebe o **catálogo ativo inteiro**: todas as armas e eventos `approved` ficam disponíveis para resolução, loot e bots. O pool não é mais uma curadoria por seed.
 
-- núcleo obrigatório: defaults, um item por elemento, um por arquétipo, um por categoria de evento;
-- tamanho entre 16–26 armas e 7–11 eventos, conforme `targetPlayers`;
-- peso inverso ao uso humano recente (`equip`/`event`) e quota de novidade para `introducedIn` recente ou `provenance` `ai_assisted`/`authored`;
-- `hash` e contagem de itens aparecem em `room:init`/`room:tick` (`contentPool`);
-- itens `deprecated` e pools vazios caem para o catálogo completo.
+- `weaponIds`/`eventIds` listam todos os itens ativos (sem `deprecated`);
+- `hash` é content-addressed (versão do catálogo + algoritmo + ids), então o mesmo catálogo gera o mesmo hash em qualquer sala;
+- `seed`, `targetPlayers` e `usageHash` ficam como proveniência/diagnóstico e não filtram o arsenal;
+- `assetIds` cobre os assets referenciados pelo catálogo ativo, usado no prefetch do `room:init` (são poucos e compartilhados por categoria);
+- o payload continua vindo dos shards sob demanda e assets de itens em jogo são buscados em lotes pelo cliente.
 
-O resolvedor recebe os IDs do pool e a composição só usa doadores do próprio pool. **Pedido explícito vence o arsenal**: se o prompt bate em nome/alias exato ou na chave canônica de um item aprovado, esse item é entregue mesmo fora do pool, e o desvio é registrado como `pool_miss = 1` com `pool_hash`. Para prompts vagos (tags/parcial), a resolução continua presa ao pool. Isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
+Em partidas normais o resolvedor não recebe restrição: como o pool é o catálogo inteiro, todo item aprovado pode ser servido e um hot reload passa a valer imediatamente. `pool_miss` continua existindo para chamadas com `allowedIds` restrito (testes, ferramentas e uma futura curadoria): pedido explícito vence a restrição e o desvio é registrado com `pool_hash`. Isso é **pool miss**, não lacuna de catálogo. O `loop:report` e o `ledger:report` separam os dois casos.
 
 ### Composição de eventos
 
@@ -232,7 +232,7 @@ O modo de desenvolvimento exige **as duas condições**:
 - cliente compilado em modo dev (`import.meta.env.DEV`);
 - servidor com `NODE_ENV !== 'production'`.
 
-O servidor pode ser instanciado com `new RoomManager({ devEnabled })` e expõe ferramentas como deus, sandbox infinito, congelar bots, forja rápida e spawn de bots. Em produção, `dev:action` é ignorado. O painel abre com `F8`.
+O servidor pode ser instanciado com `new RoomManager({ devEnabled })`. O painel (`F8`) cobre deus, sandbox infinito, congelar bots, pausar eventos automáticos, pular a espera do sorteio, dano de teste, alvo de treino imóvel, forja por prompt e **catálogo exato**: clicar em uma arma/evento do catálogo equipa/dispara aquele item específico (e a arma pode ser equipada no primeiro bot vivo). A lista vem de `getCatalogDevIndex()`, que lê só o índice quente e nunca carrega shards de payload. Em produção, `dev:action`/`dev:catalog` respondem `DEV_DISABLED`.
 
 ## Testes
 

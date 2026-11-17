@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getCatalog,
+  getCatalogDevIndex,
   getCatalogIndex,
   getCatalogItem,
   getCatalogItemName,
@@ -91,8 +92,32 @@ test('weapon resolver matches archetypes and elements deterministically', () => 
   assert.equal(again.itemId, icePistol.itemId);
 
   const unknown = resolveWeaponFromCatalog('Arma totalmente desconhecida xyz');
-  assert.equal(unknown.strategy, 'default');
-  assert.equal(unknown.itemId, 'wpn_rifle_standard');
+  assert.equal(unknown.strategy, 'partial');
+  assert.notEqual(unknown.strategy, 'default');
+  assert.ok(getCatalog().weapons.some((item) => item.id === unknown.itemId));
+});
+
+test('weak prompts return the nearest catalog item instead of a default fallback', () => {
+  const lavaRifle = resolveWeaponFromCatalog('Rifle de lava');
+  assert.equal(lavaRifle.itemId, 'wpn_rifle_fire');
+  assert.notEqual(lavaRifle.strategy, 'default');
+
+  const typo = resolveWeaponFromCatalog('pistolaa de geloo');
+  assert.notEqual(typo.strategy, 'default');
+  assert.ok(getCatalog().weapons.some((item) => item.id === typo.itemId));
+
+  const nonsense = resolveWeaponFromCatalog('zxqwv blorf');
+  assert.equal(nonsense.strategy, 'partial');
+  assert.ok(getCatalog().weapons.some((item) => item.id === nonsense.itemId));
+
+  const unknownEvent = resolveEventFromCatalog(
+    'evento zxqwv blorf',
+    'p1',
+    'Ana',
+    [0, 0, 0],
+  );
+  assert.equal(unknownEvent.strategy, 'partial');
+  assert.ok(getCatalog().events.some((item) => item.id === unknownEvent.itemId));
 });
 
 test('event resolver matches weather, terrain, entity, and supply', () => {
@@ -114,8 +139,9 @@ test('event resolver matches weather, terrain, entity, and supply', () => {
   assert.equal(supply.event.archetype, 'SUPPLY_DROP');
 
   const unknown = resolveEventFromCatalog('Evento sem nome conhecido', 'p1', 'Ana', center);
-  assert.equal(unknown.strategy, 'default');
-  assert.equal(unknown.itemId, 'evt_weather_meteor_shower');
+  assert.equal(unknown.strategy, 'partial');
+  assert.notEqual(unknown.strategy, 'default');
+  assert.ok(getCatalog().events.some((item) => item.id === unknown.itemId));
 });
 
 test('catalog covers the expanded archetype and hazard library', () => {
@@ -239,6 +265,23 @@ test('catalog summary reads the hot index without loading payload shards', () =>
   const after = getCatalogRuntimeStats();
   assert.equal(after.cachedShards, 0);
   assert.equal(after.shardCount, before.shardCount);
+});
+
+test('catalog dev index exposes ids without loading payload shards', () => {
+  reloadCatalog();
+  const before = getCatalogRuntimeStats();
+  assert.equal(before.cachedShards, 0);
+
+  const devIndex = getCatalogDevIndex();
+  assert.equal(devIndex.catalogVersion, getCatalogVersion());
+  assert.ok(devIndex.weapons.length > 0);
+  assert.ok(devIndex.events.length > 0);
+  assert.ok(devIndex.weapons.every((item) => item.id.length > 0));
+  assert.ok(devIndex.events.every((item) => item.id.length > 0));
+  assert.ok(devIndex.weapons.some((item) => item.id === 'wpn_pistol_ice'));
+
+  const after = getCatalogRuntimeStats();
+  assert.equal(after.cachedShards, 0);
 });
 
 test('every catalog event derives a valid fun contract', () => {

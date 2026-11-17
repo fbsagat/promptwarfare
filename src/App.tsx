@@ -32,6 +32,7 @@ import {
   VOXEL_SIZE,
   type ContentItemsPayload,
   type DevActionPayload,
+  type DevCatalogPayload,
   type DevRoomState,
   type EventCycleState,
   type KillfeedEntry,
@@ -179,7 +180,10 @@ export default function App() {
     godMode: false,
     infiniteSandbox: false,
     botsFrozen: false,
+    autoEventsPaused: false,
+    catalogVersion: '',
   });
+  const [devCatalog, setDevCatalog] = useState<DevCatalogPayload | null>(null);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const devEnabled = isClientDevEnabled(import.meta.env.DEV, serverDevMode);
   const devEnabledRef = useRef(false);
@@ -355,6 +359,13 @@ export default function App() {
       wsRef.current.send(JSON.stringify(msg));
     }
   }, []);
+
+  // Ao abrir o painel dev, pede a lista compacta do catálogo ao servidor.
+  // É sob demanda: nada disso trafega no tick de 20 Hz.
+  useEffect(() => {
+    if (!devPanelOpen || !devEnabled) return;
+    sendWs({ type: 'dev:catalog' });
+  }, [devPanelOpen, devEnabled, sendWs]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -686,6 +697,11 @@ export default function App() {
           if (payload?.weapons) {
             ensureAssets(payload.weapons.flatMap((weapon) => weapon.assets ?? []));
           }
+          return;
+        }
+
+        if (msg.type === 'dev:catalog') {
+          setDevCatalog(msg.payload as DevCatalogPayload);
           return;
         }
 
@@ -1211,11 +1227,13 @@ export default function App() {
       {import.meta.env.DEV && devEnabled && gameState === 'playing' && devPanelOpen && (
         <DevPanel
           devState={devState}
+          devCatalog={devCatalog}
           localPlayer={localPlayer}
           allPlayers={players}
           activeEventsCount={activeEvents.length}
           entitiesCount={entities.length}
           onAction={handleDevAction}
+          onRequestCatalog={() => sendWs({ type: 'dev:catalog' })}
           onClose={() => setDevPanelOpen(false)}
         />
       )}
