@@ -56,6 +56,18 @@ test('todo perfil mantém orçamento de partículas e sem flags caras', () => {
   }
 });
 
+test('todo perfil mantém raio de descarga maior que o de carga e LOD por perfil', () => {
+  for (const level of ['low', 'medium', 'high'] as const) {
+    const profile = resolveQuality(level);
+    assert.ok(profile.chunkLoadRadius > 0);
+    assert.ok(profile.chunkUnloadRadius > profile.chunkLoadRadius);
+    assert.ok(profile.chunkNearLodRadius > 0);
+    assert.ok(profile.chunkNearLodRadius <= profile.chunkLoadRadius);
+    assert.ok(profile.chunkUnloadCooldownSec > 0);
+    assert.ok(profile.chunkJobsPerFrame > 0 && profile.chunkJobsPerFrame <= 64);
+  }
+});
+
 test('isQualityLevel aceita apenas valores conhecidos', () => {
   assert.equal(isQualityLevel('auto'), true);
   assert.equal(isQualityLevel('high'), true);

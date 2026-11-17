@@ -9,6 +9,9 @@ interface MesherRequest {
   voxelSize: number;
   // Padded (chunkSize + 2)^3 buffer so boundary faces & AO check neighbors in O(1)
   padded: Uint8Array;
+  /** Metadados de streaming; o worker apenas os devolve, sem alterar a geometria. */
+  revision?: number;
+  epoch?: number;
 }
 
 const FACE_SHADE = [0.88, 0.78, 1.0, 0.56, 0.92, 0.74]; // +X, -X, +Y, -Y, +Z, -Z
@@ -20,7 +23,7 @@ function vertexAO(side1: boolean, side2: boolean, corner: boolean): number {
 }
 
 self.onmessage = (e: MessageEvent<MesherRequest>) => {
-  const { jobId, cx, cy, cz, chunkSize, voxelSize, padded } = e.data;
+  const { jobId, cx, cy, cz, chunkSize, voxelSize, padded, revision = 0, epoch = 0 } = e.data;
   const pSize = chunkSize + 2;
   const get = (x: number, y: number, z: number): number =>
     padded[x + 1 + (z + 1) * pSize + (y + 1) * pSize * pSize];
@@ -213,6 +216,8 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
   (self as unknown as Worker).postMessage(
     {
       jobId,
+      revision,
+      epoch,
       cx,
       cy,
       cz,
