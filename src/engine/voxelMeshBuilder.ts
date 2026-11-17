@@ -8,6 +8,7 @@ import {
   TransformNode,
   VertexData,
 } from '@babylonjs/core';
+import { AdvancedDynamicTexture, TextBlock, Control, Rectangle } from '@babylonjs/gui';
 import { decodeRleVoxels } from '../shared/budget.ts';
 import type { PaletteColor } from '../shared/types.ts';
 import type { WeaponModuleRecipe } from '../shared/weaponVisuals.ts';
@@ -345,6 +346,9 @@ export interface PlayerAvatarRig {
   root: TransformNode;
   bodyGroup: TransformNode;
   head: Mesh;
+  namePlate: Mesh;
+  namePlateTexture: AdvancedDynamicTexture;
+  label: TextBlock;
   handSocket: TransformNode;
   leftLeg: Mesh;
   rightLeg: Mesh;
@@ -406,6 +410,35 @@ export function buildPlayerAvatarMesh(
   head.material = primaryMat;
   head.parent = bodyGroup;
 
+  // Name Plate Billboard
+  const namePlate = MeshBuilder.CreatePlane(`namePlate_${id}`, { width: 1.3, height: 0.34 }, scene);
+  namePlate.position.set(0, 2.0, 0);
+  namePlate.parent = bodyGroup;
+  namePlate.billboardMode = Mesh.BILLBOARDMODE_ALL;
+  namePlate.isPickable = false;
+  namePlate.setEnabled(false);
+
+  const namePlateTexture = AdvancedDynamicTexture.CreateForMesh(namePlate, 512, 128, false);
+  const container = new Rectangle(`rect_${id}`);
+  container.background = "rgba(0,0,0,0.2)";
+  container.thickness = 0;
+  container.width = "100%";
+  container.height = "100%";
+  container.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+  container.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+  namePlateTexture.addControl(container);
+
+  const label = new TextBlock(`label_${id}`, "");
+  label.fontWeight = "bold";
+  label.fontSize = 44;
+  label.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+  label.color = "white";
+  label.shadowColor = "black";
+  label.shadowBlur = 6;
+  label.shadowOffsetX = 2;
+  label.shadowOffsetY = 2;
+  container.addControl(label);
+
   const visor = MeshBuilder.CreateBox(`visor_${id}`, { width: 0.34, height: 0.14, depth: 0.08 }, scene);
   visor.position.set(0, 0.04, 0.21);
   visor.material = visorMat;
@@ -458,12 +491,20 @@ export function buildPlayerAvatarMesh(
     root,
     bodyGroup,
     head,
+    namePlate,
+    namePlateTexture,
+    label,
     handSocket,
     leftLeg,
     rightLeg,
     primaryMat,
     baseColor,
     dispose: () => {
+      // Libera a textura GUI (e seus controles/observers) uma única vez aqui.
+      // Em seguida o root.dispose encerra a hierarquia, incluindo o namePlate e
+      // o material que o CreateForMesh criou; não chamar label.dispose() nem
+      // dispose() extra na textura para evitar liberação duplicada.
+      namePlateTexture.dispose();
       root.dispose(false, true);
     },
   };

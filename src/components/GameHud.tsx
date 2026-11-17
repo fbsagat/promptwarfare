@@ -742,9 +742,7 @@ export const GameHud: React.FC<GameHudProps> = ({
             )}
           </div>
         )}
-        <span className="mt-1.5 text-[10px] font-mono-tabular text-white/75 drop-shadow">
-          {zoomMeters < 0.3 ? '1P' : `3P · ${zoomMeters.toFixed(1)}m`}
-        </span>
+        {/* HUD de perspectiva removida */}
         {!pointerLocked && (
           <div className="mt-2 rounded-lg bg-[#0b101b]/85 border border-white/20 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap shadow-lg">
             Clique para capturar o mouse · Esc pausa
