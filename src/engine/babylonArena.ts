@@ -2822,6 +2822,7 @@ export class BabylonVoxelArena {
         this.playerRigs.set(p.id, entry);
       }
 
+      entry.rig.label.text = p.name;
       entry.rig.root.setEnabled(p.alive);
       entry.targetPos.set(p.position.x, p.position.y, p.position.z);
       entry.targetYaw = p.yaw;
@@ -4695,6 +4696,8 @@ export class BabylonVoxelArena {
     }
     audioDirector.updateAmbience(dt, this.ambienceState);
 
+    this.updatePlayerLabels();
+
     // Bolhas submersas: sobem devagar e dão vida à câmera dentro d'água.
     this.bubbleTimer -= dt;
     if (
@@ -5973,5 +5976,23 @@ export class BabylonVoxelArena {
     this.scorchTexture = null;
     this.scene.dispose();
     this.engine.dispose();
+  }
+
+  private updatePlayerLabels(): void {
+    const camPos = this.camera.position;
+
+    for (const [id, entry] of this.playerRigs) {
+      if (id === this.localPlayerId) {
+        entry.rig.namePlate.setEnabled(false);
+        continue;
+      }
+
+      // O `label` está no namePlateTexture
+      if (entry.rig.label) {
+        entry.rig.label.fontSize = 74;
+      }
+
+      entry.rig.namePlate.setEnabled(true);
+    }
   }
 }
