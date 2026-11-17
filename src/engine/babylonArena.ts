@@ -28,6 +28,9 @@ import {
   VOXEL_SIZE,
   WATER_LEVEL_VOXEL,
   WATER_LEVEL_WORLD,
+  type EventPhase,
+  type EventPulse,
+  type EventSignature,
   type InventorySlotItem,
   type IslandMeta,
   type LootDropState,
@@ -55,6 +58,13 @@ import type { AssetEntry, AssetManifest } from '../shared/assets.ts';
 import { resolveAssetUrl } from '../shared/assets.ts';
 import { soundSynth } from './soundSynth.ts';
 import { presentationForEvent } from '../shared/eventPresentation.ts';
+import { RELICS } from '../shared/relics.ts';
+import {
+  intensityForEvent,
+  phaseForEvent,
+  signatureForEvent,
+  SIGNATURE_META,
+} from '../shared/eventMechanics.ts';
 import { impactReactionFor } from '../shared/materialReaction.ts';
 import { recoilImpulseFor } from '../shared/weaponFeel.ts';
 import { weaponDisplayPalette, weaponModuleRecipe } from '../shared/weaponVisuals.ts';
@@ -104,6 +114,51 @@ interface EventWaypointVisual {
   warningTotal: number;
   lethal: boolean;
 }
+
+/** Rig persistente de um evento catastrófico (funil, pluma, brilho de lava). */
+interface EventRig {
+  id: string;
+  signature: EventSignature;
+  root: TransformNode;
+  funnel: Mesh | null;
+  funnelMat: StandardMaterial | null;
+  rings: Mesh[];
+  ringMats: StandardMaterial[];
+  debris: Mesh[];
+  center: Vec3;
+  intensity: number;
+  phase: EventPhase;
+  progress: number;
+  timer: number;
+}
+
+const ENTITY_RIG_SIGNATURES = new Set<EventSignature>([
+  'alpha_pack',
+  'stone_colossus',
+  'panic_herd',
+  'detonating_swarm',
+  'spider_nest',
+  'hunter_squad',
+  'ice_titan',
+  'serpent_nest',
+]);
+
+const SUPPLY_RIG_SIGNATURES = new Set<EventSignature>([
+  'supply_barrage',
+  'armored_depot',
+  'legendary_drop',
+  'treasure_vault',
+  'emergency_beacon',
+]);
+
+const SCENERY_RIG_SIGNATURES = new Set<EventSignature>([
+  'titan_tree',
+  'maze_grove',
+  'rising_house',
+  'watchtower',
+  'colossal_tower',
+  'lost_temple',
+]);
 
 /**
  * Água: shader dedicado com duas camadas de normal em scroll, Fresnel e brilho
@@ -360,6 +415,17 @@ export class BabylonVoxelArena {
 
   private projectileMeshes = new Map<string, Mesh>();
   private eventWaypointMeshes = new Map<string, EventWaypointVisual>();
+  private eventRigs = new Map<string, EventRig>();
+  private eventPulseMarkers: Array<{
+    mesh: Mesh;
+    mat: StandardMaterial;
+    ttl: number;
+    maxTtl: number;
+  }> = [];
+  private eventLightningArcs: Array<{ mesh: LinesMesh; ttl: number; maxTtl: number }> = [];
+  private eventAmbientTrauma = 0;
+  private relicAuraMesh: Mesh | null = null;
+  private relicAuraColor = '';
   private assetManifest: AssetManifest | null = null;
   private assetIndex = new Map<string, AssetEntry>();
   private lootMeshes = new Map<string, TransformNode>();
@@ -1970,6 +2036,23 @@ export class BabylonVoxelArena {
    * Modelo de arma com receita modular: paleta base + acento + peças
    * determinísticas por item. O modelo-base continua vindo do arquétipo.
    */
+  private buildRelicProp(item: InventorySlotItem): Mesh {
+    const color = item.relicId ? RELICS[item.relicId]?.color ?? '#fbbf24' : '#fbbf24';
+    const sphere = MeshBuilder.CreateSphere(
+      `relic_prop_${item.id}`,
+      { diameter: 0.3, segments: 12 },
+      this.scene,
+    );
+    const mat = new StandardMaterial(`relic_prop_mat_${item.id}`, this.scene);
+    const c = Color3.FromHexString(color);
+    mat.emissiveColor = c;
+    mat.diffuseColor = c;
+    mat.disableLighting = true;
+    mat.alpha = 0.9;
+    sphere.material = mat;
+    return sphere;
+  }
+
   private buildWeaponMesh(
     name: string,
     weapon: WeaponBlueprint,
@@ -2028,6 +2111,23 @@ export class BabylonVoxelArena {
       visual.root.dispose(false, true);
     }
     this.eventWaypointMeshes.clear();
+    for (const rig of this.eventRigs.values()) {
+      rig.root.dispose(false, true);
+    }
+    this.eventRigs.clear();
+    for (const marker of this.eventPulseMarkers) {
+      marker.mesh.dispose();
+      marker.mat.dispose();
+    }
+    this.eventPulseMarkers.length = 0;
+    for (const arc of this.eventLightningArcs) arc.mesh.dispose();
+    this.eventLightningArcs.length = 0;
+    if (this.relicAuraMesh) {
+      this.relicAuraMesh.dispose(false, true);
+      this.relicAuraMesh = null;
+      this.relicAuraColor = '';
+    }
+    this.eventAmbientTrauma = 0;
     this.projectileMeta.clear();
     this.remoteAudio.clear();
     this.localAudio.initialized = false;
@@ -2170,6 +2270,7 @@ export class BabylonVoxelArena {
     this.syncEntities(tick.entities);
     this.applyWeatherAtmosphere(tick.activeEvents);
     this.syncEventWaypoints(tick.activeEvents);
+    this.syncEventRigs(tick.activeEvents);
   }
 
   public getZoomMeters(): number {
@@ -2503,6 +2604,10 @@ export class BabylonVoxelArena {
             );
             tNode.parent = entry.rig.handSocket;
             entry.equippedNode = tNode;
+          } else if (activeItem.kind === 'relic') {
+            const relicNode = this.buildRelicProp(activeItem);
+            relicNode.parent = entry.rig.handSocket;
+            entry.equippedNode = relicNode;
           }
         }
       }
@@ -2578,6 +2683,10 @@ export class BabylonVoxelArena {
       this.viewModelNode = mesh;
     } else if (item.kind === 'shovel' || item.kind === 'grapple') {
       const node = buildStarterToolMesh(this.scene, item.kind, `vm_${item.kind}`);
+      node.parent = this.viewModelAnchor;
+      this.viewModelNode = node;
+    } else if (item.kind === 'relic') {
+      const node = this.buildRelicProp(item);
       node.parent = this.viewModelAnchor;
       this.viewModelNode = node;
     }
@@ -2853,7 +2962,9 @@ export class BabylonVoxelArena {
           );
           beacon.position.y = 12;
           const bMat = new StandardMaterial(`bmat_${ent.id}`, this.scene);
-          bMat.emissiveColor = Color3.FromHexString('#22d3ee');
+          bMat.emissiveColor = Color3.FromHexString(
+            ent.relicId ? RELICS[ent.relicId]?.color ?? '#22d3ee' : '#22d3ee',
+          );
           bMat.alpha = 0.32;
           beacon.material = bMat;
           beacon.parent = node;
@@ -2873,6 +2984,14 @@ export class BabylonVoxelArena {
         }
 
         node.position.set(ent.position.x, ent.position.y, ent.position.z);
+        if (ent.id.startsWith('boss_')) {
+          node.scaling.set(1.8, 1.8, 1.8);
+        } else if (
+          ent.kind === 'supply_crate' &&
+          /Lendária|Blindado|Cofre|Carga Máxima|Emergência/.test(ent.name)
+        ) {
+          node.scaling.set(1.35, 1.35, 1.35);
+        }
         entry = {
           node,
           targetPos: new Vector3(ent.position.x, ent.position.y, ent.position.z),
@@ -3051,10 +3170,1136 @@ export class BabylonVoxelArena {
     }
   }
 
+  private syncEventRigs(events: MapEventState[]): void {
+    const seen = new Set<string>();
+    let ambientTrauma = 0;
+    for (const evt of events) {
+      if (evt.warningRemainingSec > 0) continue;
+      const signature = signatureForEvent(evt.archetype, evt.params, evt.catalogId);
+      const meta = SIGNATURE_META[signature];
+      const intensity = evt.intensity ?? intensityForEvent(evt.params);
+      if (meta) {
+        const dist = Math.hypot(
+          this.camera.position.x - evt.center[0],
+          this.camera.position.y - evt.center[1],
+          this.camera.position.z - evt.center[2],
+        );
+        const proximity = Math.max(0, 1 - dist / 130);
+        ambientTrauma = Math.max(
+          ambientTrauma,
+          meta.cameraShake * intensity * (0.25 + proximity * 0.75),
+        );
+      }
+      if (
+        signature !== 'multi_vortex' &&
+        signature !== 'volcano_birth' &&
+        signature !== 'sand_wall' &&
+        signature !== 'gravity_collapse' &&
+        signature !== 'quake_collapse' &&
+        signature !== 'canyon_tear' &&
+        signature !== 'crystal_bloom' &&
+        signature !== 'tsunami_surge' &&
+        signature !== 'sinkhole_maw' &&
+        signature !== 'lava_river' &&
+        signature !== 'glacier_advance' &&
+        signature !== 'overgrowth_titan' &&
+        !ENTITY_RIG_SIGNATURES.has(signature) &&
+        !SUPPLY_RIG_SIGNATURES.has(signature) &&
+        !SCENERY_RIG_SIGNATURES.has(signature)
+      ) {
+        continue;
+      }
+      seen.add(evt.id);
+      let rig = this.eventRigs.get(evt.id);
+      if (!rig) {
+        rig = this.createEventRig(evt, signature);
+        this.eventRigs.set(evt.id, rig);
+      }
+      rig.center = { x: evt.center[0], y: evt.center[1], z: evt.center[2] };
+      rig.intensity = intensity;
+      rig.phase = evt.phase ?? phaseForEvent(evt);
+      rig.progress = Math.max(
+        0,
+        Math.min(1, 1 - evt.durationRemainingSec / Math.max(1, evt.totalDurationSec)),
+      );
+      rig.root.position.set(rig.center.x, rig.center.y, rig.center.z);
+    }
+    this.eventAmbientTrauma = ambientTrauma;
+    for (const [id, rig] of this.eventRigs) {
+      if (seen.has(id)) continue;
+      rig.root.dispose(false, true);
+      this.eventRigs.delete(id);
+    }
+  }
+
+  private createEventRig(evt: MapEventState, signature: EventSignature): EventRig {
+    const root = new TransformNode(`evt_rig_${evt.id}`, this.scene);
+    const rings: Mesh[] = [];
+    const ringMats: StandardMaterial[] = [];
+    const debris: Mesh[] = [];
+    let funnel: Mesh | null = null;
+    let funnelMat: StandardMaterial | null = null;
+    const presentation = presentationForEvent(evt.archetype, evt.params);
+    const primary = Color3.FromHexString(presentation.primaryColor);
+    const secondary = Color3.FromHexString(presentation.secondaryColor);
+
+    if (signature === 'multi_vortex') {
+      funnel = MeshBuilder.CreateCylinder(
+        `evt_funnel_${evt.id}`,
+        {
+          diameterTop: 46,
+          diameterBottom: 6,
+          height: 50,
+          tessellation: 28,
+        },
+        this.scene,
+      );
+      funnel.position.y = 25;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_funnel_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = primary;
+      funnelMat.diffuseColor = secondary;
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.16;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+
+      for (let i = 0; i < 3; i++) {
+        const ring = MeshBuilder.CreateTorus(
+          `evt_vortex_ring_${evt.id}_${i}`,
+          { diameter: 14 + i * 8, thickness: 0.2, tessellation: 30 },
+          this.scene,
+        );
+        ring.position.y = 6 + i * 12;
+        ring.isPickable = false;
+        const mat = new StandardMaterial(`evt_vortex_ring_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = i === 0 ? primary : secondary;
+        mat.disableLighting = true;
+        mat.alpha = 0.32;
+        ring.material = mat;
+        ring.parent = root;
+        rings.push(ring);
+        ringMats.push(mat);
+      }
+
+      for (let i = 0; i < 22; i++) {
+        const box = MeshBuilder.CreateBox(
+          `evt_vortex_debris_${evt.id}_${i}`,
+          { size: 0.24 + Math.random() * 0.35 },
+          this.scene,
+        );
+        box.isPickable = false;
+        const mat = new StandardMaterial(`evt_vortex_debris_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = i % 3 === 0 ? primary : Color3.FromHexString('#78716c');
+        mat.disableLighting = true;
+        mat.alpha = 0.9;
+        box.material = mat;
+        box.parent = root;
+        box.metadata = {
+          angle: Math.random() * Math.PI * 2,
+          radius: 7 + Math.random() * 18,
+          height: 3 + Math.random() * 30,
+          speed: 1.2 + Math.random() * 2.4,
+        };
+        debris.push(box);
+      }
+    } else if (signature === 'volcano_birth') {
+      funnel = MeshBuilder.CreateCylinder(
+        `evt_ash_${evt.id}`,
+        { diameterTop: 10, diameterBottom: 3, height: 38, tessellation: 16 },
+        this.scene,
+      );
+      funnel.position.y = 19;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_ash_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = Color3.FromHexString('#57534e');
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.18;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+
+      const glow = MeshBuilder.CreateSphere(
+        `evt_lava_glow_${evt.id}`,
+        { diameter: 6, segments: 12 },
+        this.scene,
+      );
+      glow.position.y = 30;
+      glow.isPickable = false;
+      const glowMat = new StandardMaterial(`evt_lava_glow_mat_${evt.id}`, this.scene);
+      glowMat.emissiveColor = primary;
+      glowMat.diffuseColor = secondary;
+      glowMat.disableLighting = true;
+      glowMat.alpha = 0.78;
+      glow.material = glowMat;
+      glow.parent = root;
+      rings.push(glow);
+      ringMats.push(glowMat);
+
+      const baseRing = MeshBuilder.CreateTorus(
+        `evt_lava_ring_${evt.id}`,
+        { diameter: 28, thickness: 0.28, tessellation: 36 },
+        this.scene,
+      );
+      baseRing.position.y = 0.35;
+      baseRing.isPickable = false;
+      const baseMat = new StandardMaterial(`evt_lava_ring_mat_${evt.id}`, this.scene);
+      baseMat.emissiveColor = primary;
+      baseMat.disableLighting = true;
+      baseMat.alpha = 0.4;
+      baseRing.material = baseMat;
+      baseRing.parent = root;
+      rings.push(baseRing);
+      ringMats.push(baseMat);
+    } else if (signature === 'sand_wall') {
+      funnel = MeshBuilder.CreateBox(
+        `evt_sand_wall_${evt.id}`,
+        { width: 70, height: 26, depth: 9 },
+        this.scene,
+      );
+      funnel.position.y = 13;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_sand_wall_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = primary;
+      funnelMat.diffuseColor = secondary;
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.2;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+
+      for (let i = 0; i < 4; i++) {
+        const ring = MeshBuilder.CreateTorus(
+          `evt_sand_devil_${evt.id}_${i}`,
+          { diameter: 8 + i * 4, thickness: 0.18, tessellation: 26 },
+          this.scene,
+        );
+        ring.position.set(-18 + i * 12, 4 + i * 3, 0);
+        ring.isPickable = false;
+        const mat = new StandardMaterial(`evt_sand_devil_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = i % 2 === 0 ? primary : secondary;
+        mat.disableLighting = true;
+        mat.alpha = 0.28;
+        ring.material = mat;
+        ring.parent = root;
+        rings.push(ring);
+        ringMats.push(mat);
+      }
+    } else if (signature === 'gravity_collapse') {
+      const glowRing = MeshBuilder.CreateTorus(
+        `evt_gravity_ring_${evt.id}`,
+        { diameter: 34, thickness: 0.24, tessellation: 40 },
+        this.scene,
+      );
+      glowRing.position.y = 2;
+      glowRing.isPickable = false;
+      const glowMat = new StandardMaterial(`evt_gravity_ring_mat_${evt.id}`, this.scene);
+      glowMat.emissiveColor = primary;
+      glowMat.disableLighting = true;
+      glowMat.alpha = 0.42;
+      glowRing.material = glowMat;
+      glowRing.parent = root;
+      rings.push(glowRing);
+      ringMats.push(glowMat);
+
+      for (let i = 0; i < 18; i++) {
+        const box = MeshBuilder.CreateBox(
+          `evt_gravity_debris_${evt.id}_${i}`,
+          { size: 0.2 + Math.random() * 0.5 },
+          this.scene,
+        );
+        box.isPickable = false;
+        const mat = new StandardMaterial(`evt_gravity_debris_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = i % 3 === 0 ? primary : Color3.FromHexString('#78716c');
+        mat.disableLighting = true;
+        mat.alpha = 0.85;
+        box.material = mat;
+        box.parent = root;
+        box.metadata = {
+          angle: Math.random() * Math.PI * 2,
+          radius: 5 + Math.random() * 20,
+          height: 3 + Math.random() * 22,
+          speed: 0.3 + Math.random() * 0.7,
+        };
+        debris.push(box);
+      }
+    } else if (signature === 'canyon_tear') {
+      const width = Math.min(120, this.grid.dimX * VOXEL_SIZE * 0.7);
+      funnel = MeshBuilder.CreateBox(
+        `evt_canyon_${evt.id}`,
+        { width, height: 0.18, depth: 9 },
+        this.scene,
+      );
+      funnel.position.y = 0.12;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_canyon_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = primary;
+      funnelMat.diffuseColor = secondary;
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.3;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+    } else if (signature === 'lava_river') {
+      const width = Math.min(130, this.grid.dimX * VOXEL_SIZE * 0.75);
+      funnel = MeshBuilder.CreateBox(
+        `evt_lava_river_${evt.id}`,
+        { width, height: 0.22, depth: 12 },
+        this.scene,
+      );
+      funnel.position.y = 0.14;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_lava_river_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = primary;
+      funnelMat.diffuseColor = secondary;
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.46;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+      for (let i = 0; i < 3; i++) {
+        const ring = MeshBuilder.CreateTorus(
+          `evt_lava_ring_${evt.id}_${i}`,
+          { diameter: 10 + i * 5, thickness: 0.18, tessellation: 26 },
+          this.scene,
+        );
+        ring.position.y = 0.3;
+        ring.isPickable = false;
+        const mat = new StandardMaterial(`evt_lava_ring_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = primary;
+        mat.disableLighting = true;
+        mat.alpha = 0.32;
+        ring.material = mat;
+        ring.parent = root;
+        rings.push(ring);
+        ringMats.push(mat);
+      }
+    } else if (signature === 'sinkhole_maw') {
+      funnel = MeshBuilder.CreateCylinder(
+        `evt_sinkhole_${evt.id}`,
+        { diameterTop: 48, diameterBottom: 8, height: 3, tessellation: 28 },
+        this.scene,
+      );
+      funnel.position.y = -1.2;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_sinkhole_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = Color3.FromHexString('#1c1917');
+      funnelMat.diffuseColor = Color3.FromHexString('#44403c');
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = 0.72;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+      for (let i = 0; i < 2; i++) {
+        const ring = MeshBuilder.CreateTorus(
+          `evt_sinkhole_ring_${evt.id}_${i}`,
+          { diameter: 18 + i * 14, thickness: 0.22, tessellation: 34 },
+          this.scene,
+        );
+        ring.position.y = 0.2;
+        ring.isPickable = false;
+        const mat = new StandardMaterial(`evt_sinkhole_ring_mat_${evt.id}_${i}`, this.scene);
+        mat.emissiveColor = primary;
+        mat.disableLighting = true;
+        mat.alpha = 0.32;
+        ring.material = mat;
+        ring.parent = root;
+        rings.push(ring);
+        ringMats.push(mat);
+      }
+    } else if (signature === 'crystal_bloom') {
+      const ring = MeshBuilder.CreateTorus(
+        `evt_crystal_ring_${evt.id}`,
+        { diameter: 28, thickness: 0.22, tessellation: 40 },
+        this.scene,
+      );
+      ring.position.y = 0.5;
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_crystal_ring_mat_${evt.id}`, this.scene);
+      mat.emissiveColor = primary;
+      mat.disableLighting = true;
+      mat.alpha = 0.4;
+      ring.material = mat;
+      ring.parent = root;
+      rings.push(ring);
+      ringMats.push(mat);
+      for (let i = 0; i < 16; i++) {
+        const shard = MeshBuilder.CreateBox(
+          `evt_crystal_shard_${evt.id}_${i}`,
+          { width: 0.18, height: 0.7 + Math.random() * 1.2, depth: 0.18 },
+          this.scene,
+        );
+        shard.isPickable = false;
+        const shardMat = new StandardMaterial(`evt_crystal_shard_mat_${evt.id}_${i}`, this.scene);
+        shardMat.emissiveColor = primary;
+        shardMat.disableLighting = true;
+        shardMat.alpha = 0.75;
+        shard.material = shardMat;
+        shard.parent = root;
+        shard.metadata = {
+          angle: Math.random() * Math.PI * 2,
+          radius: 4 + Math.random() * 16,
+          height: 2 + Math.random() * 16,
+          speed: 0.5 + Math.random() * 1.2,
+        };
+        debris.push(shard);
+      }
+    } else if (signature === 'tsunami_surge' || signature === 'glacier_advance') {
+      const isWave = signature === 'tsunami_surge';
+      const depth = this.grid.dimZ * VOXEL_SIZE;
+      funnel = MeshBuilder.CreateBox(
+        `evt_${isWave ? 'wave' : 'glacier'}_${evt.id}`,
+        { width: isWave ? 6 : 12, height: isWave ? 9 : 16, depth },
+        this.scene,
+      );
+      funnel.position.y = isWave ? 4 : 8;
+      funnel.isPickable = false;
+      funnelMat = new StandardMaterial(`evt_${isWave ? 'wave' : 'glacier'}_mat_${evt.id}`, this.scene);
+      funnelMat.emissiveColor = primary;
+      funnelMat.diffuseColor = secondary;
+      funnelMat.disableLighting = true;
+      funnelMat.alpha = isWave ? 0.32 : 0.38;
+      funnelMat.backFaceCulling = false;
+      funnel.material = funnelMat;
+      funnel.parent = root;
+      const foam = MeshBuilder.CreateTorus(
+        `evt_${isWave ? 'wave' : 'glacier'}_foam_${evt.id}`,
+        { diameter: 24, thickness: 0.3, tessellation: 40 },
+        this.scene,
+      );
+      foam.position.y = 0.5;
+      foam.isPickable = false;
+      const foamMat = new StandardMaterial(`evt_${isWave ? 'wave' : 'glacier'}_foam_mat_${evt.id}`, this.scene);
+      foamMat.emissiveColor = Color3.FromHexString('#e0f2fe');
+      foamMat.disableLighting = true;
+      foamMat.alpha = 0.35;
+      foam.material = foamMat;
+      foam.parent = root;
+      rings.push(foam);
+      ringMats.push(foamMat);
+    } else if (signature === 'overgrowth_titan') {
+      const ring = MeshBuilder.CreateTorus(
+        `evt_growth_ring_${evt.id}`,
+        { diameter: 30, thickness: 0.24, tessellation: 40 },
+        this.scene,
+      );
+      ring.position.y = 0.5;
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_growth_ring_mat_${evt.id}`, this.scene);
+      mat.emissiveColor = primary;
+      mat.disableLighting = true;
+      mat.alpha = 0.4;
+      ring.material = mat;
+      ring.parent = root;
+      rings.push(ring);
+      ringMats.push(mat);
+      for (let i = 0; i < 20; i++) {
+        const leaf = MeshBuilder.CreateBox(
+          `evt_growth_leaf_${evt.id}_${i}`,
+          { width: 0.28, height: 0.1, depth: 0.5 },
+          this.scene,
+        );
+        leaf.isPickable = false;
+        const leafMat = new StandardMaterial(`evt_growth_leaf_mat_${evt.id}_${i}`, this.scene);
+        leafMat.emissiveColor = i % 2 === 0 ? primary : secondary;
+        leafMat.disableLighting = true;
+        leafMat.alpha = 0.8;
+        leaf.material = leafMat;
+        leaf.parent = root;
+        leaf.metadata = {
+          angle: Math.random() * Math.PI * 2,
+          radius: 4 + Math.random() * 18,
+          height: 2 + Math.random() * 18,
+          speed: 0.4 + Math.random() * 1.1,
+        };
+        debris.push(leaf);
+      }
+    } else if (ENTITY_RIG_SIGNATURES.has(signature)) {
+      const ring = MeshBuilder.CreateTorus(
+        `evt_entity_ring_${evt.id}`,
+        { diameter: 24, thickness: 0.24, tessellation: 40 },
+        this.scene,
+      );
+      ring.position.y = 0.5;
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_entity_ring_mat_${evt.id}`, this.scene);
+      mat.emissiveColor = primary;
+      mat.disableLighting = true;
+      mat.alpha = 0.42;
+      ring.material = mat;
+      ring.parent = root;
+      rings.push(ring);
+      ringMats.push(mat);
+      for (let i = 0; i < 14; i++) {
+        const mote = MeshBuilder.CreateBox(
+          `evt_entity_mote_${evt.id}_${i}`,
+          { size: 0.16 + Math.random() * 0.3 },
+          this.scene,
+        );
+        mote.isPickable = false;
+        const moteMat = new StandardMaterial(`evt_entity_mote_mat_${evt.id}_${i}`, this.scene);
+        moteMat.emissiveColor = i % 2 === 0 ? primary : secondary;
+        moteMat.disableLighting = true;
+        moteMat.alpha = 0.8;
+        mote.material = moteMat;
+        mote.parent = root;
+        mote.metadata = {
+          angle: Math.random() * Math.PI * 2,
+          radius: 5 + Math.random() * 16,
+          height: 1 + Math.random() * 10,
+          speed: 0.6 + Math.random() * 1.4,
+        };
+        debris.push(mote);
+      }
+    } else if (SUPPLY_RIG_SIGNATURES.has(signature)) {
+      const ring = MeshBuilder.CreateTorus(
+        `evt_supply_ring_${evt.id}`,
+        { diameter: 24, thickness: 0.26, tessellation: 40 },
+        this.scene,
+      );
+      ring.position.y = 0.5;
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_supply_ring_mat_${evt.id}`, this.scene);
+      mat.emissiveColor = primary;
+      mat.disableLighting = true;
+      mat.alpha = 0.5;
+      ring.material = mat;
+      ring.parent = root;
+      rings.push(ring);
+      ringMats.push(mat);
+
+      const beam = MeshBuilder.CreateCylinder(
+        `evt_supply_beam_${evt.id}`,
+        { diameter: 0.9, height: 30, tessellation: 16 },
+        this.scene,
+      );
+      beam.position.y = 15;
+      beam.isPickable = false;
+      const beamMat = new StandardMaterial(`evt_supply_beam_mat_${evt.id}`, this.scene);
+      beamMat.emissiveColor = secondary;
+      beamMat.disableLighting = true;
+      beamMat.alpha = 0.28;
+      beam.material = beamMat;
+      beam.parent = root;
+      rings.push(beam);
+      ringMats.push(beamMat);
+    } else if (SCENERY_RIG_SIGNATURES.has(signature)) {
+      const ring = MeshBuilder.CreateTorus(
+        `evt_scenery_ring_${evt.id}`,
+        { diameter: 30, thickness: 0.28, tessellation: 40 },
+        this.scene,
+      );
+      ring.position.y = 0.5;
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_scenery_ring_mat_${evt.id}`, this.scene);
+      mat.emissiveColor = primary;
+      mat.disableLighting = true;
+      mat.alpha = 0.48;
+      ring.material = mat;
+      ring.parent = root;
+      rings.push(ring);
+      ringMats.push(mat);
+
+      const dust = MeshBuilder.CreateCylinder(
+        `evt_scenery_dust_${evt.id}`,
+        { diameterTop: 10, diameterBottom: 22, height: 12, tessellation: 20 },
+        this.scene,
+      );
+      dust.position.y = 5;
+      dust.isPickable = false;
+      const dustMat = new StandardMaterial(`evt_scenery_dust_mat_${evt.id}`, this.scene);
+      dustMat.emissiveColor = secondary;
+      dustMat.disableLighting = true;
+      dustMat.alpha = 0.16;
+      dustMat.backFaceCulling = false;
+      dust.material = dustMat;
+      dust.parent = root;
+      rings.push(dust);
+      ringMats.push(dustMat);
+    } else {
+      // Terremoto: sem malha própria; o rig só emite poeira e alimenta a câmera.
+    }
+
+    return {
+      id: evt.id,
+      signature,
+      root,
+      funnel,
+      funnelMat,
+      rings,
+      ringMats,
+      debris,
+      center: { x: evt.center[0], y: evt.center[1], z: evt.center[2] },
+      intensity: evt.intensity ?? intensityForEvent(evt.params),
+      phase: evt.phase ?? phaseForEvent(evt),
+      progress: Math.max(
+        0,
+        Math.min(1, 1 - evt.durationRemainingSec / Math.max(1, evt.totalDurationSec)),
+      ),
+      timer: 0,
+    };
+  }
+
+  private updateRelicAura(dt: number): void {
+    const local = this.latestTick?.players.find((p) => p.id === this.localPlayerId);
+    const buff = local?.relicBuff;
+    if (!buff || !local?.alive) {
+      if (this.relicAuraMesh) {
+        this.relicAuraMesh.dispose(false, true);
+        this.relicAuraMesh = null;
+        this.relicAuraColor = '';
+      }
+      return;
+    }
+    const color = RELICS[buff.id]?.color ?? '#fbbf24';
+    if (!this.relicAuraMesh || this.relicAuraColor !== color) {
+      if (this.relicAuraMesh) this.relicAuraMesh.dispose(false, true);
+      const ring = MeshBuilder.CreateTorus(
+        `relic_aura_${buff.id}`,
+        { diameter: 1.7, thickness: 0.05, tessellation: 32 },
+        this.scene,
+      );
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`relic_aura_mat_${buff.id}`, this.scene);
+      mat.emissiveColor = Color3.FromHexString(color);
+      mat.disableLighting = true;
+      mat.alpha = 0.55;
+      ring.material = mat;
+      this.relicAuraMesh = ring;
+      this.relicAuraColor = color;
+    }
+    this.relicAuraMesh.position.set(
+      local.position.x,
+      local.position.y + 0.08,
+      local.position.z,
+    );
+    this.relicAuraMesh.rotation.y += dt * 1.4;
+    const pulse = 1 + Math.sin(this.animTime * 4.2) * 0.06;
+    this.relicAuraMesh.scaling.set(pulse, 1, pulse);
+  }
+
+  private updateEventRigs(dt: number): void {
+    if (this.eventRigs.size === 0) return;
+    const cam = this.camera.position;
+    for (const rig of this.eventRigs.values()) {
+      const intensity = rig.intensity;
+      const climax = rig.phase === 'climax';
+      const dist = Math.hypot(
+        cam.x - rig.center.x,
+        cam.y - rig.center.y,
+        cam.z - rig.center.z,
+      );
+      const near = Math.max(0, 1 - dist / 95);
+      if (near > 0 && !this.reducedMotion) {
+        this.cameraTrauma = Math.max(
+          this.cameraTrauma,
+          near * (0.08 + intensity * 0.18) * (climax ? 1.25 : 1),
+        );
+      }
+      if (rig.signature === 'multi_vortex') {
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.12 + intensity * 0.12 + Math.sin(this.animTime * 6) * 0.03;
+        }
+        if (rig.funnel) rig.funnel.rotation.y += dt * (2.4 + intensity * 4);
+        for (let i = 0; i < rig.rings.length; i++) {
+          const ring = rig.rings[i];
+          ring.rotation.y -= dt * (1.1 + i * 0.4);
+          const pulse = 1 + Math.sin(this.animTime * 3 + i) * 0.05;
+          ring.scaling.set(pulse, 1, pulse);
+          rig.ringMats[i].alpha = 0.18 + intensity * 0.22;
+        }
+        for (const box of rig.debris) {
+          const meta = box.metadata as
+            | { angle: number; radius: number; height: number; speed: number }
+            | undefined;
+          if (!meta) continue;
+          meta.angle += dt * meta.speed * (climax ? 1.6 : 1);
+          const r = meta.radius * (0.65 + intensity * 0.5);
+          box.position.set(
+            Math.cos(meta.angle) * r,
+            meta.height + Math.sin(this.animTime * 2.2 + meta.angle) * 0.6,
+            Math.sin(meta.angle) * r,
+          );
+          box.rotation.x += dt * 2.2;
+          box.rotation.z += dt * 1.7;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.11;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 6 + Math.random() * 22;
+          this.spawnSmoke(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 1 + Math.random() * 20,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.62, 0.64, 0.68],
+            2,
+            0.85,
+            1.6,
+          );
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 1 + Math.random() * 10,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.78, 0.72, 0.62],
+            2,
+            0.34,
+            3.2,
+          );
+        }
+      } else if (rig.signature === 'volcano_birth') {
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.14 + intensity * 0.1;
+        }
+        for (let i = 0; i < rig.rings.length; i++) {
+          const ring = rig.rings[i];
+          const pulse = 1 + Math.sin(this.animTime * 4 + i * 1.7) * 0.08;
+          ring.scaling.set(pulse, pulse, pulse);
+          if (i === 0) rig.ringMats[i].alpha = 0.55 + Math.sin(this.animTime * 7) * 0.15;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.1;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = Math.random() * 9;
+          this.spawnSmoke(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 28 + Math.random() * 6,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.24, 0.22, 0.2],
+            3,
+            1.4,
+            2.4,
+          );
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + (Math.random() - 0.5) * 6,
+              y: rig.center.y + 30 + Math.random() * 3,
+              z: rig.center.z + (Math.random() - 0.5) * 6,
+            },
+            [1, 0.42, 0.1],
+            3,
+            0.5,
+            4.5,
+          );
+        }
+      } else if (rig.signature === 'sand_wall') {
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.14 + intensity * 0.14;
+        }
+        if (rig.funnel) {
+          rig.funnel.rotation.y = Math.sin(this.animTime * 0.25) * 0.5;
+        }
+        for (let i = 0; i < rig.rings.length; i++) {
+          const ring = rig.rings[i];
+          ring.rotation.y += dt * (1.4 + i * 0.5);
+          ring.rotation.z = Math.sin(this.animTime * 0.8 + i) * 0.18;
+          rig.ringMats[i].alpha = 0.16 + intensity * 0.2;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.12;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 10 + Math.random() * 32;
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 1 + Math.random() * 16,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.85, 0.7, 0.42],
+            3,
+            0.42,
+            3.8,
+          );
+        }
+      } else if (rig.signature === 'gravity_collapse') {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * (0.4 + i * 0.2);
+          rig.ringMats[i].alpha = 0.22 + intensity * 0.24;
+        }
+        for (const box of rig.debris) {
+          const meta = box.metadata as
+            | { angle: number; radius: number; height: number; speed: number }
+            | undefined;
+          if (!meta) continue;
+          meta.angle += dt * meta.speed * 0.4;
+          const lift = rig.phase === 'climax' ? 6 : 0;
+          box.position.set(
+            Math.cos(meta.angle) * meta.radius,
+            meta.height + lift + Math.sin(this.animTime * 0.7 + meta.angle) * 1.4,
+            Math.sin(meta.angle) * meta.radius,
+          );
+          box.rotation.x += dt * 0.3;
+          box.rotation.z += dt * 0.2;
+        }
+      } else if (rig.signature === 'canyon_tear') {
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.18 + intensity * 0.16 + Math.sin(this.animTime * 3) * 0.04;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.14;
+          const x = rig.center.x + (Math.random() - 0.5) * 90;
+          this.spawnSmoke(
+            { x, y: rig.center.y + 0.4, z: rig.center.z + (Math.random() - 0.5) * 8 },
+            [0.45, 0.4, 0.36],
+            2,
+            0.7,
+            1.4,
+          );
+        }
+      } else if (rig.signature === 'lava_river') {
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.34 + intensity * 0.2 + Math.sin(this.animTime * 5) * 0.05;
+        }
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * (0.8 + i * 0.3);
+          rig.ringMats[i].alpha = 0.2 + intensity * 0.18;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.08;
+          const x = rig.center.x + (Math.random() - 0.5) * 100;
+          this.spawnMaterialBurst(
+            { x, y: rig.center.y + 0.4, z: rig.center.z + (Math.random() - 0.5) * 10 },
+            [1, 0.4, 0.1],
+            2,
+            0.3,
+            3.2,
+          );
+        }
+      } else if (rig.signature === 'sinkhole_maw') {
+        if (rig.funnel) rig.funnel.rotation.y += dt * 1.1;
+        if (rig.funnelMat) {
+          rig.funnelMat.alpha = 0.58 + intensity * 0.18;
+        }
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y -= dt * (1.4 + i * 0.5);
+          rig.ringMats[i].alpha = 0.2 + intensity * 0.2;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.12;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 6 + Math.random() * 18;
+          this.spawnSmoke(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 0.4,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.3, 0.27, 0.25],
+            2,
+            0.8,
+            1.0,
+          );
+        }
+      } else if (rig.signature === 'crystal_bloom') {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * 0.5;
+          rig.ringMats[i].alpha = 0.24 + intensity * 0.24;
+        }
+        for (const shard of rig.debris) {
+          const meta = shard.metadata as
+            | { angle: number; radius: number; height: number; speed: number }
+            | undefined;
+          if (!meta) continue;
+          meta.angle += dt * meta.speed * 0.6;
+          shard.position.set(
+            Math.cos(meta.angle) * meta.radius,
+            meta.height + Math.sin(this.animTime * 1.4 + meta.angle) * 1.2,
+            Math.sin(meta.angle) * meta.radius,
+          );
+          shard.rotation.y += dt * 1.5;
+        }
+      } else if (rig.signature === 'tsunami_surge' || rig.signature === 'glacier_advance') {
+        if (rig.funnelMat) rig.funnelMat.alpha = 0.26 + intensity * 0.18;
+        if (rig.funnel && rig.signature === 'tsunami_surge') {
+          const width = this.grid.dimX * VOXEL_SIZE;
+          rig.funnel.position.x = -width * 0.5 + 8 + rig.progress * (width - 16);
+          rig.funnel.position.y = 4 + Math.sin(this.animTime * 2.2) * 0.6;
+        }
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * 0.4;
+          rig.ringMats[i].alpha = 0.22 + intensity * 0.18;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.1;
+          const width = this.grid.dimX * VOXEL_SIZE;
+          const x =
+            rig.signature === 'tsunami_surge'
+              ? -width * 0.5 + 8 + rig.progress * (width - 16)
+              : 0;
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + x,
+              y: rig.center.y + 1,
+              z: rig.center.z + (Math.random() - 0.5) * 90,
+            },
+            rig.signature === 'tsunami_surge' ? [0.55, 0.82, 1] : [0.8, 0.94, 1],
+            2,
+            0.32,
+            3.0,
+          );
+        }
+      } else if (rig.signature === 'overgrowth_titan') {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * 0.3;
+          rig.ringMats[i].alpha = 0.24 + intensity * 0.24;
+        }
+        for (const leaf of rig.debris) {
+          const meta = leaf.metadata as
+            | { angle: number; radius: number; height: number; speed: number }
+            | undefined;
+          if (!meta) continue;
+          meta.angle += dt * meta.speed * 0.5;
+          leaf.position.set(
+            Math.cos(meta.angle) * meta.radius,
+            meta.height + Math.sin(this.animTime * 0.9 + meta.angle) * 1.6,
+            Math.sin(meta.angle) * meta.radius,
+          );
+          leaf.rotation.y += dt * 1.2;
+        }
+      } else if (ENTITY_RIG_SIGNATURES.has(rig.signature)) {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * 0.4;
+          rig.ringMats[i].alpha = 0.24 + intensity * 0.24;
+        }
+        for (const mote of rig.debris) {
+          const meta = mote.metadata as
+            | { angle: number; radius: number; height: number; speed: number }
+            | undefined;
+          if (!meta) continue;
+          meta.angle += dt * meta.speed * 0.5;
+          mote.position.set(
+            Math.cos(meta.angle) * meta.radius,
+            meta.height + Math.sin(this.animTime * 1.1 + meta.angle) * 1.2,
+            Math.sin(meta.angle) * meta.radius,
+          );
+          mote.rotation.y += dt * 1.4;
+        }
+      } else if (SUPPLY_RIG_SIGNATURES.has(rig.signature)) {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * (i === 0 ? 0.5 : 0.2);
+          rig.ringMats[i].alpha = i === 0 ? 0.3 + intensity * 0.25 : 0.18 + intensity * 0.18;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.18;
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + (Math.random() - 0.5) * 10,
+              y: rig.center.y + 0.5,
+              z: rig.center.z + (Math.random() - 0.5) * 10,
+            },
+            [1, 0.8, 0.3],
+            2,
+            0.3,
+            2.6,
+          );
+        }
+      } else if (SCENERY_RIG_SIGNATURES.has(rig.signature)) {
+        for (let i = 0; i < rig.rings.length; i++) {
+          rig.rings[i].rotation.y += dt * (i === 0 ? 0.35 : 0.15);
+          rig.ringMats[i].alpha = i === 0 ? 0.3 + intensity * 0.25 : 0.1 + intensity * 0.12;
+        }
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.14;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 4 + Math.random() * 18;
+          this.spawnSmoke(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 0.5,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.55, 0.48, 0.4],
+            2,
+            0.8,
+            1.4,
+          );
+        }
+      } else {
+        // Terremoto: poeira e rochas em pontos aleatórios ao redor do epicentro.
+        rig.timer -= dt;
+        if (rig.timer <= 0 && near > 0.1) {
+          rig.timer = 0.09;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = Math.random() * 55;
+          this.spawnSmoke(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 0.4,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.48, 0.43, 0.38],
+            1,
+            0.65,
+            1.2,
+          );
+          this.spawnMaterialBurst(
+            {
+              x: rig.center.x + Math.cos(angle) * radius,
+              y: rig.center.y + 0.3,
+              z: rig.center.z + Math.sin(angle) * radius,
+            },
+            [0.55, 0.5, 0.44],
+            2,
+            0.3,
+            2.6,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Pulso autoritativo do servidor: impacto de meteoro, bomba vulcânica,
+   * destroço de tornado. O cliente só desenha; dano e posição vêm do servidor.
+   */
+  public handleEventPulse(pulse: EventPulse): void {
+    if (this.mode !== 'playing') return;
+    const meta = SIGNATURE_META[pulse.signature];
+    const colorHex = meta?.colors[0] ?? '#f59e0b';
+    const color = Color3.FromHexString(colorHex);
+    const rgb: [number, number, number] = [color.r, color.g, color.b];
+    const pos = pulse.position;
+    const dist = Math.hypot(
+      pos.x - this.camera.position.x,
+      pos.y - this.camera.position.y,
+      pos.z - this.camera.position.z,
+    );
+    const near = Math.max(0, 1 - dist / 120);
+
+    if (pulse.kind === 'telegraph') {
+      const vx = Math.max(0, Math.min(this.grid.dimX - 1, Math.floor(pos.x / VOXEL_SIZE)));
+      const vz = Math.max(0, Math.min(this.grid.dimZ - 1, Math.floor(pos.z / VOXEL_SIZE)));
+      const gy = (getGroundVoxelY(this.grid, vx, vz) + 0.15) * VOXEL_SIZE;
+      const ring = MeshBuilder.CreateTorus(
+        `evt_pulse_mark_${pulse.eventId}_${Math.random().toString(36).slice(2, 5)}`,
+        { diameter: Math.max(2, pulse.radius * 2), thickness: 0.24, tessellation: 36 },
+        this.scene,
+      );
+      ring.position.set(pos.x, gy, pos.z);
+      ring.isPickable = false;
+      const mat = new StandardMaterial(`evt_pulse_mark_mat_${pulse.eventId}`, this.scene);
+      mat.emissiveColor = color;
+      mat.disableLighting = true;
+      mat.alpha = 0.75;
+      ring.material = mat;
+      this.eventPulseMarkers.push({ mesh: ring, mat, ttl: pulse.ttl, maxTtl: pulse.ttl });
+      soundSynth.playEventCue('whistle', { x: pos.x, y: gy, z: pos.z });
+      return;
+    }
+
+    if (pulse.kind === 'debris') {
+      this.spawnMaterialBurst(pos, rgb, 4, 0.42, 4.5);
+      if (dist < 50) {
+        soundSynth.playEventCue(meta?.sound ?? 'rumble', pos);
+      }
+      return;
+    }
+
+    if (pulse.kind === 'roar') {
+      soundSynth.playEventCue(meta?.sound ?? 'rumble', pos);
+      if (!this.reducedMotion) {
+        this.cameraTrauma = Math.min(1, this.cameraTrauma + near * 0.22);
+      }
+      return;
+    }
+
+    if (pulse.kind === 'lightning') {
+      const top = new Vector3(pos.x + (Math.random() - 0.5) * 8, pos.y + 42, pos.z + (Math.random() - 0.5) * 8);
+      const points: Vector3[] = [top];
+      const steps = 7;
+      for (let i = 1; i < steps; i++) {
+        const t = i / steps;
+        points.push(
+          new Vector3(
+            top.x + (pos.x - top.x) * t + (Math.random() - 0.5) * 3.2,
+            top.y + (pos.y - top.y) * t,
+            top.z + (pos.z - top.z) * t + (Math.random() - 0.5) * 3.2,
+          ),
+        );
+      }
+      points.push(new Vector3(pos.x, pos.y, pos.z));
+      const arc = MeshBuilder.CreateLines(
+        `evt_lightning_${pulse.eventId}_${Math.random().toString(36).slice(2, 5)}`,
+        { points },
+        this.scene,
+      );
+      arc.color = color;
+      arc.alpha = 0.95;
+      arc.isPickable = false;
+      this.eventLightningArcs.push({ mesh: arc, ttl: pulse.ttl, maxTtl: pulse.ttl });
+      this.spawnMaterialBurst(pos, [0.72, 0.86, 1], 8, 0.36, 4.2);
+      this.spawnShockwave(pos, Math.max(2, pulse.radius * 0.8), '#a78bfa');
+      soundSynth.playEventCue('alert', pos);
+      if (!this.reducedMotion) {
+        this.cameraTrauma = Math.min(1, this.cameraTrauma + near * 0.4);
+      }
+      return;
+    }
+
+    if (pulse.kind === 'hail') {
+      this.spawnMaterialBurst(pos, [0.82, 0.93, 1], 7, 0.3, 3.4);
+      this.spawnShockwave(pos, Math.max(1.5, pulse.radius * 0.5), '#bae6fd');
+      if (dist < 60) soundSynth.playEventCue('hiss', pos);
+      return;
+    }
+
+    if (pulse.kind === 'wave') {
+      this.spawnMaterialBurst(pos, [0.35, 0.75, 1], 12, 0.8, 5);
+      this.spawnSmoke(pos, [0.7, 0.85, 1], 4, 1.1, 1.4);
+      soundSynth.playEventCue('wave', pos);
+      return;
+    }
+
+    // Impacto, erupção, raio, granizo e onda de choque compartilham o palco.
+    this.spawnExplosionVfx(pos, Math.max(1.1, pulse.radius * 0.45));
+    this.spawnShockwave(pos, Math.max(2, pulse.radius), colorHex);
+    this.spawnSmoke(pos, rgb, pulse.kind === 'shockwave' ? 8 : 5, 1.2, 2.6);
+    this.spawnMaterialBurst(pos, rgb, pulse.kind === 'shockwave' ? 16 : 10, 0.7, 5.2);
+    if (pulse.kind === 'impact' || pulse.kind === 'eruption' || pulse.kind === 'shockwave') {
+      if (
+        meta?.sound === 'sizzle' ||
+        meta?.sound === 'quake' ||
+        meta?.sound === 'chime' ||
+        meta?.sound === 'wave' ||
+        meta?.sound === 'hiss' ||
+        meta?.sound === 'growl' ||
+        meta?.sound === 'alert'
+      ) {
+        soundSynth.playEventCue(meta.sound, pos);
+      } else {
+        soundSynth.playExplosionAt(pos);
+      }
+    }
+    if (!this.reducedMotion) {
+      this.cameraTrauma = Math.min(
+        1,
+        this.cameraTrauma + near * (0.2 + pulse.intensity * 0.35),
+      );
+    }
+  }
+
   private applyWeatherAtmosphere(events: MapEventState[]): void {
     const underwater = this.camera.position.y < this.currentWaterY - 0.05;
     const activeWeather = events.find(
-      (e) => e.warningRemainingSec <= 0 && e.archetype === 'WEATHER_HAZARD',
+      (e) =>
+        e.warningRemainingSec <= 0 &&
+        (e.archetype === 'WEATHER_HAZARD' ||
+          (e.archetype === 'TERRAIN_MUTATION' && e.params.mutationKind === 'volcano')),
     );
 
     if (!activeWeather) {
@@ -3064,18 +4309,27 @@ export class BabylonVoxelArena {
       this.targetClearColor.set(0.42, 0.72, 0.94, 1);
       this.targetFogDensity = 0.0022;
     } else {
-      const wk = activeWeather.params.weatherKind ?? 'meteor_shower';
+      const isVolcano = activeWeather.archetype === 'TERRAIN_MUTATION';
+      const wk = isVolcano
+        ? 'volcano'
+        : (activeWeather.params.weatherKind ?? 'meteor_shower');
       this.activeWeatherKind = wk;
       this.weatherBaseMesh.setEnabled(
-        wk === 'acid_rain' ||
-          wk === 'blizzard' ||
-          wk === 'meteor_shower' ||
-          wk === 'hail' ||
-          wk === 'thunderstorm' ||
-          wk === 'sandstorm' ||
-          wk === 'tornado',
+        !isVolcano &&
+          (wk === 'acid_rain' ||
+            wk === 'blizzard' ||
+            wk === 'meteor_shower' ||
+            wk === 'hail' ||
+            wk === 'thunderstorm' ||
+            wk === 'sandstorm' ||
+            wk === 'tornado' ||
+            wk === 'low_gravity'),
       );
-      if (wk === 'blizzard') {
+      if (wk === 'volcano') {
+        this.targetFogColor.set(0.28, 0.2, 0.17);
+        this.targetClearColor.set(0.22, 0.15, 0.13, 1);
+        this.targetFogDensity = 0.018;
+      } else if (wk === 'blizzard') {
         this.targetFogColor.set(0.84, 0.91, 0.98);
         this.targetClearColor.set(0.8, 0.88, 0.96, 1);
         this.targetFogDensity = 0.022;
@@ -3099,6 +4353,10 @@ export class BabylonVoxelArena {
         this.targetFogColor.set(0.5, 0.5, 0.5);
         this.targetClearColor.set(0.46, 0.46, 0.47, 1);
         this.targetFogDensity = 0.016;
+      } else if (wk === 'low_gravity') {
+        this.targetFogColor.set(0.42, 0.32, 0.62);
+        this.targetClearColor.set(0.36, 0.28, 0.58, 1);
+        this.targetFogDensity = 0.008;
       } else if (wk === 'meteor_shower' || wk === 'earthquake') {
         this.targetFogColor.set(0.42, 0.25, 0.22);
         this.targetClearColor.set(0.38, 0.22, 0.2, 1);
@@ -3207,6 +4465,39 @@ export class BabylonVoxelArena {
       }
     }
 
+    this.updateEventRigs(dt);
+    this.updateRelicAura(dt);
+    if (this.eventAmbientTrauma > 0 && !this.reducedMotion) {
+      this.cameraTrauma = Math.max(this.cameraTrauma, this.eventAmbientTrauma);
+    }
+
+    // Arcos de raio: fade curto e descarte.
+    for (let i = this.eventLightningArcs.length - 1; i >= 0; i--) {
+      const arc = this.eventLightningArcs[i];
+      arc.ttl -= dt;
+      if (arc.ttl <= 0) {
+        arc.mesh.dispose();
+        this.eventLightningArcs.splice(i, 1);
+        continue;
+      }
+      arc.mesh.alpha = Math.max(0, arc.ttl / Math.max(0.01, arc.maxTtl));
+    }
+
+    // Marcadores de impacto anunciado (meteoro gigante): encolhem até sumir.
+    for (let i = this.eventPulseMarkers.length - 1; i >= 0; i--) {
+      const marker = this.eventPulseMarkers[i];
+      marker.ttl -= dt;
+      if (marker.ttl <= 0) {
+        marker.mesh.dispose();
+        marker.mat.dispose();
+        this.eventPulseMarkers.splice(i, 1);
+        continue;
+      }
+      const p = marker.ttl / Math.max(0.01, marker.maxTtl);
+      marker.mat.alpha = 0.25 + p * 0.55;
+      marker.mesh.rotation.y += dt * 1.4;
+    }
+
     // Drift sky clouds lazily across larger island span
     for (let i = 0; i < this.clouds.length; i++) {
       const c = this.clouds[i];
@@ -3290,7 +4581,8 @@ export class BabylonVoxelArena {
       this.activeWeatherKind === 'hail' ||
       this.activeWeatherKind === 'thunderstorm' ||
       this.activeWeatherKind === 'sandstorm' ||
-      this.activeWeatherKind === 'tornado'
+      this.activeWeatherKind === 'tornado' ||
+      this.activeWeatherKind === 'low_gravity'
     ) {
       const camPos = this.camera.position;
       const isRain =
@@ -3298,28 +4590,43 @@ export class BabylonVoxelArena {
       const isSnow = this.activeWeatherKind === 'blizzard' || this.activeWeatherKind === 'hail';
       const isDust =
         this.activeWeatherKind === 'sandstorm' || this.activeWeatherKind === 'tornado';
-      const fallSpeed = isRain ? 22 : isSnow ? (this.activeWeatherKind === 'hail' ? 14 : 4.5) : isDust ? 2.4 : 18;
-      const driftX = isRain ? 1.5 : isSnow ? 3.2 : isDust ? 12 : 6.0;
-      const sx = isRain ? 0.3 : isSnow ? 0.8 : isDust ? 1.3 : 1.0;
-      const sy = isRain ? 3.4 : isSnow ? 0.8 : isDust ? 0.45 : 2.2;
-      const col: [number, number, number] = isRain
-        ? this.activeWeatherKind === 'thunderstorm'
-          ? [0.62, 0.76, 1.0]
-          : [0.45, 0.95, 0.35]
-        : isSnow
-          ? this.activeWeatherKind === 'hail'
-            ? [0.85, 0.93, 1.0]
-            : [0.9, 0.96, 1.0]
-          : isDust
-            ? [0.85, 0.72, 0.48]
-            : [1.0, 0.45, 0.12];
+      const isGravity = this.activeWeatherKind === 'low_gravity';
+      const fallSpeed = isGravity
+        ? -1.1
+        : isRain
+          ? 22
+          : isSnow
+            ? this.activeWeatherKind === 'hail'
+              ? 14
+              : 4.5
+            : isDust
+              ? 2.4
+              : 18;
+      const driftX = isGravity ? 2.2 : isRain ? 1.5 : isSnow ? 3.2 : isDust ? 12 : 6.0;
+      const sx = isGravity ? 0.7 : isRain ? 0.3 : isSnow ? 0.8 : isDust ? 1.3 : 1.0;
+      const sy = isGravity ? 0.7 : isRain ? 3.4 : isSnow ? 0.8 : isDust ? 0.45 : 2.2;
+      const col: [number, number, number] = isGravity
+        ? [0.68, 0.58, 1.0]
+        : isRain
+          ? this.activeWeatherKind === 'thunderstorm'
+            ? [0.62, 0.76, 1.0]
+            : [0.45, 0.95, 0.35]
+          : isSnow
+            ? this.activeWeatherKind === 'hail'
+              ? [0.85, 0.93, 1.0]
+              : [0.9, 0.96, 1.0]
+            : isDust
+              ? [0.85, 0.72, 0.48]
+              : [1.0, 0.45, 0.12];
 
       const weatherCap = Math.min(this.WEATHER_CAP, this.quality.weatherCap);
       for (let i = 0; i < weatherCap; i++) {
         const wp = this.weatherPool[i];
         wp.y -= fallSpeed * wp.speed * dt;
         wp.x += driftX * wp.speed * dt;
-        if (wp.y < -3) wp.y = 18;
+        if (isGravity) {
+          if (wp.y > 22) wp.y = -3;
+        } else if (wp.y < -3) wp.y = 18;
         if (wp.x > 18) wp.x = -18;
         this.scratchScale.set(sx, sy, sx);
         this.scratchPos.set(camPos.x + wp.x, Math.max(1, camPos.y + wp.y - 4), camPos.z + wp.z);
@@ -4093,6 +5400,17 @@ export class BabylonVoxelArena {
       this.lastLocalActionFxAt = now;
       this.recoilKick = 0.9;
       soundSynth.playDig();
+    } else if (activeItem?.kind === 'relic' && now - this.lastLocalActionFxAt >= 320) {
+      this.lastLocalActionFxAt = now;
+      this.recoilKick = 0.45;
+      soundSynth.playEventCue('chime');
+      this.spawnMaterialBurst(
+        { x: origin.x, y: origin.y + 0.4, z: origin.z },
+        [1, 0.82, 0.35],
+        8,
+        0.42,
+        2.6,
+      );
     } else if (activeItem?.kind === 'weapon' && activeItem.weapon && localPlayer?.alive) {
       if (now < localPlayer.overheatedUntil) {
         if (now - this.lastLocalActionFxAt >= 500) {

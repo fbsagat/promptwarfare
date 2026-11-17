@@ -350,9 +350,11 @@ export function validateAndClampWeapon(
 }
 
 export function computeEventPoints(params: EventParams, archetype: EventArchetype): number {
-  const radiusPts = params.radiusMeters * 0.9;
-  const durPts = params.durationSec * 0.45;
-  const lethPts = params.lethality * 1.1;
+  // Raio tem retorno decrescente: eventos de escala apocalíptica são possíveis
+  // sem estourar o orçamento de dano. Duração é mais barata que letalidade.
+  const radiusPts = Math.sqrt(Math.max(0, params.radiusMeters)) * 4.6;
+  const durPts = params.durationSec * 0.28;
+  const lethPts = params.lethality * 1.15;
   const qtyPts =
     archetype === 'ENTITY_SPAWN' || archetype === 'SUPPLY_DROP' || archetype === 'SCENERY_SPAWN'
       ? params.quantity * 3.5
@@ -383,10 +385,10 @@ export function validateAndClampEventParams(
   ];
 
   const params: EventParams = {
-    radiusMeters: Math.round(clamp(raw.radiusMeters ?? 18, 6, 45)),
-    durationSec: Math.round(clamp(raw.durationSec ?? 30, 15, 90)),
+    radiusMeters: Math.round(clamp(raw.radiusMeters ?? 18, 6, 130)),
+    durationSec: Math.round(clamp(raw.durationSec ?? 30, 15, 120)),
     lethality: Math.round(clamp(raw.lethality ?? 18, 5, 45)),
-    quantity: Math.round(clamp(raw.quantity ?? 4, 1, 14)),
+    quantity: Math.round(clamp(raw.quantity ?? 4, 1, 20)),
     weatherKind: raw.weatherKind,
     mutationKind: raw.mutationKind,
     aiBehavior: validBehaviors.includes(raw.aiBehavior as EntityAiBehavior)
@@ -394,7 +396,7 @@ export function validateAndClampEventParams(
       : archetype === 'SUPPLY_DROP'
         ? 'static_pickup'
         : 'aggressive_nearest',
-    ammoRestore: Math.round(clamp(raw.ammoRestore ?? 28, 10, 60)),
+    ammoRestore: Math.round(clamp(raw.ammoRestore ?? 28, 10, 100)),
     sceneryKind: validScenery.includes(raw.sceneryKind as SceneryKind)
       ? (raw.sceneryKind as SceneryKind)
       : archetype === 'SCENERY_SPAWN'
@@ -414,11 +416,18 @@ export function validateAndClampEventParams(
     budgetUsed = computeEventPoints(params, archetype);
   }
 
-  while (budgetUsed > EVENT_POINT_BUDGET && (params.lethality > 5 || params.radiusMeters > 6 || params.durationSec > 15)) {
+  while (
+    budgetUsed > EVENT_POINT_BUDGET &&
+    (params.lethality > 5 ||
+      params.radiusMeters > 6 ||
+      params.durationSec > 15 ||
+      params.quantity > 1)
+  ) {
     wasClamped = true;
     if (params.lethality > 5) params.lethality -= 1;
     else if (params.radiusMeters > 6) params.radiusMeters -= 1;
     else if (params.durationSec > 15) params.durationSec -= 2;
+    else if (params.quantity > 1) params.quantity -= 1;
     budgetUsed = computeEventPoints(params, archetype);
   }
 

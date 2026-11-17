@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-18.6","kind":"event","items":{"evt_terrain_sinkhole":{"archetype":"TERRAIN_MUTATION","params":{"radiusMeters":70,"durationSec":55,"lethality":20,"quantity":2,"mutationKind":"sinkhole","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":76.9,"wasClamped":false}}}

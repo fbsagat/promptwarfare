@@ -1,0 +1,1 @@
+{"schemaVersion":3,"version":"2026-11-18.6","kind":"event","items":{"evt_terrain_overgrowth":{"archetype":"TERRAIN_MUTATION","params":{"radiusMeters":75,"durationSec":60,"lethality":16,"quantity":2,"mutationKind":"overgrowth","aiBehavior":"aggressive_nearest","ammoRestore":28},"budgetUsed":75,"wasClamped":false}}}

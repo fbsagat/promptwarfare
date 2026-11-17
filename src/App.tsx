@@ -35,6 +35,7 @@ import {
   type DevCatalogPayload,
   type DevRoomState,
   type EventCycleState,
+  type EventPulse,
   type KillfeedEntry,
   type LobbyStatePayload,
   type LootDropState,
@@ -607,6 +608,11 @@ export default function App() {
             msg.payload.center,
             msg.payload.voxels,
           );
+          return;
+        }
+
+        if (msg.type === 'event:pulse') {
+          arenaRef.current?.handleEventPulse(msg.payload as EventPulse);
           return;
         }
 

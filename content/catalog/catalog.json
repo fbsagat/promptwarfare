@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "version": "2026-11-18.1",
+  "version": "2026-11-18.6",
   "weapons": [
     {
       "id": "wpn_pistol_standard",
@@ -41574,15 +41574,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 34,
-          "lethality": 24,
+          "radiusMeters": 70,
+          "durationSec": 60,
+          "lethality": 22,
           "quantity": 3,
           "weatherKind": "meteor_shower",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 65.1,
+        "budgetUsed": 80.6,
         "wasClamped": false
       }
     },
@@ -41612,15 +41612,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 28,
-          "durationSec": 36,
+          "radiusMeters": 75,
+          "durationSec": 60,
           "lethality": 18,
           "quantity": 2,
           "weatherKind": "blizzard",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 61.2,
+        "budgetUsed": 77.3,
         "wasClamped": false
       }
     },
@@ -41650,15 +41650,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 27,
-          "durationSec": 32,
+          "radiusMeters": 70,
+          "durationSec": 55,
           "lethality": 20,
           "quantity": 2,
           "weatherKind": "acid_rain",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 60.7,
+        "budgetUsed": 76.9,
         "wasClamped": false
       }
     },
@@ -41688,15 +41688,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 30,
-          "durationSec": 28,
+          "radiusMeters": 85,
+          "durationSec": 55,
           "lethality": 22,
           "quantity": 2,
           "weatherKind": "earthquake",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 63.8,
+        "budgetUsed": 83.1,
         "wasClamped": false
       }
     },
@@ -41726,15 +41726,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 34,
-          "durationSec": 40,
+          "radiusMeters": 90,
+          "durationSec": 60,
           "lethality": 8,
           "quantity": 1,
           "weatherKind": "low_gravity",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 57.4,
+        "budgetUsed": 69.6,
         "wasClamped": false
       }
     },
@@ -41764,15 +41764,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 30,
-          "durationSec": 26,
-          "lethality": 22,
+          "radiusMeters": 60,
+          "durationSec": 55,
+          "lethality": 24,
           "quantity": 2,
           "mutationKind": "volcano",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 62.9,
+        "budgetUsed": 78.6,
         "wasClamped": false
       }
     },
@@ -41802,15 +41802,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 28,
-          "durationSec": 24,
-          "lethality": 18,
+          "radiusMeters": 80,
+          "durationSec": 55,
+          "lethality": 20,
           "quantity": 2,
           "mutationKind": "fissure",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 55.8,
+        "budgetUsed": 79.5,
         "wasClamped": false
       }
     },
@@ -41840,15 +41840,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 24,
-          "lethality": 16,
+          "radiusMeters": 70,
+          "durationSec": 55,
+          "lethality": 18,
           "quantity": 2,
           "mutationKind": "crystal_spires",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 51.8,
+        "budgetUsed": 74.6,
         "wasClamped": false
       }
     },
@@ -41878,15 +41878,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 32,
-          "durationSec": 30,
-          "lethality": 14,
+          "radiusMeters": 90,
+          "durationSec": 60,
+          "lethality": 16,
           "quantity": 2,
           "mutationKind": "rising_tide",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 57.7,
+        "budgetUsed": 78.8,
         "wasClamped": false
       }
     },
@@ -41917,10 +41917,10 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 24,
-          "durationSec": 36,
+          "radiusMeters": 45,
+          "durationSec": 50,
           "lethality": 20,
-          "quantity": 5,
+          "quantity": 8,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
@@ -42273,7 +42273,7 @@
             1046
           ]
         },
-        "budgetUsed": 77.3,
+        "budgetUsed": 95.9,
         "wasClamped": false
       }
     },
@@ -42303,8 +42303,8 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 22,
-          "durationSec": 40,
+          "radiusMeters": 45,
+          "durationSec": 55,
           "lethality": 24,
           "quantity": 3,
           "aiBehavior": "territorial",
@@ -42651,7 +42651,7 @@
             102
           ]
         },
-        "budgetUsed": 74.7,
+        "budgetUsed": 84.4,
         "wasClamped": false
       }
     },
@@ -42681,10 +42681,10 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 30,
+          "radiusMeters": 50,
+          "durationSec": 50,
           "lethality": 8,
-          "quantity": 6,
+          "quantity": 8,
           "aiBehavior": "fleeing",
           "ammoRestore": 28
         },
@@ -43037,7 +43037,7 @@
             1046
           ]
         },
-        "budgetUsed": 66.7,
+        "budgetUsed": 83.7,
         "wasClamped": false
       }
     },
@@ -43067,10 +43067,10 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 24,
-          "durationSec": 28,
-          "lethality": 26,
-          "quantity": 5,
+          "radiusMeters": 40,
+          "durationSec": 50,
+          "lethality": 24,
+          "quantity": 7,
           "aiBehavior": "explosive_kamikaze",
           "ammoRestore": 28
         },
@@ -43423,7 +43423,7 @@
             1046
           ]
         },
-        "budgetUsed": 80.3,
+        "budgetUsed": 95.2,
         "wasClamped": false
       }
     },
@@ -43453,10 +43453,10 @@
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 28,
+          "radiusMeters": 50,
+          "durationSec": 50,
           "lethality": 5,
-          "quantity": 4,
+          "quantity": 5,
           "aiBehavior": "static_pickup",
           "ammoRestore": 30
         },
@@ -44225,7 +44225,7 @@
             870
           ]
         },
-        "budgetUsed": 48.3,
+        "budgetUsed": 69.8,
         "wasClamped": false
       }
     },
@@ -44256,15 +44256,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 30,
-          "durationSec": 34,
-          "lethality": 14,
+          "radiusMeters": 80,
+          "durationSec": 60,
+          "lethality": 16,
           "quantity": 2,
           "weatherKind": "sandstorm",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 57.7,
+        "budgetUsed": 76.3,
         "wasClamped": false
       }
     },
@@ -44295,15 +44295,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 32,
-          "durationSec": 30,
-          "lethality": 26,
+          "radiusMeters": 80,
+          "durationSec": 55,
+          "lethality": 24,
           "quantity": 3,
           "weatherKind": "thunderstorm",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 70.9,
+        "budgetUsed": 84.1,
         "wasClamped": false
       }
     },
@@ -44333,15 +44333,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 32,
-          "lethality": 18,
+          "radiusMeters": 70,
+          "durationSec": 55,
+          "lethality": 20,
           "quantity": 3,
           "weatherKind": "hail",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 57.6,
+        "budgetUsed": 76.9,
         "wasClamped": false
       }
     },
@@ -44372,15 +44372,15 @@
       "payload": {
         "archetype": "WEATHER_HAZARD",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 30,
-          "lethality": 20,
+          "radiusMeters": 75,
+          "durationSec": 60,
+          "lethality": 22,
           "quantity": 1,
           "weatherKind": "tornado",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 58.9,
+        "budgetUsed": 81.9,
         "wasClamped": false
       }
     },
@@ -44410,15 +44410,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 24,
-          "durationSec": 24,
-          "lethality": 18,
+          "radiusMeters": 70,
+          "durationSec": 55,
+          "lethality": 20,
           "quantity": 2,
           "mutationKind": "sinkhole",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 52.2,
+        "budgetUsed": 76.9,
         "wasClamped": false
       }
     },
@@ -44448,15 +44448,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 28,
-          "durationSec": 26,
+          "radiusMeters": 80,
+          "durationSec": 60,
           "lethality": 22,
           "quantity": 2,
           "mutationKind": "lava_river",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 61.1,
+        "budgetUsed": 83.2,
         "wasClamped": false
       }
     },
@@ -44486,15 +44486,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 26,
-          "lethality": 16,
+          "radiusMeters": 80,
+          "durationSec": 60,
+          "lethality": 18,
           "quantity": 2,
           "mutationKind": "glacier",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 52.7,
+        "budgetUsed": 78.6,
         "wasClamped": false
       }
     },
@@ -44524,15 +44524,15 @@
       "payload": {
         "archetype": "TERRAIN_MUTATION",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 28,
-          "lethality": 14,
+          "radiusMeters": 75,
+          "durationSec": 60,
+          "lethality": 16,
           "quantity": 2,
           "mutationKind": "overgrowth",
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
-        "budgetUsed": 51.4,
+        "budgetUsed": 75,
         "wasClamped": false
       }
     },
@@ -44562,10 +44562,10 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 24,
-          "durationSec": 34,
-          "lethality": 16,
-          "quantity": 7,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 18,
+          "quantity": 8,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
@@ -44822,7 +44822,7 @@
             2117
           ]
         },
-        "budgetUsed": 79,
+        "budgetUsed": 95,
         "wasClamped": false
       }
     },
@@ -44852,11 +44852,11 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 26,
-          "durationSec": 30,
-          "lethality": 18,
+          "radiusMeters": 50,
+          "durationSec": 55,
+          "lethality": 20,
           "quantity": 6,
-          "aiBehavior": "explosive_kamikaze",
+          "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
         },
         "entityBlueprint": {
@@ -45060,7 +45060,7 @@
             1109
           ]
         },
-        "budgetUsed": 77.7,
+        "budgetUsed": 91.9,
         "wasClamped": false
       }
     },
@@ -45090,8 +45090,8 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 22,
-          "durationSec": 40,
+          "radiusMeters": 45,
+          "durationSec": 55,
           "lethality": 24,
           "quantity": 3,
           "aiBehavior": "territorial",
@@ -45438,7 +45438,7 @@
             102
           ]
         },
-        "budgetUsed": 74.7,
+        "budgetUsed": 84.4,
         "wasClamped": false
       }
     },
@@ -45468,9 +45468,9 @@
       "payload": {
         "archetype": "ENTITY_SPAWN",
         "params": {
-          "radiusMeters": 24,
-          "durationSec": 32,
-          "lethality": 18,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 20,
           "quantity": 6,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28
@@ -45692,7 +45692,7 @@
             598
           ]
         },
-        "budgetUsed": 76.8,
+        "budgetUsed": 90.3,
         "wasClamped": false
       }
     },
@@ -45722,12 +45722,12 @@
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {
-          "radiusMeters": 20,
-          "durationSec": 30,
-          "lethality": 5,
-          "quantity": 5,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 8,
+          "quantity": 3,
           "aiBehavior": "static_pickup",
-          "ammoRestore": 45
+          "ammoRestore": 60
         },
         "entityBlueprint": {
           "name": "Depósito de munição",
@@ -46494,7 +46494,7 @@
             870
           ]
         },
-        "budgetUsed": 54.5,
+        "budgetUsed": 66,
         "wasClamped": false
       }
     },
@@ -46524,12 +46524,12 @@
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 28,
-          "lethality": 5,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 12,
           "quantity": 4,
           "aiBehavior": "static_pickup",
-          "ammoRestore": 55
+          "ammoRestore": 90
         },
         "entityBlueprint": {
           "name": "Suprimentos de elite",
@@ -47296,7 +47296,7 @@
             870
           ]
         },
-        "budgetUsed": 48.3,
+        "budgetUsed": 74.1,
         "wasClamped": false
       }
     },
@@ -47326,12 +47326,12 @@
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {
-          "radiusMeters": 22,
-          "durationSec": 26,
-          "lethality": 6,
+          "radiusMeters": 40,
+          "durationSec": 55,
+          "lethality": 8,
           "quantity": 3,
           "aiBehavior": "static_pickup",
-          "ammoRestore": 50
+          "ammoRestore": 80
         },
         "entityBlueprint": {
           "name": "Cache do tesouro",
@@ -48098,7 +48098,7 @@
             870
           ]
         },
-        "budgetUsed": 48.6,
+        "budgetUsed": 64.2,
         "wasClamped": false
       }
     },
@@ -48128,12 +48128,12 @@
       "payload": {
         "archetype": "SUPPLY_DROP",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 24,
+          "radiusMeters": 45,
+          "durationSec": 50,
           "lethality": 5,
           "quantity": 3,
           "aiBehavior": "static_pickup",
-          "ammoRestore": 35
+          "ammoRestore": 45
         },
         "entityBlueprint": {
           "name": "Caixa de emergência",
@@ -48900,7 +48900,7 @@
             870
           ]
         },
-        "budgetUsed": 43,
+        "budgetUsed": 61.1,
         "wasClamped": false
       }
     },
@@ -48933,15 +48933,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 12,
-          "durationSec": 20,
-          "lethality": 5,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 8,
           "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "tree"
         },
-        "budgetUsed": 28.8,
+        "budgetUsed": 59,
         "wasClamped": false
       }
     },
@@ -48973,15 +48973,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 24,
-          "lethality": 5,
+          "radiusMeters": 55,
+          "durationSec": 55,
+          "lethality": 10,
           "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "grove"
         },
-        "budgetUsed": 36,
+        "budgetUsed": 64.5,
         "wasClamped": false
       }
     },
@@ -49013,15 +49013,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 16,
-          "durationSec": 24,
-          "lethality": 5,
-          "quantity": 2,
+          "radiusMeters": 45,
+          "durationSec": 50,
+          "lethality": 8,
+          "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "house"
         },
-        "budgetUsed": 37.7,
+        "budgetUsed": 57.6,
         "wasClamped": false
       }
     },
@@ -49054,15 +49054,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 28,
-          "lethality": 5,
+          "radiusMeters": 45,
+          "durationSec": 55,
+          "lethality": 10,
           "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "tower"
         },
-        "budgetUsed": 37.8,
+        "budgetUsed": 61.3,
         "wasClamped": false
       }
     },
@@ -49095,15 +49095,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 22,
-          "durationSec": 30,
-          "lethality": 5,
+          "radiusMeters": 60,
+          "durationSec": 60,
+          "lethality": 14,
           "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "skyscraper"
         },
-        "budgetUsed": 42.3,
+        "budgetUsed": 72,
         "wasClamped": false
       }
     },
@@ -49135,15 +49135,15 @@
       "payload": {
         "archetype": "SCENERY_SPAWN",
         "params": {
-          "radiusMeters": 18,
-          "durationSec": 24,
-          "lethality": 5,
+          "radiusMeters": 50,
+          "durationSec": 55,
+          "lethality": 12,
           "quantity": 1,
           "aiBehavior": "aggressive_nearest",
           "ammoRestore": 28,
           "sceneryKind": "ruins"
         },
-        "budgetUsed": 36,
+        "budgetUsed": 65.2,
         "wasClamped": false
       }
     }

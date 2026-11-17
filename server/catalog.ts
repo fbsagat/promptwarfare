@@ -1212,11 +1212,11 @@ function scaleEventParamsToBudget(
   const scaled: EventParams = { ...params };
   let budget = computeEventPoints(scaled, archetype);
   let guard = 0;
-  while (budget > maxBudget && guard++ < 40) {
-    if (scaled.lethality > 5) scaled.lethality -= 2;
+  while (budget > maxBudget && guard++ < 200) {
+    if (scaled.lethality > 3) scaled.lethality -= 1;
     else if (scaled.quantity > 1) scaled.quantity -= 1;
-    else if (scaled.radiusMeters > 6) scaled.radiusMeters -= 2;
-    else if (scaled.durationSec > 15) scaled.durationSec -= 3;
+    else if (scaled.radiusMeters > 3) scaled.radiusMeters -= 1;
+    else if (scaled.durationSec > 6) scaled.durationSec -= 1;
     else break;
     budget = computeEventPoints(scaled, archetype);
   }

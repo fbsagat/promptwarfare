@@ -242,7 +242,12 @@ class SoundSynth {
       volume: 0.8,
     });
 
-    const noise = (duration: number, filterType: BiquadFilterType, frequency: number): void => {
+    const noise = (
+      duration: number,
+      filterType: BiquadFilterType,
+      frequency: number,
+      onEnded: () => void = () => out.dispose(),
+    ): void => {
       const frames = Math.max(1, Math.floor(ctx.sampleRate * duration));
       const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
       const channel = buffer.getChannelData(0);
@@ -256,7 +261,7 @@ class SoundSynth {
       gain.gain.setValueAtTime(0.18, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
       source.connect(filter).connect(gain).connect(out.node);
-      source.onended = () => out.dispose();
+      source.onended = onEnded;
       source.start(t);
       source.stop(t + duration);
     };
@@ -267,6 +272,126 @@ class SoundSynth {
     }
     if (patch === 'wind') {
       noise(0.7, 'bandpass', 620);
+      return;
+    }
+    if (patch === 'sizzle') {
+      noise(0.6, 'highpass', 2400);
+      return;
+    }
+    if (patch === 'whistle') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1500, t);
+      osc.frequency.exponentialRampToValueAtTime(320, t + 0.75);
+      gain.gain.setValueAtTime(0.085, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      osc.connect(gain).connect(out.node);
+      osc.onended = () => out.dispose();
+      osc.start(t);
+      osc.stop(t + 0.82);
+      return;
+    }
+    if (patch === 'quake') {
+      let remaining = 3;
+      const done = (): void => {
+        remaining -= 1;
+        if (remaining <= 0) out.dispose();
+      };
+      [26, 41].forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.72, t + 0.95);
+        gain.gain.setValueAtTime(index === 0 ? 0.22 : 0.12, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+        osc.connect(gain).connect(out.node);
+        osc.onended = done;
+        osc.start(t);
+        osc.stop(t + 1.02);
+      });
+      noise(1.0, 'lowpass', 170, done);
+      return;
+    }
+    if (patch === 'vortex') {
+      let remaining = 3;
+      const done = (): void => {
+        remaining -= 1;
+        if (remaining <= 0) out.dispose();
+      };
+      [44, 67].forEach((freq) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.35, t + 1.2);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 1.25);
+        osc.connect(gain).connect(out.node);
+        osc.onended = done;
+        osc.start(t);
+        osc.stop(t + 1.27);
+      });
+      noise(1.2, 'bandpass', 420, done);
+      return;
+    }
+    if (patch === 'eruption') {
+      let remaining = 3;
+      const done = (): void => {
+        remaining -= 1;
+        if (remaining <= 0) out.dispose();
+      };
+      [34, 58].forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.7, t + 0.9);
+        gain.gain.setValueAtTime(index === 0 ? 0.24 : 0.14, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.95);
+        osc.connect(gain).connect(out.node);
+        osc.onended = done;
+        osc.start(t);
+        osc.stop(t + 0.97);
+      });
+      noise(0.9, 'lowpass', 220, done);
+      return;
+    }
+    if (patch === 'wave') {
+      let remaining = 2;
+      const done = (): void => {
+        remaining -= 1;
+        if (remaining <= 0) out.dispose();
+      };
+      const frames = Math.max(1, Math.floor(ctx.sampleRate * 1.1));
+      const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < frames; i++) channel[i] = Math.random() * 2 - 1;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(280, t);
+      filter.frequency.exponentialRampToValueAtTime(900, t + 1.0);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 1.05);
+      source.connect(filter).connect(gain).connect(out.node);
+      source.onended = done;
+      source.start(t);
+      source.stop(t + 1.1);
+      const osc = ctx.createOscillator();
+      const lowGain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(52, t);
+      osc.frequency.exponentialRampToValueAtTime(31, t + 1.0);
+      lowGain.gain.setValueAtTime(0.12, t);
+      lowGain.gain.exponentialRampToValueAtTime(0.001, t + 1.05);
+      osc.connect(lowGain).connect(out.node);
+      osc.onended = done;
+      osc.start(t);
+      osc.stop(t + 1.1);
       return;
     }
 

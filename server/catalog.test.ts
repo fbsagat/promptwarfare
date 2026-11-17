@@ -20,6 +20,10 @@ import {
   deriveEventFunContract,
   validateEventFunContract,
 } from '../src/shared/eventFun.ts';
+import {
+  signatureForEvent,
+  SIGNATURE_META,
+} from '../src/shared/eventMechanics.ts';
 
 test('catalog version and budgets are valid', () => {
   const catalog = getCatalog();
@@ -367,4 +371,106 @@ test('exact prompts bypass the pool; fuzzy ones stay pool-bound', () => {
   assert.equal(thunderstorm.itemId, 'evt_weather_thunderstorm');
   assert.equal(thunderstorm.strategy, 'alias');
   assert.equal(thunderstorm.poolMiss, true);
+});
+
+test('every catalog event has an epic signature and the flagship events respect the scale rule', () => {
+  const catalog = getCatalog();
+  for (const event of catalog.events) {
+    const signature = signatureForEvent(
+      event.payload.archetype,
+      event.payload.params,
+      event.id,
+    );
+    assert.ok(SIGNATURE_META[signature], `${event.id} sem metadados épicos`);
+    assert.ok(event.payload.budgetUsed <= 100, `${event.id} estourou o orçamento`);
+  }
+
+  const flagship = new Map(
+    catalog.events
+      .filter((event) =>
+        [
+          'evt_weather_tornado',
+          'evt_weather_meteor_shower',
+          'evt_terrain_volcano',
+        ].includes(event.id),
+      )
+      .map((event) => [event.id, event]),
+  );
+  assert.equal(flagship.size, 3);
+  for (const [id, event] of flagship) {
+    assert.ok(event.payload.params.radiusMeters >= 60, `${id} não tem escala épica`);
+    assert.ok(event.payload.params.durationSec >= 55, `${id} não sustenta o caos`);
+    assert.ok(event.payload.wasClamped === false, `${id} foi clampado`);
+  }
+
+  // O lote de clima foi promovido inteiro: toda catástrofe aérea é map-wide.
+  const weather = catalog.events.filter(
+    (event) => event.payload.archetype === 'WEATHER_HAZARD',
+  );
+  assert.equal(weather.length, 9);
+  for (const event of weather) {
+    assert.ok(
+      event.payload.params.radiusMeters >= 70,
+      `${event.id} não cobre escala regional/ilha`,
+    );
+    assert.ok(event.payload.params.durationSec >= 55, `${event.id} é curto demais`);
+  }
+
+  // O lote de terreno também foi promovido: todas as mutações são colossais.
+  const terrain = catalog.events.filter(
+    (event) => event.payload.archetype === 'TERRAIN_MUTATION',
+  );
+  assert.equal(terrain.length, 8);
+  for (const event of terrain) {
+    assert.ok(
+      event.payload.params.radiusMeters >= 60,
+      `${event.id} não tem escala colossal`,
+    );
+    assert.ok(event.payload.params.durationSec >= 55, `${event.id} é curto demais`);
+  }
+
+  // O lote de entidades também foi promovido: bosses e matilhas regionais.
+  const entities = catalog.events.filter(
+    (event) => event.payload.archetype === 'ENTITY_SPAWN',
+  );
+  assert.equal(entities.length, 8);
+  for (const event of entities) {
+    assert.ok(
+      event.payload.params.radiusMeters >= 40,
+      `${event.id} não tem escala de caçada`,
+    );
+    assert.ok(event.payload.params.durationSec >= 50, `${event.id} é curto demais`);
+    assert.ok(event.payload.params.quantity >= 3, `${event.id} precisa de grupo`);
+  }
+
+  // O lote de suprimentos também foi promovido: cápsulas de escala regional.
+  const supplies = catalog.events.filter(
+    (event) => event.payload.archetype === 'SUPPLY_DROP',
+  );
+  assert.equal(supplies.length, 5);
+  for (const event of supplies) {
+    assert.ok(
+      event.payload.params.radiusMeters >= 40,
+      `${event.id} não tem área de disputa`,
+    );
+    assert.ok(event.payload.params.durationSec >= 50, `${event.id} é curto demais`);
+    assert.ok(
+      (event.payload.params.ammoRestore ?? 0) >= 30,
+      `${event.id} precisa de munição`,
+    );
+  }
+
+  // O lote de cenário também foi promovido: estruturas colossais.
+  const scenery = catalog.events.filter(
+    (event) => event.payload.archetype === 'SCENERY_SPAWN',
+  );
+  assert.equal(scenery.length, 6);
+  for (const event of scenery) {
+    assert.ok(
+      event.payload.params.radiusMeters >= 45,
+      `${event.id} não tem escala colossal`,
+    );
+    assert.ok(event.payload.params.durationSec >= 50, `${event.id} é curto demais`);
+    assert.equal(event.payload.params.quantity, 1);
+  }
 });

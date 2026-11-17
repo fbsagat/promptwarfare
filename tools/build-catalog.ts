@@ -347,7 +347,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'meteor_shower'],
-    params: { radiusMeters: 26, durationSec: 34, lethality: 24, quantity: 3, weatherKind: 'meteor_shower' },
+    params: { radiusMeters: 70, durationSec: 60, lethality: 22, quantity: 3, weatherKind: 'meteor_shower' },
     palette: [
       { hex: '#f97316', emissive: true },
       { hex: '#3f3f46', emissive: false },
@@ -361,7 +361,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'blizzard'],
-    params: { radiusMeters: 28, durationSec: 36, lethality: 18, quantity: 2, weatherKind: 'blizzard' },
+    params: { radiusMeters: 75, durationSec: 60, lethality: 18, quantity: 2, weatherKind: 'blizzard' },
     palette: [
       { hex: '#67e8f9', emissive: true },
       { hex: '#1e3a5f', emissive: false },
@@ -375,7 +375,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'acid_rain'],
-    params: { radiusMeters: 27, durationSec: 32, lethality: 20, quantity: 2, weatherKind: 'acid_rain' },
+    params: { radiusMeters: 70, durationSec: 55, lethality: 20, quantity: 2, weatherKind: 'acid_rain' },
     palette: [
       { hex: '#4ade80', emissive: true },
       { hex: '#1f2937', emissive: false },
@@ -389,7 +389,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'earthquake'],
-    params: { radiusMeters: 30, durationSec: 28, lethality: 22, quantity: 2, weatherKind: 'earthquake' },
+    params: { radiusMeters: 85, durationSec: 55, lethality: 22, quantity: 2, weatherKind: 'earthquake' },
     palette: [
       { hex: '#a16207', emissive: false },
       { hex: '#3f3f46', emissive: false },
@@ -403,7 +403,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'low_gravity'],
-    params: { radiusMeters: 34, durationSec: 40, lethality: 8, quantity: 1, weatherKind: 'low_gravity' },
+    params: { radiusMeters: 90, durationSec: 60, lethality: 8, quantity: 1, weatherKind: 'low_gravity' },
     palette: [
       { hex: '#c084fc', emissive: true },
       { hex: '#1e1b4b', emissive: false },
@@ -417,7 +417,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'volcano'],
-    params: { radiusMeters: 30, durationSec: 26, lethality: 22, quantity: 2, mutationKind: 'volcano' },
+    params: { radiusMeters: 60, durationSec: 55, lethality: 24, quantity: 2, mutationKind: 'volcano' },
     palette: [
       { hex: '#fb923c', emissive: true },
       { hex: '#27272a', emissive: false },
@@ -431,7 +431,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'fissure'],
-    params: { radiusMeters: 28, durationSec: 24, lethality: 18, quantity: 2, mutationKind: 'fissure' },
+    params: { radiusMeters: 80, durationSec: 55, lethality: 20, quantity: 2, mutationKind: 'fissure' },
     palette: [
       { hex: '#71717a', emissive: false },
       { hex: '#18181b', emissive: false },
@@ -445,7 +445,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'crystal_spires'],
-    params: { radiusMeters: 26, durationSec: 24, lethality: 16, quantity: 2, mutationKind: 'crystal_spires' },
+    params: { radiusMeters: 70, durationSec: 55, lethality: 18, quantity: 2, mutationKind: 'crystal_spires' },
     palette: [
       { hex: '#38bdf8', emissive: true },
       { hex: '#1e293b', emissive: false },
@@ -459,7 +459,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'rising_tide'],
-    params: { radiusMeters: 32, durationSec: 30, lethality: 14, quantity: 2, mutationKind: 'rising_tide' },
+    params: { radiusMeters: 90, durationSec: 60, lethality: 16, quantity: 2, mutationKind: 'rising_tide' },
     palette: [
       { hex: '#22d3ee', emissive: true },
       { hex: '#0f172a', emissive: false },
@@ -473,7 +473,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'aggressive_nearest'],
-    params: { radiusMeters: 24, durationSec: 36, lethality: 20, quantity: 5, aiBehavior: 'aggressive_nearest' },
+    params: { radiusMeters: 45, durationSec: 50, lethality: 20, quantity: 8, aiBehavior: 'aggressive_nearest' },
     palette: [
       { hex: '#ef4444', emissive: true },
       { hex: '#3f3f46', emissive: false },
@@ -488,7 +488,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'territorial'],
-    params: { radiusMeters: 22, durationSec: 40, lethality: 24, quantity: 3, aiBehavior: 'territorial' },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 24, quantity: 3, aiBehavior: 'territorial' },
     palette: [
       { hex: '#a16207', emissive: false },
       { hex: '#3f3f46', emissive: false },
@@ -503,7 +503,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'fleeing'],
-    params: { radiusMeters: 26, durationSec: 30, lethality: 8, quantity: 6, aiBehavior: 'fleeing' },
+    params: { radiusMeters: 50, durationSec: 50, lethality: 8, quantity: 8, aiBehavior: 'fleeing' },
     palette: [
       { hex: '#4ade80', emissive: false },
       { hex: '#1f2937', emissive: false },
@@ -518,7 +518,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'explosive_kamikaze'],
-    params: { radiusMeters: 24, durationSec: 28, lethality: 26, quantity: 5, aiBehavior: 'explosive_kamikaze' },
+    params: { radiusMeters: 40, durationSec: 50, lethality: 24, quantity: 7, aiBehavior: 'explosive_kamikaze' },
     palette: [
       { hex: '#f97316', emissive: true },
       { hex: '#18181b', emissive: false },
@@ -533,7 +533,7 @@ const EVENTS: EventDef[] = [
     category: 'supply',
     archetype: 'SUPPLY_DROP',
     tags: ['supply'],
-    params: { radiusMeters: 18, durationSec: 28, lethality: 5, quantity: 4, ammoRestore: 30 },
+    params: { radiusMeters: 50, durationSec: 50, lethality: 5, quantity: 5, ammoRestore: 30 },
     palette: [
       { hex: '#f59e0b', emissive: false },
       { hex: '#334155', emissive: false },
@@ -548,7 +548,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'sandstorm'],
-    params: { radiusMeters: 30, durationSec: 34, lethality: 14, quantity: 2, weatherKind: 'sandstorm' },
+    params: { radiusMeters: 80, durationSec: 60, lethality: 16, quantity: 2, weatherKind: 'sandstorm' },
     palette: [
       { hex: '#e7cb92', emissive: false },
       { hex: '#b45309', emissive: false },
@@ -562,7 +562,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'thunderstorm'],
-    params: { radiusMeters: 32, durationSec: 30, lethality: 26, quantity: 3, weatherKind: 'thunderstorm' },
+    params: { radiusMeters: 80, durationSec: 55, lethality: 24, quantity: 3, weatherKind: 'thunderstorm' },
     palette: [
       { hex: '#facc15', emissive: true },
       { hex: '#1e293b', emissive: false },
@@ -576,7 +576,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'hail'],
-    params: { radiusMeters: 26, durationSec: 32, lethality: 18, quantity: 3, weatherKind: 'hail' },
+    params: { radiusMeters: 70, durationSec: 55, lethality: 20, quantity: 3, weatherKind: 'hail' },
     palette: [
       { hex: '#bae6fd', emissive: true },
       { hex: '#1e3a5f', emissive: false },
@@ -590,7 +590,7 @@ const EVENTS: EventDef[] = [
     category: 'weather',
     archetype: 'WEATHER_HAZARD',
     tags: ['weather', 'tornado'],
-    params: { radiusMeters: 26, durationSec: 30, lethality: 20, quantity: 1, weatherKind: 'tornado' },
+    params: { radiusMeters: 75, durationSec: 60, lethality: 22, quantity: 1, weatherKind: 'tornado' },
     palette: [
       { hex: '#cbd5e1', emissive: false },
       { hex: '#475569', emissive: false },
@@ -604,7 +604,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'sinkhole'],
-    params: { radiusMeters: 24, durationSec: 24, lethality: 18, quantity: 2, mutationKind: 'sinkhole' },
+    params: { radiusMeters: 70, durationSec: 55, lethality: 20, quantity: 2, mutationKind: 'sinkhole' },
     palette: [
       { hex: '#71717a', emissive: false },
       { hex: '#18181b', emissive: false },
@@ -618,7 +618,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'lava_river'],
-    params: { radiusMeters: 28, durationSec: 26, lethality: 22, quantity: 2, mutationKind: 'lava_river' },
+    params: { radiusMeters: 80, durationSec: 60, lethality: 22, quantity: 2, mutationKind: 'lava_river' },
     palette: [
       { hex: '#fb923c', emissive: true },
       { hex: '#27272a', emissive: false },
@@ -632,7 +632,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'glacier'],
-    params: { radiusMeters: 26, durationSec: 26, lethality: 16, quantity: 2, mutationKind: 'glacier' },
+    params: { radiusMeters: 80, durationSec: 60, lethality: 18, quantity: 2, mutationKind: 'glacier' },
     palette: [
       { hex: '#bae6fd', emissive: true },
       { hex: '#1e3a5f', emissive: false },
@@ -646,7 +646,7 @@ const EVENTS: EventDef[] = [
     category: 'terrain',
     archetype: 'TERRAIN_MUTATION',
     tags: ['terrain', 'overgrowth'],
-    params: { radiusMeters: 26, durationSec: 28, lethality: 14, quantity: 2, mutationKind: 'overgrowth' },
+    params: { radiusMeters: 75, durationSec: 60, lethality: 16, quantity: 2, mutationKind: 'overgrowth' },
     palette: [
       { hex: '#4ade80', emissive: false },
       { hex: '#14532d', emissive: false },
@@ -660,7 +660,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'spider_swarm'],
-    params: { radiusMeters: 24, durationSec: 34, lethality: 16, quantity: 7, aiBehavior: 'aggressive_nearest' },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 18, quantity: 8, aiBehavior: 'aggressive_nearest' },
     palette: [
       { hex: '#a3e635', emissive: true },
       { hex: '#1f2937', emissive: false },
@@ -675,7 +675,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'hunter_drones'],
-    params: { radiusMeters: 26, durationSec: 30, lethality: 18, quantity: 6, aiBehavior: 'explosive_kamikaze' },
+    params: { radiusMeters: 50, durationSec: 55, lethality: 20, quantity: 6, aiBehavior: 'aggressive_nearest' },
     palette: [
       { hex: '#38bdf8', emissive: true },
       { hex: '#1e293b', emissive: false },
@@ -690,7 +690,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'ice_colossus'],
-    params: { radiusMeters: 22, durationSec: 40, lethality: 24, quantity: 3, aiBehavior: 'territorial' },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 24, quantity: 3, aiBehavior: 'territorial' },
     palette: [
       { hex: '#bae6fd', emissive: true },
       { hex: '#1e3a5f', emissive: false },
@@ -705,7 +705,7 @@ const EVENTS: EventDef[] = [
     category: 'entity',
     archetype: 'ENTITY_SPAWN',
     tags: ['entity', 'venom_serpents'],
-    params: { radiusMeters: 24, durationSec: 32, lethality: 18, quantity: 6, aiBehavior: 'aggressive_nearest' },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 20, quantity: 6, aiBehavior: 'aggressive_nearest' },
     palette: [
       { hex: '#4ade80', emissive: true },
       { hex: '#14532d', emissive: false },
@@ -720,7 +720,7 @@ const EVENTS: EventDef[] = [
     category: 'supply',
     archetype: 'SUPPLY_DROP',
     tags: ['supply', 'ammo_depot'],
-    params: { radiusMeters: 20, durationSec: 30, lethality: 5, quantity: 5, ammoRestore: 45 },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 8, quantity: 3, ammoRestore: 60 },
     palette: [
       { hex: '#f59e0b', emissive: false },
       { hex: '#27272a', emissive: false },
@@ -735,7 +735,7 @@ const EVENTS: EventDef[] = [
     category: 'supply',
     archetype: 'SUPPLY_DROP',
     tags: ['supply', 'elite_supply'],
-    params: { radiusMeters: 18, durationSec: 28, lethality: 5, quantity: 4, ammoRestore: 55 },
+    params: { radiusMeters: 45, durationSec: 55, lethality: 12, quantity: 4, ammoRestore: 90 },
     palette: [
       { hex: '#c084fc', emissive: true },
       { hex: '#1e1b4b', emissive: false },
@@ -750,7 +750,7 @@ const EVENTS: EventDef[] = [
     category: 'supply',
     archetype: 'SUPPLY_DROP',
     tags: ['supply', 'treasure_cache'],
-    params: { radiusMeters: 22, durationSec: 26, lethality: 6, quantity: 3, ammoRestore: 50 },
+    params: { radiusMeters: 40, durationSec: 55, lethality: 8, quantity: 3, ammoRestore: 80 },
     palette: [
       { hex: '#facc15', emissive: true },
       { hex: '#78350f', emissive: false },
@@ -765,7 +765,7 @@ const EVENTS: EventDef[] = [
     category: 'supply',
     archetype: 'SUPPLY_DROP',
     tags: ['supply', 'emergency_cache'],
-    params: { radiusMeters: 18, durationSec: 24, lethality: 5, quantity: 3, ammoRestore: 35 },
+    params: { radiusMeters: 45, durationSec: 50, lethality: 5, quantity: 3, ammoRestore: 45 },
     palette: [
       { hex: '#ef4444', emissive: true },
       { hex: '#334155', emissive: false },

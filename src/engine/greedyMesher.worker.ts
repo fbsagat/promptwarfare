@@ -150,16 +150,17 @@ self.onmessage = (e: MessageEvent<MesherRequest>) => {
                 AO_CURVE[(aoPacked >> 4) & 3],
               ];
 
-              // MAT.CRYSTAL = 6, MAT.LAVA = 11, MAT.GOLD = 16
+              // MAT.CRYSTAL = 6, MAT.LAVA = 11, MAT.GOLD = 16, MAT.SLUDGE = 18
               const isGlowMat = mat === 6 || mat === 11;
               const isGoldMat = mat === 16;
+              const isSludgeMat = mat === 18;
               const isTopFace = d === 1 && dirSign === 1;
               const effShade = isGlowMat ? Math.max(0.96, shade) : shade;
               const rgb = MATERIAL_COLORS[mat] ?? [160, 160, 160];
               const warmR = isTopFace && !isGlowMat ? 1.04 : 1.0;
               const warmG = isTopFace && !isGlowMat ? 1.02 : 1.0;
               const coolB = !isTopFace && !isGlowMat ? 1.05 : 0.98;
-              const boost = isGlowMat ? 1.32 : isGoldMat ? 1.15 : 1.0;
+              const boost = isGlowMat ? 1.32 : isGoldMat ? 1.15 : isSludgeMat ? 1.08 : 1.0;
               const rBase = Math.min(1, (rgb[0] / 255) * effShade * warmR * boost);
               const gBase = Math.min(1, (rgb[1] / 255) * effShade * warmG * boost);
               const bBase = Math.min(1, (rgb[2] / 255) * effShade * coolB * boost);

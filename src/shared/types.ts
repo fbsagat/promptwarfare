@@ -22,6 +22,7 @@ export const MAT = {
   BASALT: 15,
   GOLD: 16,
   LADDER: 17,
+  SLUDGE: 18,
 } as const;
 
 export type MaterialId = (typeof MAT)[keyof typeof MAT];
@@ -44,6 +45,7 @@ export const MATERIAL_COLORS: Record<number, [number, number, number]> = {
   [MAT.BASALT]: [56, 58, 68],
   [MAT.GOLD]: [244, 192, 58],
   [MAT.LADDER]: [146, 98, 54],
+  [MAT.SLUDGE]: [128, 196, 52],
 };
 
 export type ProjectileBehavior =
@@ -116,6 +118,22 @@ export interface WeaponBlueprint {
 
 export type PromptKind = 'weapon' | 'event';
 
+/** Relíquias ativas dropadas por eventos catastróficos. */
+export type RelicId =
+  | 'wind_anchor'
+  | 'acid_mask'
+  | 'thermal_core'
+  | 'frost_heart'
+  | 'storm_rod'
+  | 'seismic_boots'
+  | 'void_eye'
+  | 'titan_heart';
+
+export interface RelicBuffState {
+  id: RelicId;
+  endsAt: number;
+}
+
 export interface PromptWindowState {
   kind: PromptKind;
   endsAt: number; // epoch ms do servidor
@@ -139,12 +157,13 @@ export interface EventCycleState {
 
 export interface InventorySlotItem {
   id: string;
-  kind: 'shovel' | 'grapple' | 'weapon';
+  kind: 'shovel' | 'grapple' | 'weapon' | 'relic';
   name: string;
   massKg: number;
   ammo?: number;
   ammoMax?: number;
   weapon?: WeaponBlueprint;
+  relicId?: RelicId;
 }
 
 /**
@@ -153,13 +172,14 @@ export interface InventorySlotItem {
  */
 export interface NetInventorySlot {
   id: string;
-  kind: 'shovel' | 'grapple' | 'weapon';
+  kind: 'shovel' | 'grapple' | 'weapon' | 'relic';
   name: string;
   massKg: number;
   ammo?: number;
   ammoMax?: number;
   /** id da instância em `WeaponBlueprint.id`; ausente para ferramentas. */
   weaponId?: string;
+  relicId?: RelicId;
 }
 
 export type EventArchetype =
@@ -168,6 +188,71 @@ export type EventArchetype =
   | 'TERRAIN_MUTATION'
   | 'SUPPLY_DROP'
   | 'SCENERY_SPAWN';
+
+/** Fases de um evento catastrófico. O cliente usa para VFX/HUD; o servidor, para cadência. */
+export type EventPhase = 'warning' | 'impact' | 'sustain' | 'climax' | 'dissipate';
+
+/**
+ * Assinatura física de um evento. Cada assinatura tem uma mecânica própria e
+ * não pode ser reutilizada como reskin por outro evento.
+ */
+export type EventSignature =
+  | 'orbital_barrage'
+  | 'whiteout'
+  | 'acid_corrosion'
+  | 'quake_collapse'
+  | 'gravity_collapse'
+  | 'sand_wall'
+  | 'supercell'
+  | 'hail_barrage'
+  | 'multi_vortex'
+  | 'volcano_birth'
+  | 'canyon_tear'
+  | 'crystal_bloom'
+  | 'tsunami_surge'
+  | 'sinkhole_maw'
+  | 'lava_river'
+  | 'glacier_advance'
+  | 'overgrowth_titan'
+  | 'alpha_pack'
+  | 'stone_colossus'
+  | 'panic_herd'
+  | 'detonating_swarm'
+  | 'spider_nest'
+  | 'hunter_squad'
+  | 'ice_titan'
+  | 'serpent_nest'
+  | 'supply_barrage'
+  | 'armored_depot'
+  | 'legendary_drop'
+  | 'treasure_vault'
+  | 'emergency_beacon'
+  | 'titan_tree'
+  | 'maze_grove'
+  | 'rising_house'
+  | 'watchtower'
+  | 'colossal_tower'
+  | 'lost_temple';
+
+/** Pulso visual/sonoro autoritativo de um evento (impacto, raio, onda, destroço). */
+export interface EventPulse {
+  eventId: string;
+  signature: EventSignature;
+  kind:
+    | 'impact'
+    | 'shockwave'
+    | 'lightning'
+    | 'hail'
+    | 'debris'
+    | 'roar'
+    | 'eruption'
+    | 'wave'
+    | 'telegraph';
+  position: Vec3;
+  radius: number;
+  intensity: number;
+  ttl: number;
+}
 
 export type SceneryKind =
   | 'tree'
@@ -185,10 +270,10 @@ export type EntityAiBehavior =
   | 'static_pickup';
 
 export interface EventParams {
-  radiusMeters: number; // 6..45
-  durationSec: number; // 15..90
+  radiusMeters: number; // 6..130; componentes compostos podem ser reduzidos para caber no orçamento
+  durationSec: number; // 15..120
   lethality: number; // 5..45
-  quantity: number; // 1..14
+  quantity: number; // 1..20
   weatherKind?:
     | 'acid_rain'
     | 'blizzard'
@@ -261,6 +346,12 @@ export interface MapEventState {
   entityBlueprint?: EntityBlueprint;
   budgetUsed: number;
   wasClamped: boolean;
+  /** Fase atual, calculada pelo servidor a partir do progresso do evento. */
+  phase?: EventPhase;
+  /** Intensidade normalizada 0..1 para VFX, áudio, câmera e HUD. */
+  intensity?: number;
+  /** Escala épica normalizada 0..1 derivada de raio/duração/letalidade. */
+  epicScale?: number;
   catalogId?: string;
   assets?: string[];
   fromDatabase?: boolean;
@@ -314,6 +405,8 @@ export interface PlayerNetState {
   grappleTarget: Vec3 | null;
   burnUntil: number;
   freezeUntil: number;
+  relicBuff: RelicBuffState | null;
+  shieldHp: number;
   personalityLabel?: string;
 }
 
@@ -371,6 +464,7 @@ export interface SpawnedEntityNetState {
   aiBehavior: EntityAiBehavior;
   blueprint?: EntityBlueprint;
   ammoRestore?: number;
+  relicId?: RelicId;
 }
 
 export interface VoxelDelta {

@@ -116,7 +116,7 @@ test('blizzard and hail are blocked by a roof', () => {
       player.hp = 100;
       enqueueEvent(manager, room, prompt, center);
       tickEvents(manager, room, 0.05); // ativa
-      tickEvents(manager, room, 1.3); // pulso de perigo
+      tickEvents(manager, room, 2.0); // pulso de perigo
       assert.equal(player.hp, 100, `${prompt} ignorou o teto`);
     }
   } finally {
@@ -185,26 +185,31 @@ test('new weather kinds damage players through the authoritative hazard pulse', 
       player.hp = 100;
       enqueueEvent(manager, room, prompt, center);
       tickEvents(manager, room, 0.05); // ativa
-      tickEvents(manager, room, 1.3); // pulso de perigo
+      tickEvents(manager, room, 2.0); // pulso de perigo
       assert.ok(player.hp < 100, `${prompt} não causou dano no jogador exposto`);
     }
 
     // Tornado: no centro do vórtice o jogador sofre dano e ganha impulso vertical.
     room.activeEvents.length = 0;
     player.hp = 100;
-    const drift = 10;
-    player.position = {
-      x: center[0] + Math.cos(room.elapsedSec * 0.35) * drift,
-      y: center[1],
-      z: center[2] + Math.sin(room.elapsedSec * 0.35) * drift,
-    };
-    player.velocity = { x: 0, y: 0, z: 0 };
     enqueueEvent(manager, room, 'Tornado', center);
     tickEvents(manager, room, 0.05); // ativa
-    tickEvents(manager, room, 1.3); // pulso de perigo
+    const tornadoEvent = room.activeEvents[0];
+    player.position = {
+      x: tornadoEvent.center[0],
+      y: tornadoEvent.center[1],
+      z: tornadoEvent.center[2],
+    };
+    player.velocity = { x: 0, y: 0, z: 0 };
+    tickEvents(manager, room, 0.05); // atualiza o centro do vórtice
+    player.position = {
+      x: tornadoEvent.center[0],
+      y: tornadoEvent.center[1],
+      z: tornadoEvent.center[2],
+    };
+    tickEvents(manager, room, 0.7); // pulso de perigo
     assert.ok(player.hp < 100, 'tornado não causou dano no centro do vórtice');
-    assert.ok(player.velocity.y > 0, 'tornado não aplicou impulso vertical');
-  } finally {
+    assert.ok(player.velocity.y > 0, 'tornado não aplicou impulso vertical');  } finally {
     manager.disposeAll();
   }
 });
@@ -229,7 +234,7 @@ test('event kills are recorded as content usage', () => {
     player.hp = 1;
     enqueueEvent(manager, room, 'Tempestade de granizo', center);
     tickEvents(manager, room, 0.05); // ativa
-    tickEvents(manager, room, 1.3); // pulso de perigo mata
+    tickEvents(manager, room, 2.0); // pulso de perigo mata
     assert.equal(player.alive, false);
     const kill = usage.find(
       (entry) => entry.role === 'kill' && entry.kind === 'event' && entry.itemId === 'evt_weather_hail',

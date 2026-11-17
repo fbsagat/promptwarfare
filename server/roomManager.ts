@@ -35,6 +35,7 @@ import {
   type PlayerNetWireState,
   type ProjectileNetState,
   type PromptKind,
+  type RelicId,
   type RoomInitWirePayload,
   type RoomTickWirePayload,
   type RoomMatchSummary,
@@ -51,6 +52,7 @@ import type {
   RoomPublicSummary,
 } from '../src/shared/types.ts';
 import { isServerDevEnabled } from '../src/shared/devMode.ts';
+import { updateEpicEvent, type EventEngineDeps } from './eventEngine.ts';
 import {
   carveSphere,
   collapseFloatingClusters,
@@ -96,6 +98,13 @@ import {
   type BotBrainState,
 } from '../src/shared/botBrain.ts';
 import { buildSceneryCells, type SceneryCell } from '../src/shared/scenery.ts';
+import {
+  createRelicItem,
+  relicDurationMs,
+  relicForSignature,
+  RELICS,
+} from '../src/shared/relics.ts';
+import { signatureForEvent } from '../src/shared/eventMechanics.ts';
 
 export interface SocketLike {
   readyState?: number;
@@ -225,6 +234,60 @@ const BOT_EVENT_PROMPTS = [
   'Pilares gigantes de cristal surgindo do chao',
 ];
 
+/** Boss/alpha de cada evento de entidade; o primeiro spawn recebe o papel. */
+const EVENT_BOSSES: Record<string, { name: string; hpMult: number }> = {
+  evt_entity_aggressive_nearest: { name: 'Lobo Alpha', hpMult: 2.0 },
+  evt_entity_territorial: { name: 'Colosso de Pedra', hpMult: 2.2 },
+  evt_entity_fleeing: { name: 'Criatura Dourada', hpMult: 1.6 },
+  evt_entity_explosive_kamikaze: { name: 'Rainha Detonante', hpMult: 1.8 },
+  evt_entity_spider_swarm: { name: 'Rainha Aranha', hpMult: 2.0 },
+  evt_entity_hunter_drones: { name: 'Comandante Drone', hpMult: 1.9 },
+  evt_entity_ice_colossus: { name: 'Titã Glacial', hpMult: 2.2 },
+  evt_entity_venom_serpents: { name: 'Serpente Rainha', hpMult: 2.0 },
+};
+
+/** Configuração de cada cápsula de suprimento épica. */
+const EVENT_SUPPLIES: Record<
+  string,
+  { name: string; hp: number; ammo: number; quantity: number; fromSky: boolean }
+> = {
+  evt_supply_supply: {
+    name: 'Cápsula de Suprimentos',
+    hp: 120,
+    ammo: 35,
+    quantity: 3,
+    fromSky: true,
+  },
+  evt_supply_ammo_depot: {
+    name: 'Depósito Blindado',
+    hp: 320,
+    ammo: 60,
+    quantity: 1,
+    fromSky: true,
+  },
+  evt_supply_elite_supply: {
+    name: 'Cápsula Lendária',
+    hp: 260,
+    ammo: 80,
+    quantity: 1,
+    fromSky: true,
+  },
+  evt_supply_treasure_cache: {
+    name: 'Cofre do Tesouro',
+    hp: 240,
+    ammo: 70,
+    quantity: 1,
+    fromSky: false,
+  },
+  evt_supply_emergency_cache: {
+    name: 'Posto de Emergência',
+    hp: 180,
+    ammo: 40,
+    quantity: 1,
+    fromSky: false,
+  },
+};
+
 function createStarterSlots(): (InventorySlotItem | null)[] {
   return [
     {
@@ -267,6 +330,7 @@ function stripInventorySlot(slot: InventorySlotItem | null): NetInventorySlot | 
   };
   if (typeof slot.ammo === 'number') net.ammo = slot.ammo;
   if (typeof slot.ammoMax === 'number') net.ammoMax = slot.ammoMax;
+  if (slot.relicId) net.relicId = slot.relicId;
   if (slot.weapon) net.weaponId = slot.weapon.id;
   return net;
 }
@@ -785,6 +849,8 @@ export class RoomManager {
       grappleTarget: null,
       burnUntil: 0,
       freezeUntil: 0,
+      relicBuff: null,
+      shieldHp: 0,
       ws,
       joinedAt: Date.now(),
       lastFireMs: 0,
@@ -974,6 +1040,8 @@ export class RoomManager {
       grappleTarget: null,
       burnUntil: 0,
       freezeUntil: 0,
+      relicBuff: null,
+      shieldHp: 0,
       personalityLabel: personality.label,
       ws: null,
       joinedAt: Date.now(),
@@ -1661,6 +1729,33 @@ export class RoomManager {
     return { origin, dir };
   }
 
+  private useRelic(
+    room: GameRoom,
+    player: ServerPlayer,
+    item: InventorySlotItem,
+  ): void {
+    if (!item.relicId) return;
+    const def = RELICS[item.relicId];
+    if (!def) return;
+    const slotIndex = player.slots.findIndex((slot) => slot?.id === item.id);
+    if (slotIndex === -1) return;
+    player.slots[slotIndex] = null;
+    player.massKg = computePlayerMassKg(player.slots);
+    const endsAt = Date.now() + relicDurationMs(item.relicId);
+    player.relicBuff = { id: item.relicId, endsAt };
+    if (def.effect === 'shield') {
+      player.shieldHp = Math.max(player.shieldHp, 60);
+      player.hp = Math.min(100, player.hp + 25);
+    }
+    if (!player.isBot && player.ws) {
+      this.sendToPlayer(player, {
+        type: 'fx:pickup',
+        payload: { itemName: `${def.name} ativada por ${def.durationSec}s` },
+      });
+    }
+    void room;
+  }
+
   private performActiveItem(
     room: GameRoom,
     player: ServerPlayer,
@@ -1669,6 +1764,10 @@ export class RoomManager {
   ): void {
     const slotItem = player.slots[player.activeSlot];
     if (!slotItem) return;
+    if (slotItem.kind === 'relic' && slotItem.relicId) {
+      this.useRelic(room, player, slotItem);
+      return;
+    }
 
     const { origin, dir } = this.getAimBasis(player, originOverride, dirOverride);
     const now = Date.now();
@@ -1950,6 +2049,49 @@ export class RoomManager {
     });
   }
 
+  private grantRelic(
+    room: GameRoom,
+    player: ServerPlayer,
+    relicId: RelicId,
+    notify = true,
+  ): void {
+    const def = RELICS[relicId];
+    if (!def) return;
+    const item = createRelicItem(relicId);
+    const emptySlot = player.slots.findIndex((slot) => slot === null);
+    if (emptySlot === -1) {
+      room.lootDrops.push({
+        id: `loot_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+        position: {
+          x: player.position.x + (Math.random() - 0.5) * 1.4,
+          y: player.position.y + 0.5,
+          z: player.position.z + (Math.random() - 0.5) * 1.4,
+        },
+        item,
+      });
+      if (notify && !player.isBot && player.ws) {
+        this.sendToPlayer(player, {
+          type: 'fx:pickup',
+          payload: { itemName: `${def.name} caiu no chão (inventário cheio)` },
+        });
+      }
+      return;
+    }
+    player.slots[emptySlot] = item;
+    player.activeSlot = emptySlot;
+    player.massKg = computePlayerMassKg(player.slots);
+    if (notify && !player.isBot && player.ws) {
+      this.sendToPlayer(player, {
+        type: 'player:select_slot',
+        payload: { slotIndex: emptySlot },
+      });
+      this.sendToPlayer(player, {
+        type: 'fx:pickup',
+        payload: { itemName: `Relíquia: ${def.name}` },
+      });
+    }
+  }
+
   private pickupNearestItem(room: GameRoom, player: ServerPlayer): void {
     // Check supply crates first
     for (let i = room.entities.length - 1; i >= 0; i--) {
@@ -1968,11 +2110,15 @@ export class RoomManager {
           }
         }
         player.hp = Math.min(100, player.hp + 25);
+        const relicName = ent.relicId ? RELICS[ent.relicId]?.name ?? null : null;
+        if (ent.relicId) this.grantRelic(room, player, ent.relicId, false);
         room.entities.splice(i, 1);
         if (!player.isBot && player.ws) {
           this.sendToPlayer(player, {
             type: 'fx:pickup',
-            payload: { itemName: `+25 HP · +${restore} Munição` },
+            payload: {
+              itemName: `+25 HP · +${restore} Munição${relicName ? ` · ${relicName}` : ''}`,
+            },
           });
         }
         return;
@@ -2048,6 +2194,19 @@ export class RoomManager {
     }
   }
 
+  private relicBlocksDamage(victim: ServerPlayer, reason: string): boolean {
+    const id = victim.relicBuff?.id;
+    if (!id) return false;
+    const r = reason.toLowerCase();
+    if (id === 'acid_mask') return /ácid|acid|gêiser|geiser|veneno|lama|sludge/.test(r);
+    if (id === 'thermal_core') return /lava|fogo|vulc|magma|meteoro/.test(r);
+    if (id === 'frost_heart') return /nevasca|granizo|gelo|glacial|congel/.test(r);
+    if (id === 'storm_rod') return /raio|laser/.test(r);
+    if (id === 'seismic_boots') return /terremoto|sísm|sism|fissura|sorvedouro|colosso/.test(r);
+    if (id === 'wind_anchor') return /tornado|vento|areia/.test(r);
+    return false;
+  }
+
   private damagePlayer(
     room: GameRoom,
     victim: ServerPlayer,
@@ -2057,6 +2216,21 @@ export class RoomManager {
   ): void {
     if (!victim.alive) return;
     if (this.devEnabled && room.devGodMode && !victim.isBot) return;
+    if (amount > 0 && this.relicBlocksDamage(victim, reason)) return;
+    if (amount > 0 && victim.shieldHp > 0) {
+      const absorbed = Math.min(victim.shieldHp, amount);
+      victim.shieldHp = Math.max(0, victim.shieldHp - absorbed);
+      amount -= absorbed;
+      if (amount <= 0) {
+        if (!victim.isBot && victim.ws) {
+          this.sendToPlayer(victim, {
+            type: 'fx:damage',
+            payload: { amount: Math.round(absorbed), hp: victim.hp, from: null },
+          });
+        }
+        return;
+      }
+    }
     victim.hp = Math.max(0, Math.round((victim.hp - amount) * 10) / 10);
     if (victim.isBot && attacker && attacker.id !== victim.id) {
       notifyBotDamaged(victim.botBrain, attacker.id);
@@ -2351,6 +2525,9 @@ export class RoomManager {
 
     // 1. Update timers & anti-stagnation catastrophes
     for (const player of room.players.values()) {
+      if (player.relicBuff && now >= player.relicBuff.endsAt) {
+        player.relicBuff = null;
+      }
       if (player.prompt && now >= player.prompt.endsAt) {
         this.cancelPrompt(room, player, true);
       }
@@ -3277,7 +3454,9 @@ export class RoomManager {
 
       evt.durationRemainingSec = Math.max(0, evt.durationRemainingSec - dt);
 
-      if (doHazardPulse) {
+      const epicHandled = updateEpicEvent(room, evt, dt, this.createEventEngineDeps());
+
+      if (!epicHandled && doHazardPulse) {
         for (const component of this.getEventComponents(evt)) {
           if (component.archetype === 'TERRAIN_MUTATION' && component.params.mutationKind === 'lava_river') {
             for (const p of room.players.values()) {
@@ -3409,6 +3588,84 @@ export class RoomManager {
     }
   }
 
+  private createEventEngineDeps(): EventEngineDeps {
+    return {
+      damage: (room, event, player, amount, reason) => {
+        this.damageFromEvent(
+          room as unknown as GameRoom,
+          event,
+          player as unknown as ServerPlayer,
+          amount,
+          reason,
+        );
+      },
+      carve: (room, worldX, worldY, worldZ, radiusVoxels, scorchShell) => {
+        this.applyVoxelCarve(
+          room as unknown as GameRoom,
+          worldX,
+          worldY,
+          worldZ,
+          radiusVoxels,
+          scorchShell,
+        );
+      },
+      spawnCore: (room, event, position, name, ammoRestore, hp, relicId) => {
+        this.spawnEventCore(
+          room as unknown as GameRoom,
+          event,
+          position,
+          name,
+          ammoRestore,
+          hp,
+          relicId,
+        );
+      },
+      pulse: (room, _event, pulse) => {
+        this.broadcastToRoom(room as unknown as GameRoom, {
+          type: 'event:pulse',
+          payload: pulse,
+        });
+      },
+    };
+  }
+
+  /** Núcleo de evento: caixa de suprimento especial no epicentro/rescaldo. */
+  private spawnEventCore(
+    room: GameRoom,
+    event: MapEventState,
+    position: Vec3,
+    name: string,
+    ammoRestore: number,
+    hp = 120,
+    relicId?: RelicId | null,
+  ): void {
+    const vx = Math.max(2, Math.min(room.dimX - 3, Math.floor(position.x / VOXEL_SIZE)));
+    const vz = Math.max(2, Math.min(room.dimZ - 3, Math.floor(position.z / VOXEL_SIZE)));
+    const gy = getGroundVoxelY(room.grid, vx, vz);
+    const signature = signatureForEvent(event.archetype, event.params, event.catalogId);
+    const resolvedRelic =
+      relicId === undefined ? relicForSignature(signature) : relicId;
+    room.entities.push({
+      id: `core_${event.id}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+      eventId: event.id,
+      kind: 'supply_crate',
+      name,
+      position: { x: position.x, y: Math.max(position.y, (gy + 1) * VOXEL_SIZE), z: position.z },
+      velocity: { x: 0, y: position.y > (gy + 2) * VOXEL_SIZE ? -3 : -1, z: 0 },
+      hp,
+      maxHp: hp,
+      aiBehavior: 'static_pickup',
+      ammoRestore,
+      relicId: resolvedRelic ?? undefined,
+    });
+    this.broadcastKillfeed(room, {
+      id: `kf_core_${event.id}`,
+      text: `${name} surgiu no epicentro de ${event.prompt}`,
+      tone: 'event',
+      ts: Date.now(),
+    });
+  }
+
   private getEventComponents(evt: MapEventState): MapEventComponent[] {
     if (evt.components && evt.components.length > 0) return evt.components;
     return [
@@ -3439,7 +3696,17 @@ export class RoomManager {
     const params = component.params;
 
     if (component.archetype === 'SUPPLY_DROP') {
-      const qty = Math.max(1, Math.min(8, params.quantity));
+      const supply =
+        EVENT_SUPPLIES[evt.catalogId ?? ''] ?? {
+          name: 'Caixa de Suprimentos',
+          hp: 120,
+          ammo: params.ammoRestore ?? 30,
+          quantity: params.quantity,
+          fromSky: true,
+        };
+      const qty = Math.max(1, Math.min(8, supply.quantity));
+      const supplySignature = signatureForEvent(evt.archetype, evt.params, evt.catalogId);
+      const supplyRelic = supply.hp >= 150 ? relicForSignature(supplySignature) : null;
       for (let i = 0; i < qty; i++) {
         const angle = (i / qty) * Math.PI * 2 + Math.random();
         const dist = 6 + Math.random() * (room.dimX * VOXEL_SIZE * 0.28);
@@ -3450,30 +3717,38 @@ export class RoomManager {
           id: `sup_${evt.id}_${componentIndex}_${i}`,
           eventId: evt.id,
           kind: 'supply_crate',
-          name: 'Caixa de Suprimentos',
-          position: { x, y: Math.max(30, gy * VOXEL_SIZE + 18), z },
-          velocity: { x: 0, y: -3, z: 0 },
-          hp: 100,
-          maxHp: 100,
+          name: supply.name,
+          position: {
+            x,
+            y: supply.fromSky ? Math.max(30, gy * VOXEL_SIZE + 18) : (gy + 1) * VOXEL_SIZE,
+            z,
+          },
+          velocity: { x: 0, y: supply.fromSky ? -3 : 0, z: 0 },
+          hp: supply.hp,
+          maxHp: supply.hp,
           aiBehavior: 'static_pickup',
           blueprint: component.entityBlueprint,
-          ammoRestore: params.ammoRestore ?? 30,
+          ammoRestore: supply.ammo,
+          relicId: supplyRelic ?? undefined,
         });
       }
     } else if (component.archetype === 'ENTITY_SPAWN') {
       const qty = Math.max(1, Math.min(10, params.quantity));
+      const boss = EVENT_BOSSES[evt.catalogId ?? ''];
       for (let i = 0; i < qty; i++) {
         const angle = (i / qty) * Math.PI * 2 + Math.random();
         const dist = 7 + Math.random() * (room.dimX * VOXEL_SIZE * 0.28);
         const x = cx + Math.cos(angle) * dist;
         const z = cz + Math.sin(angle) * dist;
         const gy = getGroundVoxelY(room.grid, Math.floor(x / VOXEL_SIZE), Math.floor(z / VOXEL_SIZE));
-        const hp = Math.max(25, Math.round(120 - qty * 8));
+        const isBoss = i === 0 && Boolean(boss);
+        const baseHp = Math.max(25, Math.round(120 - qty * 8));
+        const hp = Math.max(25, Math.round(baseHp * (isBoss ? boss.hpMult : 1)));
         room.entities.push({
-          id: `ent_${evt.id}_${componentIndex}_${i}`,
+          id: `${isBoss ? 'boss' : 'ent'}_${evt.id}_${componentIndex}_${i}`,
           eventId: evt.id,
           kind: 'creature',
-          name: component.entityBlueprint?.name || 'Criatura Voxel',
+          name: isBoss ? boss.name : component.entityBlueprint?.name || 'Criatura Voxel',
           position: { x, y: (gy + 1.5) * VOXEL_SIZE, z },
           velocity: { x: 0, y: 0, z: 0 },
           hp,
@@ -3550,9 +3825,9 @@ export class RoomManager {
       }
       const deltas: VoxelDelta[] = [];
       if (mKind === 'fissure') {
-        const xMid = Math.floor(room.dimX / 2);
-        const zMid = Math.floor(room.dimZ / 2);
-        const halfLen = Math.min(54, Math.floor(room.dimX * 0.16));
+        const xMid = Math.max(8, Math.min(room.dimX - 9, Math.floor(evt.center[0] / VOXEL_SIZE)));
+        const zMid = Math.max(8, Math.min(room.dimZ - 9, Math.floor(evt.center[2] / VOXEL_SIZE)));
+        const halfLen = Math.min(80, Math.floor(room.dimX * 0.22));
         for (let vx = xMid - halfLen; vx <= xMid + halfLen; vx++) {
           for (let dz = -3; dz <= 3; dz++) {
             for (let vy = 1; vy < room.dimY - 2; vy++) {
@@ -3563,11 +3838,11 @@ export class RoomManager {
           }
         }
       } else if (mKind === 'sinkhole') {
-        const cx = Math.floor(room.dimX / 2);
-        const cz = Math.floor(room.dimZ / 2);
+        const cx = Math.max(12, Math.min(room.dimX - 13, Math.floor(evt.center[0] / VOXEL_SIZE)));
+        const cz = Math.max(12, Math.min(room.dimZ - 13, Math.floor(evt.center[2] / VOXEL_SIZE)));
         const baseY = getGroundVoxelY(room.grid, cx, cz);
-        const rMax = 11;
-        const depth = 28;
+        const rMax = 16;
+        const depth = 34;
         for (let dy = 0; dy < depth; dy++) {
           const r = Math.max(1, Math.round(rMax * (1 - dy / depth)));
           const vy = baseY - dy;
@@ -3585,10 +3860,10 @@ export class RoomManager {
           }
         }
       } else if (mKind === 'lava_river') {
-        const xMid = Math.floor(room.dimX / 2);
-        const zMid = Math.floor(room.dimZ / 2);
-        const halfLen = Math.min(54, Math.floor(room.dimX * 0.16));
-        const width = 3;
+        const xMid = Math.max(8, Math.min(room.dimX - 9, Math.floor(evt.center[0] / VOXEL_SIZE)));
+        const zMid = Math.max(8, Math.min(room.dimZ - 9, Math.floor(evt.center[2] / VOXEL_SIZE)));
+        const halfLen = Math.min(80, Math.floor(room.dimX * 0.22));
+        const width = 4;
         for (let vx = xMid - halfLen; vx <= xMid + halfLen; vx++) {
           for (let dz = -width; dz <= width; dz++) {
             const vz = zMid + dz;
@@ -3605,16 +3880,44 @@ export class RoomManager {
             }
           }
         }
+      } else if (mKind === 'volcano') {
+        // Um único vulcão coerente no centro do evento, não pilares aleatórios.
+        const px = Math.max(8, Math.min(room.dimX - 9, Math.floor(evt.center[0] / VOXEL_SIZE)));
+        const pz = Math.max(8, Math.min(room.dimZ - 9, Math.floor(evt.center[2] / VOXEL_SIZE)));
+        const baseY = getGroundVoxelY(room.grid, px, pz);
+        evt.center[1] = (baseY + 1) * VOXEL_SIZE;
+        const h = 32;
+        const rMax = 16;
+        for (let dy = 0; dy < h; dy++) {
+          const r = Math.max(1, Math.round(rMax * (1 - dy / (h + 3))));
+          for (let dz = -r; dz <= r; dz++) {
+            for (let dx = -r; dx <= r; dx++) {
+              if (dx * dx + dz * dz > r * r) continue;
+              const vy = Math.min(room.dimY - 2, baseY + dy);
+              const distSq = dx * dx + dz * dz;
+              let mat: number;
+              if (dy >= h - 4 && distSq <= 4) mat = MAT.LAVA;
+              else if (distSq >= (r - 1) * (r - 1)) mat = MAT.BASALT;
+              else mat = MAT.SCORCHED;
+              if (room.grid.set(px + dx, vy, pz + dz, mat)) {
+                deltas.push({ vx: px + dx, vy, vz: pz + dz, mat });
+              }
+            }
+          }
+        }
       } else {
-        const isVolcano = mKind === 'volcano';
         const isGlacier = mKind === 'glacier';
         const isOvergrowth = mKind === 'overgrowth';
-        const pillars = isVolcano ? 2 : isGlacier ? 6 : isOvergrowth ? 8 : 7;
+        const pillars = isGlacier ? 6 : isOvergrowth ? 8 : 9;
+        const centerVx = Math.max(12, Math.min(room.dimX - 13, Math.floor(evt.center[0] / VOXEL_SIZE)));
+        const centerVz = Math.max(12, Math.min(room.dimZ - 13, Math.floor(evt.center[2] / VOXEL_SIZE)));
         for (let p = 0; p < pillars; p++) {
-          const px = Math.floor((0.25 + Math.random() * 0.5) * room.dimX);
-          const pz = Math.floor((0.25 + Math.random() * 0.5) * room.dimZ);
-          const h = isVolcano ? 22 : isGlacier ? 20 : isOvergrowth ? 15 : 16;
-          const rMax = isVolcano ? 11 : isGlacier ? 6 : isOvergrowth ? 4 : 5;
+          const angle = (p / pillars) * Math.PI * 2 + Math.random() * 0.3;
+          const dist = (isGlacier ? 10 : isOvergrowth ? 8 : 12) + (p % 3) * 4;
+          const px = Math.max(8, Math.min(room.dimX - 9, Math.round(centerVx + Math.cos(angle) * dist)));
+          const pz = Math.max(8, Math.min(room.dimZ - 9, Math.round(centerVz + Math.sin(angle) * dist)));
+          const h = isGlacier ? 24 : isOvergrowth ? 18 : 20;
+          const rMax = isGlacier ? 6 : isOvergrowth ? 4 : 5;
           const baseY = getGroundVoxelY(room.grid, px, pz);
           for (let dy = 0; dy < h; dy++) {
             const r = Math.max(1, Math.round(rMax * (1 - dy / (h + 2))));
@@ -3623,10 +3926,7 @@ export class RoomManager {
                 if (dx * dx + dz * dz > r * r) continue;
                 const vy = Math.min(room.dimY - 2, baseY + dy);
                 let mat: number;
-                if (isVolcano) {
-                  mat =
-                    dy >= h - 3 && dx * dx + dz * dz <= 1 ? MAT.LAVA : MAT.SCORCHED;
-                } else if (isGlacier) {
+                if (isGlacier) {
                   mat = dy >= h - 3 ? MAT.SNOW : MAT.ICE;
                 } else if (isOvergrowth) {
                   mat = dy >= h - 3 ? MAT.LEAVES : MAT.WOOD;
@@ -4146,11 +4446,9 @@ export class RoomManager {
       let flee = false;
 
       if (evt.archetype === 'WEATHER_HAZARD' && evt.params.weatherKind === 'tornado') {
-        const cx = (room.dimX * VOXEL_SIZE) / 2;
-        const cz = (room.dimZ * VOXEL_SIZE) / 2;
-        centerX = cx + Math.cos(room.elapsedSec * 0.35) * 10;
-        centerZ = cz + Math.sin(room.elapsedSec * 0.35) * 10;
-        radius = Math.max(12, evt.params.radiusMeters || 24) * 1.15;
+        centerX = evt.center[0];
+        centerZ = evt.center[2];
+        radius = Math.max(24, evt.params.radiusMeters || 70) * 1.15;
         flee = true;
       } else if (
         evt.archetype === 'TERRAIN_MUTATION' &&
@@ -4232,6 +4530,8 @@ export class RoomManager {
       grappleTarget: p.grappleTarget,
       burnUntil: p.burnUntil,
       freezeUntil: p.freezeUntil,
+      relicBuff: p.relicBuff ? { ...p.relicBuff } : null,
+      shieldHp: p.shieldHp,
       personalityLabel: p.personalityLabel,
     };
   }

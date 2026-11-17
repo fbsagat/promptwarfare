@@ -18,6 +18,7 @@ export function footstepGroup(mat: number): FootstepGroup {
       return 'loose';
     case MAT.GRASS:
     case MAT.MOSS:
+    case MAT.SLUDGE:
     case MAT.LEAVES:
     case MAT.WOOD:
     case MAT.ICE:
@@ -41,6 +42,7 @@ export function impactGroup(mat: number): ImpactGroup {
       return 'terracotta';
     case MAT.GRASS:
     case MAT.MOSS:
+    case MAT.SLUDGE:
     case MAT.LEAVES:
     case MAT.SAND:
     case MAT.DIRT:

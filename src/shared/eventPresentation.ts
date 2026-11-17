@@ -1,6 +1,18 @@
 import type { EventArchetype, EventParams } from './types.ts';
 
-export type EventSoundPatch = 'alert' | 'rumble' | 'growl' | 'hiss' | 'wind' | 'chime';
+export type EventSoundPatch =
+  | 'alert'
+  | 'rumble'
+  | 'growl'
+  | 'hiss'
+  | 'wind'
+  | 'chime'
+  | 'whistle'
+  | 'sizzle'
+  | 'quake'
+  | 'vortex'
+  | 'eruption'
+  | 'wave';
 
 /**
  * Receita visual/sonora derivada do evento. Não substitui assets dedicados:
@@ -15,28 +27,32 @@ export interface EventPresentation {
   ringThickness: number;
   beamHeight: number;
   sound: EventSoundPatch;
+  /** Intensidade de tremor de câmera sugerida (0..1). */
+  cameraShake: number;
+  /** Escala épica 0..1 derivada do raio/duração. */
+  epicScale: number;
 }
 
 const WEATHER_COLORS: Record<string, [string, string, EventSoundPatch]> = {
-  acid_rain: ['#a3e635', '#3f6212', 'hiss'],
+  acid_rain: ['#a3e635', '#3f6212', 'sizzle'],
   blizzard: ['#bae6fd', '#1e3a5f', 'wind'],
   hail: ['#e0f2fe', '#475569', 'hiss'],
-  meteor_shower: ['#fb923c', '#7c2d12', 'rumble'],
+  meteor_shower: ['#fb923c', '#7c2d12', 'whistle'],
   low_gravity: ['#c4b5fd', '#4c1d95', 'chime'],
-  earthquake: ['#d6a26a', '#78350f', 'rumble'],
+  earthquake: ['#d6a26a', '#78350f', 'quake'],
   sandstorm: ['#fcd34d', '#92400e', 'wind'],
   thunderstorm: ['#a78bfa', '#312e81', 'alert'],
-  tornado: ['#cbd5e1', '#334155', 'wind'],
+  tornado: ['#cbd5e1', '#334155', 'vortex'],
 };
 
 const TERRAIN_COLORS: Record<string, [string, string, EventSoundPatch]> = {
-  volcano: ['#fb923c', '#7f1d1d', 'rumble'],
+  volcano: ['#fb923c', '#7f1d1d', 'eruption'],
   fissure: ['#a8a29e', '#292524', 'rumble'],
   crystal_spires: ['#67e8f9', '#0e7490', 'chime'],
-  rising_tide: ['#38bdf8', '#0c4a6e', 'wind'],
+  rising_tide: ['#38bdf8', '#0c4a6e', 'wave'],
   sinkhole: ['#78716c', '#1c1917', 'rumble'],
-  lava_river: ['#ef4444', '#7f1d1d', 'rumble'],
-  glacier: ['#bae6fd', '#1e3a5f', 'chime'],
+  lava_river: ['#ef4444', '#7f1d1d', 'eruption'],
+  glacier: ['#bae6fd', '#1e3a5f', 'rumble'],
   overgrowth: ['#4ade80', '#14532d', 'growl'],
 };
 
@@ -98,5 +114,7 @@ export function presentationForEvent(
     ringThickness: Math.min(0.18, 0.08 + lethality * 0.002),
     beamHeight: Math.min(18, 2.5 + radius * 0.32),
     sound: colors[2],
+    cameraShake: Math.min(0.95, 0.12 + lethality * 0.012 + radius * 0.003),
+    epicScale: Math.min(1, radius / 130 * 0.7 + Math.min(1, (params.durationSec || 0) / 120) * 0.3),
   };
 }

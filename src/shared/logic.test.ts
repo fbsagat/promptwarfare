@@ -89,8 +89,8 @@ test('event chaos budget clamps extreme catastrophe inputs to <= 100 pts', () =>
 
   assert.equal(wasClamped, true);
   assert.ok(budgetUsed <= 100, `Expected <= 100, got ${budgetUsed}`);
-  assert.ok(params.quantity <= 14);
-  assert.ok(params.durationSec <= 90);
+  assert.ok(params.quantity <= 20);
+  assert.ok(params.durationSec <= 120);
 });
 
 test('RLE encode/decode roundtrips 12x12x24 voxel mesh accurately', () => {

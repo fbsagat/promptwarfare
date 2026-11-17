@@ -28,6 +28,7 @@ import type {
   PlayerNetState,
   SpawnedEntityNetState,
 } from '../shared/types.ts';
+import { RELICS } from '../shared/relics.ts';
 import {
   type QualityLevel,
 } from '../engine/quality.ts';
@@ -51,6 +52,14 @@ const COUNTERPLAY_LABELS: Record<string, string> = {
   climb: 'Suba',
   combat: 'Enfrente',
   loot: 'Corra para o loot',
+};
+
+const EVENT_PHASE_LABELS: Record<string, string> = {
+  warning: 'AVISO',
+  impact: 'IMPACTO',
+  sustain: 'CAOS',
+  climax: 'CLÍMAX',
+  dissipate: 'RESCALDO',
 };
 
 interface GameHudProps {
@@ -171,6 +180,21 @@ function renderSlotIcon(item: InventorySlotItem | null) {
         <path d="M4 20L14 10" stroke="#06b6d4" strokeWidth="2.2" strokeLinecap="round" />
         <path d="M11 6L18 6L18 13" stroke="#e2e8f0" strokeWidth="2.2" strokeLinecap="round" />
         <circle cx="15" cy="9" r="2" fill="#22d3ee" />
+      </svg>
+    );
+  }
+  if (item.kind === 'relic') {
+    const color = item.relicId ? RELICS[item.relicId]?.color ?? '#fbbf24' : '#fbbf24';
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 3L20 12L12 21L4 12L12 3Z"
+          fill={color}
+          fillOpacity="0.35"
+          stroke={color}
+          strokeWidth="1.8"
+        />
+        <circle cx="12" cy="12" r="2.4" fill={color} />
       </svg>
     );
   }
@@ -521,6 +545,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                   >
                     <span>
                       {evt.prompt.slice(0, 26)} · {Math.ceil(evt.durationRemainingSec)}s
+                      {evt.phase ? ` · ${EVENT_PHASE_LABELS[evt.phase] ?? evt.phase}` : ''}
                     </span>
                     {evt.catalogId &&
                       (feedback[evt.catalogId] ? (
@@ -786,9 +811,32 @@ export const GameHud: React.FC<GameHudProps> = ({
             <div className="bg-[#0b101b]/82 border border-white/12 rounded-lg px-3 py-1 text-xs text-slate-300">
               {activeItem.kind === 'shovel'
                 ? 'Escava terreno voxel · [G] Descartar'
-                : 'Gancho por massa: puxa mais leve · [G] Descartar'}
+                : activeItem.kind === 'grapple'
+                  ? 'Gancho por massa: puxa mais leve · [G] Descartar'
+                  : activeItem.relicId && RELICS[activeItem.relicId]
+                    ? `${RELICS[activeItem.relicId].name} · [Clique] Ativar · [G] Descartar`
+                    : 'Relíquia · [Clique] Ativar · [G] Descartar'}
             </div>
           )}
+
+          {localPlayer?.relicBuff && (() => {
+            const def = RELICS[localPlayer.relicBuff.id];
+            const remaining = Math.max(
+              0,
+              Math.ceil((localPlayer.relicBuff.endsAt - serverNow) / 1000),
+            );
+            return (
+              <div
+                className="bg-[#0b101b]/88 border rounded-lg px-3 py-1 text-[11px] text-slate-200 font-mono-tabular flex items-center gap-2"
+                style={{ borderColor: `${def?.color ?? '#fbbf24'}66` }}
+              >
+                <span style={{ color: def?.color ?? '#fbbf24' }}>
+                  ◆ {def?.name ?? localPlayer.relicBuff.id}
+                </span>
+                <span className="text-slate-400">{remaining}s</span>
+              </div>
+            );
+          })()}
 
           {activeItem?.kind === 'weapon' && activeItem.weapon && (
             <div className="bg-[#0b101b]/86 border border-white/15 rounded-lg px-3 py-1 text-[11px] text-slate-200 font-mono-tabular flex items-center gap-2.5">

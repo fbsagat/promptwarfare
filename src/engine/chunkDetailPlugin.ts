@@ -56,6 +56,10 @@ const FRAGMENT_CODE = `
   } else if (pwMat == ${MAT.SCORCHED}) {
     // SCORCHED
     pwDetail = 0.90 + pwCell * 0.12;
+  } else if (pwMat == ${MAT.SLUDGE}) {
+    // SLUDGE: lama tóxica, borbulha e brilha de leve
+    pwDetail = 0.88 + pwFine * 0.16;
+    pwGlow = 0.06 + pwRim * 0.16;
   }
 
   color.rgb *= clamp(pwDetail, 0.82, 1.12);

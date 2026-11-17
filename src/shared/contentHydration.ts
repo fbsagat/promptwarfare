@@ -52,6 +52,7 @@ export function hydrateInventorySlot(
   };
   if (typeof slot.ammo === 'number') item.ammo = slot.ammo;
   if (typeof slot.ammoMax === 'number') item.ammoMax = slot.ammoMax;
+  if (slot.relicId) item.relicId = slot.relicId;
   if (slot.weaponId) {
     const weapon = cache.get(slot.weaponId);
     if (weapon) item.weapon = weapon;

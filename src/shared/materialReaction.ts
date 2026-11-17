@@ -187,6 +187,7 @@ const MAT_REACTIONS: Record<number, ImpactReactionKind> = {
   [MAT.LAVA]: 'lava',
   [MAT.GRASS]: 'organic',
   [MAT.MOSS]: 'organic',
+  [MAT.SLUDGE]: 'organic',
 };
 
 function clamp01(value: number): number {

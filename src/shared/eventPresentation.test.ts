@@ -21,9 +21,9 @@ test('event presentation gives distinct colors and cues per phenomenon', () => {
   const supply = presentationForEvent('SUPPLY_DROP', base);
 
   assert.notEqual(tornado.primaryColor, blizzard.primaryColor);
-  assert.equal(tornado.sound, 'wind');
+  assert.equal(tornado.sound, 'vortex');
   assert.equal(blizzard.sound, 'wind');
-  assert.equal(volcano.sound, 'rumble');
+  assert.equal(volcano.sound, 'eruption');
   assert.equal(supply.sound, 'chime');
   assert.notEqual(volcano.primaryColor, supply.primaryColor);
 });
