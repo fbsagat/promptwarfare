@@ -561,6 +561,12 @@ export const GameHud: React.FC<GameHudProps> = ({
                 ))}
             </div>
           )}
+
+          {!pointerLocked && (
+            <div className="pointer-events-none rounded-lg bg-[#0b101b]/80 border border-white/15 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap">
+              Clique para capturar o mouse · Esc pausa
+            </div>
+          )}
         </div>
 
         {/* Top-Right: Utility Controls + Compact Killfeed */}
@@ -984,12 +990,6 @@ export const GameHud: React.FC<GameHudProps> = ({
           {perfStats ? Math.round(perfStats.fps) : '--'} FPS ·{' '}
           {pingMs === null ? '--' : Math.round(pingMs)} ms ·{' '}
           {QUALITY_LABELS[qualityLevel]}
-        </div>
-      )}
-
-      {!pointerLocked && (
-        <div className="fixed top-[92px] left-1/2 -translate-x-1/2 z-20 pointer-events-none rounded-lg bg-[#0b101b]/80 border border-white/15 px-3 py-1 text-[11px] text-slate-200">
-          Clique para capturar o mouse · Esc pausa
         </div>
       )}
 
