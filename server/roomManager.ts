@@ -49,6 +49,7 @@ import type {
   DevRoomState,
   LobbyStatePayload,
   RoomAccessMode,
+  GameMode,
   RoomPublicSummary,
 } from '../src/shared/types.ts';
 import { isServerDevEnabled } from '../src/shared/devMode.ts';
@@ -77,6 +78,7 @@ import {
   resolveWeaponById,
   resolveWeaponFromCatalog,
 } from './catalog.ts';
+import type { CatalogWeaponItem } from './catalog.ts';
 import {
   buildContentPool,
   summarizeContentPool,
@@ -162,6 +164,7 @@ interface GameRoom {
   hostId: string;
   matchId: string;
   accessMode: RoomAccessMode;
+  gameMode: GameMode;
   password: string;
   createdAt: number;
   seed: number;
@@ -171,6 +174,10 @@ interface GameRoom {
   dimZ: number;
   targetPlayers: number;
   fillWithBots: boolean;
+  // Arsenal configuration
+  arsenalMatchDuration: number;
+  arsenalMaxKills: number;
+  arsenalAutoEvents: boolean;
   grid: VoxelGrid;
   ziplines: IslandZipline[];
   deltas: VoxelDelta[];
@@ -288,7 +295,8 @@ const EVENT_SUPPLIES: Record<
   },
 };
 
-function createStarterSlots(): (InventorySlotItem | null)[] {
+function createStarterSlots(gameMode?: GameMode): (InventorySlotItem | null)[] {
+  if (gameMode === 'arsenal') return [null, null, null, null];
   return [
     {
       id: `shv_${Math.random().toString(36).slice(2, 7)}`,
@@ -305,6 +313,34 @@ function createStarterSlots(): (InventorySlotItem | null)[] {
     null,
     null,
   ];
+}
+
+function getArsenalWeapons(): CatalogWeaponItem[] {
+  const catalog = getCatalog();
+  return catalog.weapons.filter((w) => w.status !== 'deprecated');
+}
+
+function getRandomArsenalWeapon(): CatalogWeaponItem | null {
+  const weapons = getArsenalWeapons();
+  if (weapons.length === 0) return null;
+  return weapons[Math.floor(Math.random() * weapons.length)];
+}
+
+function createArsenalWeaponSlot(weapon: CatalogWeaponItem): InventorySlotItem {
+  const bp = weapon.payload;
+  bp.catalogId = weapon.id;
+  const ammoMax = bp.stats?.ammoMax ?? 30;
+  // Infinite ammo for Arsenal mode: use a very large number
+  const INFINITE_AMMO = 999999;
+  return {
+    id: `awp_${Math.random().toString(36).slice(2, 7)}`,
+    kind: 'weapon',
+    name: weapon.name,
+    weapon: bp,
+    massKg: bp.stats?.massKg ?? 10,
+    ammo: INFINITE_AMMO,
+    ammoMax: INFINITE_AMMO,
+  };
 }
 
 function hashSeed(value: string): number {
@@ -470,37 +506,67 @@ export class RoomManager {
     this.clientAssetTotals.bytes += Math.max(0, next.bytes - prev.bytes);
     this.clientAssetReports.set(playerId, next);
     this.clientAssetLoadedMax = Math.max(this.clientAssetLoadedMax, next.loaded);
-  }
-
-  getRuntimeStats(): {
-    rooms: number;
-    playing: number;
-    lobby: number;
-    humans: number;
-    bots: number;
-    counterplayBlocks: number;
-    clientAssets: {
-      loadedMax: number;
-      requests: number;
-      fetched: number;
-      failed: number;
-      bytes: number;
-      reporters: number;
-    };
-  } {
-    let playing = 0;
-    let lobby = 0;
-    let humans = 0;
-    let bots = 0;
-    for (const room of this.rooms.values()) {
-      if (room.phase === 'playing') playing += 1;
-      else if (room.phase === 'lobby') lobby += 1;
-      for (const player of room.players.values()) {
-        if (player.isBot) bots += 1;
-        else if (player.ws !== null) humans += 1;
       }
-    }
-    return {
+
+      private buildMatchSummary(room: GameRoom): RoomMatchSummary {
+        // Find winner (player with most kills, or alive player if tie)
+        const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
+        const allPlayers = Array.from(room.players.values());
+        const winner = alivePlayers.length === 1
+          ? alivePlayers[0]
+          : allPlayers.reduce((best, p) => (p.kills > best.kills ? p : best), allPlayers[0] ?? { id: '', name: 'Ninguém', kills: 0 });
+
+        return {
+          winnerId: winner?.id ?? null,
+          winnerName: winner?.name ?? 'Ninguém',
+          durationSec: Math.round(room.elapsedSec),
+          totalKills: room.totalKills,
+          eventsTriggered: room.eventsTriggered,
+          standings: allPlayers
+            .sort((a, b) => Number(b.alive) - Number(a.alive) || b.kills - a.kills)
+            .map((p) => ({
+              id: p.id,
+              name: p.name,
+              isBot: p.isBot,
+              alive: p.alive,
+              kills: p.kills,
+              deaths: p.deaths,
+              assists: p.assists,
+              weaponsCreated: p.weaponsCreated,
+              personalityLabel: p.personalityLabel,
+            })),
+        };
+      }
+
+      getRuntimeStats(): {
+        rooms: number;
+        playing: number;
+        lobby: number;
+        humans: number;
+        bots: number;
+        counterplayBlocks: number;
+        clientAssets: {
+          loadedMax: number;
+          requests: number;
+          fetched: number;
+          failed: number;
+          bytes: number;
+          reporters: number;
+        };
+      } {
+        let playing = 0;
+        let lobby = 0;
+        let humans = 0;
+        let bots = 0;
+        for (const room of this.rooms.values()) {
+          if (room.phase === 'playing') playing += 1;
+          else if (room.phase === 'lobby') lobby += 1;
+          for (const player of room.players.values()) {
+            if (player.isBot) bots += 1;
+            else if (player.ws !== null) humans += 1;
+          }
+        }
+        return {
       rooms: this.rooms.size,
       playing,
       lobby,
@@ -558,18 +624,22 @@ export class RoomManager {
   }
 
   createAndJoinRoom(
-    ws: SocketLike,
-    opts: {
-      roomId?: string;
-      roomName?: string;
-      playerName: string;
-      accessMode?: RoomAccessMode;
-      password?: string;
-      targetPlayers?: number;
-      fillWithBots?: boolean;
-      startImmediately?: boolean;
-    },
-  ): { room: GameRoom; playerId: string } | null {
+          ws: SocketLike,
+          opts: {
+            roomId?: string;
+            roomName?: string;
+            playerName: string;
+            accessMode?: RoomAccessMode;
+            gameMode?: GameMode;
+            password?: string;
+            targetPlayers?: number;
+            fillWithBots?: boolean;
+            startImmediately?: boolean;
+            arsenalMatchDuration?: number;
+            arsenalMaxKills?: number;
+            arsenalAutoEvents?: boolean;
+          },
+        ): { room: GameRoom; playerId: string } | null {
     const requestedId = this.sanitizeRoomId(opts.roomId);
     const roomId = requestedId || this.generateUniqueRoomId();
     const existing = this.rooms.get(roomId);
@@ -579,8 +649,9 @@ export class RoomManager {
     }
 
     const accessMode: RoomAccessMode =
-      opts.accessMode === 'password' || opts.accessMode === 'closed' ? opts.accessMode : 'open';
-    const password = String(opts.password ?? '').trim().slice(0, 24);
+          opts.accessMode === 'password' || opts.accessMode === 'closed' ? opts.accessMode : 'open';
+        const gameMode: GameMode = opts.gameMode === 'arsenal' || opts.gameMode === 'disaster' || opts.gameMode === 'laboratory' ? opts.gameMode : 'warfare';
+        const password = String(opts.password ?? '').trim().slice(0, 24);
     if (accessMode === 'password' && !password) {
       this.sendRoomError(
         ws,
@@ -601,30 +672,34 @@ export class RoomManager {
     const seed = Math.floor(Math.random() * 100000) + 1;
 
     const room: GameRoom = {
-      id: roomId,
-      name: cleanRoomName,
-      hostId: playerId,
-      matchId: '',
-      accessMode,
-      password: accessMode === 'password' ? password : '',
-      createdAt: Date.now(),
-      seed,
-      contentPool: null,
-      dimX,
-      dimY,
-      dimZ,
-      targetPlayers,
-      fillWithBots,
-      grid: new VoxelGrid(1, 1, 1),
-    ziplines: [],
-      deltas: [],
-      pendingTickDeltas: [],
-      players: new Map(),
-      projectiles: [],
-      lootDrops: [],
-      entities: [],
-      activeEvents: [],
-      sceneryPlans: new Map(),
+                  id: roomId,
+                  name: cleanRoomName,
+                  hostId: playerId,
+                  matchId: '',
+                  accessMode,
+                  gameMode,
+                  password: accessMode === 'password' ? password : '',
+              createdAt: Date.now(),
+              seed,
+              contentPool: null,
+              dimX,
+              dimY,
+              dimZ,
+              targetPlayers,
+              fillWithBots,
+              arsenalMatchDuration: Math.max(60, Math.min(1800, Math.round(opts.arsenalMatchDuration ?? 300))),
+              arsenalMaxKills: Math.max(5, Math.min(100, Math.round(opts.arsenalMaxKills ?? 20))),
+              arsenalAutoEvents: opts.arsenalAutoEvents ?? true,
+              grid: new VoxelGrid(1, 1, 1),
+            ziplines: [],
+          deltas: [],
+          pendingTickDeltas: [],
+          players: new Map(),
+          projectiles: [],
+          lootDrops: [],
+          entities: [],
+          activeEvents: [],
+          sceneryPlans: new Map(),
       eventPhase: 'cooldown',
       eventEndsAt: Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000,
       eventCooldownSec: EVENT_CYCLE_COOLDOWN_SEC,
@@ -647,13 +722,14 @@ export class RoomManager {
     };
 
     const hostPlayer = this.createHumanPlayer(
-      playerId,
-      cleanPlayerName,
-      0,
-      ws,
-      { x: 0, y: 10, z: 0 },
-      0,
-    );
+          playerId,
+          cleanPlayerName,
+          0,
+          ws,
+          { x: 0, y: 10, z: 0 },
+          0,
+          room.gameMode,
+        );
     room.players.set(playerId, hostPlayer);
     this.rooms.set(roomId, room);
 
@@ -753,13 +829,14 @@ export class RoomManager {
     }
 
     const player = this.createHumanPlayer(
-      playerId,
-      cleanPlayerName,
-      room.players.size,
-      ws,
-      spawn,
-      inwardYaw,
-    );
+          playerId,
+          cleanPlayerName,
+          room.players.size,
+          ws,
+          spawn,
+          inwardYaw,
+          room.gameMode,
+        );
     room.players.set(playerId, player);
 
     if (room.phase === 'lobby') {
@@ -797,26 +874,28 @@ export class RoomManager {
       });
     }
     return this.createAndJoinRoom(ws, {
-      roomId: cleanRoomId || undefined,
-      playerName: opts.playerName,
-      accessMode: 'open',
-      targetPlayers: opts.targetPlayers,
-      fillWithBots: opts.fillWithBots ?? true,
-      startImmediately: true,
-    });
+          roomId: cleanRoomId || undefined,
+          playerName: opts.playerName,
+          accessMode: 'open',
+          gameMode: 'warfare',
+          targetPlayers: opts.targetPlayers,
+          fillWithBots: opts.fillWithBots ?? true,
+          startImmediately: true,
+        });
   }
 
   private createHumanPlayer(
-    playerId: string,
-    name: string,
-    colorIdx: number,
-    ws: SocketLike,
-    spawn: Vec3,
-    yaw: number,
-  ): ServerPlayer {
-    const slots = createStarterSlots();
-    return {
-      id: playerId,
+      playerId: string,
+      name: string,
+      colorIdx: number,
+      ws: SocketLike,
+      spawn: Vec3,
+      yaw: number,
+      gameMode?: GameMode,
+    ): ServerPlayer {
+      const slots = createStarterSlots(gameMode);
+      return {
+        id: playerId,
       name,
       isBot: false,
       color: PLAYER_COLORS[colorIdx % PLAYER_COLORS.length],
@@ -841,14 +920,17 @@ export class RoomManager {
       ziplineRouteId: null,
       isTypingPrompt: false,
       canForgeWeapon: false,
-      weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
-      prompt: null,
-      forge: { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 },
-      kills: 0,
-      weaponsCreated: 0,
-      grappleTarget: null,
-      burnUntil: 0,
-      freezeUntil: 0,
+            weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
+            prompt: null,
+            forge: { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 },
+            kills: 0,
+            weaponsCreated: 0,
+            deaths: 0,
+                  assists: 0,
+                  recentDamageSources: [],
+                  grappleTarget: null,
+                  burnUntil: 0,
+                  freezeUntil: 0,
       relicBuff: null,
       shieldHp: 0,
       ws,
@@ -926,18 +1008,18 @@ export class RoomManager {
     room.summary = undefined;
 
     const spawns = findSafeSpawnPositions(room.grid, room.targetPlayers, room.seed);
-    const centerX = (room.dimX * VOXEL_SIZE) / 2;
-    const centerZ = (room.dimZ * VOXEL_SIZE) / 2;
-    let idx = 0;
-    for (const p of room.players.values()) {
-      if (p.isBot) continue;
-      const sp = spawns[idx++ % spawns.length];
-      p.alive = true;
-      p.hp = 100;
-      p.oxygen = 100;
-      p.slots = createStarterSlots();
-      p.activeSlot = 0;
-      p.massKg = computePlayerMassKg(p.slots);
+        const centerX = (room.dimX * VOXEL_SIZE) / 2;
+        const centerZ = (room.dimZ * VOXEL_SIZE) / 2;
+        let idx = 0;
+        for (const p of room.players.values()) {
+          if (p.isBot) continue;
+          const sp = spawns[idx++ % spawns.length];
+          p.alive = true;
+          p.hp = 100;
+          p.oxygen = 100;
+          p.slots = createStarterSlots(room.gameMode);
+          p.activeSlot = 0;
+          p.massKg = computePlayerMassKg(p.slots);
       p.position = { ...sp };
       p.velocity = { x: 0, y: 0, z: 0 };
       p.yaw = Math.atan2(centerX - sp.x, centerZ - sp.z);
@@ -971,13 +1053,26 @@ export class RoomManager {
       p.jumpHeld = false;
       p.jumpQueued = false;
       p.mantleCooldownSec = 0;
-      p.slideDirX = 0;
-      p.slideDirZ = 0;
-    }
+            p.slideDirX = 0;
+            p.slideDirZ = 0;
+          }
 
-    if (room.fillWithBots) {
-      this.ensureBotsForRoom(room);
-    }
+          // Arsenal mode: give random weapon to all players and bots
+          if (room.gameMode === 'arsenal') {
+            for (const p of room.players.values()) {
+              const weapon = getRandomArsenalWeapon();
+              if (weapon) {
+                const slot = createArsenalWeaponSlot(weapon);
+                p.slots[0] = slot;
+                p.activeSlot = 0;
+                p.massKg = computePlayerMassKg(p.slots);
+              }
+            }
+          }
+
+          if (room.fillWithBots) {
+            this.ensureBotsForRoom(room);
+          }
 
     if (room.tickTimer) {
       clearInterval(room.tickTimer);
@@ -996,12 +1091,20 @@ export class RoomManager {
   }
 
   private spawnSingleBot(room: GameRoom, spawnPos?: Vec3): ServerPlayer {
-    const spawns = findSafeSpawnPositions(room.grid, Math.max(room.targetPlayers, room.players.size + 1), room.seed);
-    const usedNames = new Set(Array.from(room.players.values()).map((p) => p.name));
-    const idx = room.players.size;
-    const botId = `bot_${idx}_${Math.random().toString(36).slice(2, 6)}`;
-    const slots = createStarterSlots();
-    const spawn = spawnPos ?? spawns[idx % spawns.length];
+      const spawns = findSafeSpawnPositions(room.grid, Math.max(room.targetPlayers, room.players.size + 1), room.seed);
+      const usedNames = new Set(Array.from(room.players.values()).map((p) => p.name));
+      const idx = room.players.size;
+      const botId = `bot_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+      const slots = createStarterSlots(room.gameMode);
+      const spawn = spawnPos ?? spawns[idx % spawns.length];
+
+      // Arsenal mode: give random weapon to bot
+      if (room.gameMode === 'arsenal') {
+        const weapon = getRandomArsenalWeapon();
+        if (weapon) {
+          slots[0] = createArsenalWeaponSlot(weapon);
+        }
+      }
     const personality = createBotPersonality(
       room.seed * 7919 + idx * 104729 + Math.floor(Math.random() * 99991),
       usedNames,
@@ -1036,10 +1139,13 @@ export class RoomManager {
       prompt: null,
       forge: { phase: 'cooling', endsAt: Date.now() + (6 + Math.random() * 5) * 1000 },
       kills: 0,
-      weaponsCreated: 0,
-      grappleTarget: null,
-      burnUntil: 0,
-      freezeUntil: 0,
+            weaponsCreated: 0,
+            deaths: 0,
+                  assists: 0,
+                  recentDamageSources: [],
+                  grappleTarget: null,
+                  burnUntil: 0,
+                  freezeUntil: 0,
       relicBuff: null,
       shieldHp: 0,
       personalityLabel: personality.label,
@@ -1243,6 +1349,7 @@ export class RoomManager {
 
       case 'prompt:open': {
         if (!player.alive || room.phase !== 'playing') return;
+        if (room.gameMode === 'arsenal') return; // Forge desativada no Arsenal
         const kind = msg.payload?.kind as PromptKind | undefined;
         if (kind !== 'weapon' && kind !== 'event') return;
         this.openPrompt(room, player, kind);
@@ -1525,79 +1632,89 @@ export class RoomManager {
   }
 
   private restartRoom(room: GameRoom): void {
-    room.seed = Math.floor(Math.random() * 100000) + 1;
-    room.grid = createProceduralIsland(room.seed, room.dimX, room.dimY, room.dimZ);
-    room.deltas = [];
-    room.pendingTickDeltas = [];
-    room.projectiles = [];
-    room.lootDrops = [];
-    room.entities = [];
-    room.activeEvents = [];
-    room.sceneryPlans.clear();
-    room.eventPhase = 'cooldown';
-    room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
-    room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
-    room.rafflePlayerId = null;
-    room.rafflePlayerName = null;
-    room.rafflePendingIsBot = false;
-    room.raffleRemainingSec = 0;
-    room.phase = 'playing';
-    room.matchId = `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    room.elapsedSec = 0;
-    room.lastKillElapsedSec = 0;
-    room.stagnationLevel = 0;
-    room.eventsTriggered = 0;
-    room.totalKills = 0;
-    room.summary = undefined;
+      room.seed = Math.floor(Math.random() * 100000) + 1;
+      room.grid = createProceduralIsland(room.seed, room.dimX, room.dimY, room.dimZ);
+      room.deltas = [];
+      room.pendingTickDeltas = [];
+      room.projectiles = [];
+      room.lootDrops = [];
+      room.entities = [];
+      room.activeEvents = [];
+      room.sceneryPlans.clear();
+      room.eventPhase = 'cooldown';
+      room.eventEndsAt = Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000;
+      room.eventCooldownSec = EVENT_CYCLE_COOLDOWN_SEC;
+      room.rafflePlayerId = null;
+      room.rafflePlayerName = null;
+      room.rafflePendingIsBot = false;
+      room.raffleRemainingSec = 0;
+      room.phase = 'playing';
+      room.matchId = `match_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      room.elapsedSec = 0;
+      room.lastKillElapsedSec = 0;
+      room.stagnationLevel = 0;
+      room.eventsTriggered = 0;
+      room.totalKills = 0;
+      room.summary = undefined;
 
-    const spawns = findSafeSpawnPositions(room.grid, room.players.size, room.seed);
-    const centerX = (room.dimX * VOXEL_SIZE) / 2;
-    const centerZ = (room.dimZ * VOXEL_SIZE) / 2;
-    let idx = 0;
-    for (const p of room.players.values()) {
-      const sp = spawns[idx++ % spawns.length];
-      p.alive = true;
-      p.hp = 100;
-      p.oxygen = 100;
-      p.slots = createStarterSlots();
-      p.activeSlot = 0;
-      p.massKg = computePlayerMassKg(p.slots);
-      p.position = { ...sp };
-      p.velocity = { x: 0, y: 0, z: 0 };
-      p.yaw = Math.atan2(centerX - sp.x, centerZ - sp.z);
-      p.pitch = 0.16;
-      p.heat = 0;
-      p.overheatedUntil = 0;
-      p.isTypingPrompt = false;
-      p.canForgeWeapon = false;
-      p.weaponCooldownSec = p.isBot ? 6 + Math.random() * 5 : WEAPON_INITIAL_COOLDOWN_SEC;
-      p.prompt = null;
-      p.forge = { phase: 'cooling', endsAt: Date.now() + p.weaponCooldownSec * 1000 };
-      p.kills = 0;
-      p.weaponsCreated = 0;
-      p.grappleTarget = null;
-      p.grappleTimerSec = 0;
-      p.grappleMode = null;
-      p.grappleTargetId = null;
-      p.burnUntil = 0;
-      p.freezeUntil = 0;
-      p.botForgePrompted = false;
-      if (p.isBot) {
-        const personality = createBotPersonality(
-          room.seed * 7919 + idx * 104729 + Math.floor(Math.random() * 99991),
-        );
-        personality.handle = p.name;
-        p.personalityLabel = personality.label;
-        p.botBrain = createBotBrainState(personality, sp);
-      }
-      if (!p.isBot && p.ws) {
-        this.sendToPlayer(p, {
-          type: 'room:init',
-          payload: this.buildInitPayload(room, p.id),
-        });
+      const spawns = findSafeSpawnPositions(room.grid, room.targetPlayers, room.seed);
+      const centerX = (room.dimX * VOXEL_SIZE) / 2;
+      const centerZ = (room.dimZ * VOXEL_SIZE) / 2;
+      let idx = 0;
+      for (const p of room.players.values()) {
+        const sp = spawns[idx++ % spawns.length];
+        p.alive = true;
+        p.hp = 100;
+        p.oxygen = 100;
+        p.slots = createStarterSlots(room.gameMode);
+        p.activeSlot = 0;
+        p.massKg = computePlayerMassKg(p.slots);
+        // Arsenal mode: give random weapon to all players and bots
+        if (room.gameMode === 'arsenal') {
+          const weapon = getRandomArsenalWeapon();
+          if (weapon) {
+            const slot = createArsenalWeaponSlot(weapon);
+            p.slots[0] = slot;
+            p.activeSlot = 0;
+            p.massKg = computePlayerMassKg(p.slots);
+          }
+        }
+        p.position = { ...sp };
+        p.velocity = { x: 0, y: 0, z: 0 };
+        p.yaw = Math.atan2(centerX - sp.x, centerZ - sp.z);
+        p.pitch = 0.16;
+        p.heat = 0;
+        p.overheatedUntil = 0;
+        p.isTypingPrompt = false;
+        p.canForgeWeapon = false;
+        p.weaponCooldownSec = p.isBot ? 6 + Math.random() * 5 : WEAPON_INITIAL_COOLDOWN_SEC;
+        p.prompt = null;
+        p.forge = { phase: 'cooling', endsAt: Date.now() + p.weaponCooldownSec * 1000 };
+        p.kills = 0;
+        p.weaponsCreated = 0;
+        p.grappleTarget = null;
+        p.grappleTimerSec = 0;
+        p.grappleMode = null;
+        p.grappleTargetId = null;
+        p.burnUntil = 0;
+        p.freezeUntil = 0;
+        p.botForgePrompted = false;
+        if (p.isBot) {
+          const personality = createBotPersonality(
+            room.seed * 7919 + idx * 104729 + Math.floor(Math.random() * 99991),
+          );
+          personality.handle = p.name;
+          p.personalityLabel = personality.label;
+          p.botBrain = createBotBrainState(personality, sp);
+        }
+        if (!p.isBot && p.ws) {
+          this.sendToPlayer(p, {
+            type: 'room:init',
+            payload: this.buildInitPayload(room, p.id),
+          });
+        }
       }
     }
-  }
 
   private equipForgedWeapon(
     room: GameRoom,
@@ -1951,9 +2068,10 @@ export class RoomManager {
       }
 
       player.lastFireMs = now;
-      const sandboxInfinite = this.devEnabled && room.devInfiniteSandbox && !player.isBot;
-      if (!sandboxInfinite) {
-        slotItem.ammo = Math.max(0, (slotItem.ammo ?? 1) - 1);
+            const sandboxInfinite = this.devEnabled && room.devInfiniteSandbox && !player.isBot;
+            const arsenalInfinite = room.gameMode === 'arsenal';
+            if (!sandboxInfinite && !arsenalInfinite) {
+              slotItem.ammo = Math.max(0, (slotItem.ammo ?? 1) - 1);
 
         const heatPerShot = Math.max(4, 24 - wp.stats.cooling * 1.9 + wp.modifiers.voxelCraterRadius * 4);
         player.heat = Math.min(100, player.heat + heatPerShot);
@@ -2025,11 +2143,11 @@ export class RoomManager {
         });
       }
 
-      if (slotItem.ammo === 0 && !(this.devEnabled && room.devInfiniteSandbox && !player.isBot)) {
-        // Out of ammo -> scrap immediately after final shot
-        player.slots[player.activeSlot] = null;
-        player.massKg = computePlayerMassKg(player.slots);
-      }
+      if (slotItem.ammo === 0 && !(this.devEnabled && room.devInfiniteSandbox && !player.isBot) && room.gameMode !== 'arsenal') {
+              // Out of ammo -> scrap immediately after final shot
+              player.slots[player.activeSlot] = null;
+              player.massKg = computePlayerMassKg(player.slots);
+            }
     }
   }
 
@@ -2253,22 +2371,32 @@ export class RoomManager {
       });
     }
     if (attacker && attacker.id !== victim.id && !attacker.isBot && attacker.ws && amount >= 3) {
-      this.sendToPlayer(attacker, {
-        type: 'fx:hit',
-        payload: {
-          damage: Math.round(amount),
-          heavy: amount >= 28 || victim.hp <= 0,
-          position: {
-            x: victim.position.x,
-            y: victim.position.y + 1,
-            z: victim.position.z,
-          },
-        },
-      });
-    }
-    if (victim.hp <= 0) {
-      this.killPlayer(room, victim, attacker, reason);
-    }
+          this.sendToPlayer(attacker, {
+            type: 'fx:hit',
+            payload: {
+              damage: Math.round(amount),
+              heavy: amount >= 28 || victim.hp <= 0,
+              position: {
+                x: victim.position.x,
+                y: victim.position.y + 1,
+                z: victim.position.z,
+              },
+            },
+          });
+        }
+        // Track recent damage sources for assists (only player attackers, not events)
+        if (attacker && attacker.id !== victim.id && !attacker.isBot) {
+          if (!victim.recentDamageSources.includes(attacker.id)) {
+            victim.recentDamageSources.push(attacker.id);
+            // Keep only last 5 sources to avoid stale assists
+            if (victim.recentDamageSources.length > 5) {
+              victim.recentDamageSources.shift();
+            }
+          }
+        }
+        if (victim.hp <= 0) {
+          this.killPlayer(room, victim, attacker, reason);
+        }
   }
 
   private damageFromEvent(
@@ -2321,32 +2449,68 @@ export class RoomManager {
     victim.promptSessionId = null;
     victim.promptOpenedAt = null;
     victim.forge = { phase: 'dead', endsAt: null };
-    if (room.rafflePlayerId === victim.id) {
-      this.resetEventCycle(room, 1);
-    }
-    room.totalKills += 1;
-    room.lastKillElapsedSec = room.elapsedSec;
+        if (room.rafflePlayerId === victim.id) {
+          this.resetEventCycle(room, 1);
+        }
+        victim.deaths += 1;
+        room.totalKills += 1;
+        room.lastKillElapsedSec = room.elapsedSec;
 
-    if (attacker && attacker.id !== victim.id) {
-      attacker.kills += 1;
-      const activeWeapon = attacker.slots[attacker.activeSlot]?.weapon;
-      if (activeWeapon?.catalogId) {
-        this.ledger?.recordUsage({
-          itemId: activeWeapon.catalogId,
-          kind: 'weapon',
-          role: 'kill',
-          actorType: attacker.isBot ? 'bot' : 'human',
-          actorRef: attacker.id,
-          roomId: room.id,
-          matchId: room.matchId,
-          targetRef: victim.id,
-          catalogVersion: getCatalogVersion(),
-          metadata: { name: activeWeapon.name, reason },
-        });
-      }
-    }
+        if (attacker && attacker.id !== victim.id) {
+                  attacker.kills += 1;
+              const activeWeapon = attacker.slots[attacker.activeSlot]?.weapon;
+              if (activeWeapon?.catalogId) {
+                this.ledger?.recordUsage({
+                  itemId: activeWeapon.catalogId,
+                  kind: 'weapon',
+                  role: 'kill',
+                  actorType: attacker.isBot ? 'bot' : 'human',
+                  actorRef: attacker.id,
+                  roomId: room.id,
+                  matchId: room.matchId,
+                  catalogVersion: getCatalogVersion(),
+                  targetRef: victim.id,
+                });
+              }
+            }
+            // Grant assists to recent damage sources (excluding the killer)
+            const killerId = attacker?.id ?? null;
+            for (const sourceId of victim.recentDamageSources) {
+              if (sourceId !== killerId) {
+                const assister = room.players.get(sourceId);
+                if (assister && assister.alive) {
+                  assister.assists += 1;
+                }
+              }
+            }
+            // Clear recent damage sources after death
+            victim.recentDamageSources = [];
 
-    const victimWeapon = victim.slots[victim.activeSlot]?.weapon;
+    if (room.gameMode === 'arsenal') {
+                      victim.respawnAt = Date.now() + 3000;
+                      setTimeout(() => {
+                    if (!room.players.has(victim.id)) return;
+                    const player = room.players.get(victim.id)!;
+                    player.alive = true;
+                    player.hp = 100;
+                    player.oxygen = 100;
+                    player.respawnAt = undefined;
+                    player.slots = createStarterSlots(room.gameMode);
+                // Give random weapon on respawn
+                const weapon = getRandomArsenalWeapon();
+                if (weapon) {
+                  player.slots[0] = createArsenalWeaponSlot(weapon);
+                  player.activeSlot = 0;
+                  player.massKg = computePlayerMassKg(player.slots);
+                }
+                // Use safe spawn position like initial spawn
+                const spawns = findSafeSpawnPositions(room.grid, 1, room.seed + room.elapsedSec);
+                player.position = { ...spawns[0] };
+                player.velocity = { x: 0, y: 0, z: 0 };
+              }, 3000); // 3s respawn
+            }
+
+          const victimWeapon = victim.slots[victim.activeSlot]?.weapon;
     if (victimWeapon?.catalogId) {
       this.ledger?.recordUsage({
         itemId: victimWeapon.catalogId,
@@ -2408,7 +2572,10 @@ export class RoomManager {
             isBot: p.isBot,
             alive: p.alive,
             kills: p.kills,
-            weaponsCreated: p.weaponsCreated,
+                  deaths: p.deaths,
+                  assists: p.assists,
+                  recentDamageSources: p.recentDamageSources,
+                  weaponsCreated: p.weaponsCreated,
             personalityLabel: p.personalityLabel,
           })),
       };
@@ -2523,6 +2690,26 @@ export class RoomManager {
       effectiveWaterLevel = WATER_LEVEL_WORLD + surge * 3.0;
     }
 
+    if (room.gameMode === 'arsenal' && room.elapsedSec >= room.arsenalMatchDuration) {
+              room.phase = 'ended';
+              room.eventPhase = 'cooldown';
+              // Create match summary for Arsenal time-limit ending
+              room.summary = this.buildMatchSummary(room);
+            }
+
+            const maxKills = room.arsenalMaxKills;
+            if (room.gameMode === 'arsenal') {
+                for (const p of room.players.values()) {
+                    if (p.kills >= maxKills) {
+                        room.phase = 'ended';
+                        room.eventPhase = 'cooldown';
+                        // Create match summary for Arsenal max-kills ending
+                        room.summary = this.buildMatchSummary(room);
+                        break;
+                    }
+                }
+            }
+
     // 1. Update timers & anti-stagnation catastrophes
     for (const player of room.players.values()) {
       if (player.relicBuff && now >= player.relicBuff.endsAt) {
@@ -2576,17 +2763,21 @@ export class RoomManager {
         }
         this.resetEventCycle(room);
       }
-    } else if (!(this.devEnabled && room.devAutoEventsPaused)) {
-      room.eventCooldownSec = Math.max(0, Math.ceil((room.eventEndsAt - now) / 1000));
-      if (room.eventEndsAt <= now) {
-        this.raffleEventPlayer(room);
-      }
-    }
+    } else if (
+          !(this.devEnabled && room.devAutoEventsPaused) &&
+          !(room.gameMode === 'arsenal' && !room.arsenalAutoEvents)
+        ) {
+              room.eventCooldownSec = Math.max(0, Math.ceil((room.eventEndsAt - now) / 1000));
+              if (room.eventEndsAt <= now) {
+                this.raffleEventPlayer(room);
+              }
+            }
 
-    if (
-      !(this.devEnabled && room.devAutoEventsPaused) &&
-      room.elapsedSec - room.lastKillElapsedSec > 120 + room.stagnationLevel * 45
-    ) {
+            if (
+              !(this.devEnabled && room.devAutoEventsPaused) &&
+              !(room.gameMode === 'arsenal' && !room.arsenalAutoEvents) &&
+              room.elapsedSec - room.lastKillElapsedSec > 120 + room.stagnationLevel * 45
+            ) {
       room.stagnationLevel += 1;
       const center: [number, number, number] = [
         (room.dimX * VOXEL_SIZE) / 2,
@@ -2614,8 +2805,10 @@ export class RoomManager {
     }
 
     // 2. Tick active events
-    this.tickEvents(room, dt);
-    this.advanceSceneryPlans(room);
+            if (!(room.gameMode === 'arsenal' && !room.arsenalAutoEvents)) {
+              this.tickEvents(room, dt);
+            }
+            this.advanceSceneryPlans(room);
 
     // 3. Update bots & players
     for (const player of room.players.values()) {
@@ -2636,12 +2829,12 @@ export class RoomManager {
         player.weaponCooldownSec = 0;
         player.heat = 0;
         player.overheatedUntil = 0;
-      } else if (!player.canForgeWeapon) {
-        player.weaponCooldownSec = Math.max(0, player.weaponCooldownSec - dt);
-        if (player.weaponCooldownSec <= 0) {
-          player.canForgeWeapon = true;
-        }
-      }
+      } else if (!player.canForgeWeapon && room.gameMode !== 'arsenal') {
+              player.weaponCooldownSec = Math.max(0, player.weaponCooldownSec - dt);
+              if (player.weaponCooldownSec <= 0) {
+                player.canForgeWeapon = true;
+              }
+            }
 
       if (player.grappleTimerSec > 0) {
         player.grappleTimerSec = Math.max(0, player.grappleTimerSec - dt);
@@ -2942,43 +3135,50 @@ export class RoomManager {
     this.broadcastNewWeaponContent(room);
 
     const tickPayload: RoomTickWirePayload = {
-      hostId: room.hostId,
-      hostName: room.players.get(room.hostId)?.name ?? 'Master',
-      accessMode: room.accessMode,
-      players: Array.from(room.players.values()).map((p) => this.stripPlayer(p)),
-      projectiles: room.projectiles.map((pr) => ({
-        id: pr.id,
-        ownerId: pr.ownerId,
-        catalogId: pr.catalogId,
-        position: pr.position,
-        velocity: pr.velocity,
-        color: pr.color,
-        behavior: pr.behavior,
-        statusEffect: pr.statusEffect,
-        craterRadius: pr.craterRadius,
-        damage: pr.damage,
-        ttlSec: pr.ttlSec,
-      })),
-      lootDrops: room.lootDrops
-        .map(stripLootDrop)
-        .filter((drop): drop is LootDropWireState => drop !== null),
-      entities: room.entities,
-      activeEvents: room.activeEvents.map(stripMapEvent),
-      serverNow: now,
-      event: this.buildEventCycleState(room),
-      catalogVersion: getCatalogVersion(),
-      assetVersion: getAssetVersion(),
-      contentPool: summarizeContentPool(room.contentPool),
-      eventCooldownSec: Math.round(room.eventCooldownSec),
-      rafflePlayerId: room.rafflePlayerId,
-      rafflePlayerName: room.rafflePlayerName,
-      raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
-      stagnationLevel: room.stagnationLevel,
-      waterLevelWorld: effectiveWaterLevel,
-      phase: room.phase,
-      summary: room.summary,
-      ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
-    };
+          hostId: room.hostId,
+          hostName: room.players.get(room.hostId)?.name ?? 'Master',
+          accessMode: room.accessMode,
+          gameMode: room.gameMode,
+          players: Array.from(room.players.values()).map((p) => this.stripPlayer(p, room)),
+          projectiles: room.projectiles.map((pr) => ({
+            id: pr.id,
+            ownerId: pr.ownerId,
+            catalogId: pr.catalogId,
+            position: pr.position,
+            velocity: pr.velocity,
+            color: pr.color,
+            behavior: pr.behavior,
+            statusEffect: pr.statusEffect,
+            craterRadius: pr.craterRadius,
+            damage: pr.damage,
+            ttlSec: pr.ttlSec,
+          })),
+          lootDrops: room.lootDrops
+            .map(stripLootDrop)
+            .filter((drop): drop is LootDropWireState => drop !== null),
+          entities: room.entities,
+          activeEvents: room.activeEvents.map(stripMapEvent),
+          serverNow: now,
+          event: this.buildEventCycleState(room),
+          catalogVersion: getCatalogVersion(),
+          assetVersion: getAssetVersion(),
+          contentPool: summarizeContentPool(room.contentPool),
+          eventCooldownSec: Math.round(room.eventCooldownSec),
+          rafflePlayerId: room.rafflePlayerId,
+          rafflePlayerName: room.rafflePlayerName,
+          raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
+          stagnationLevel: room.stagnationLevel,
+          waterLevelWorld: effectiveWaterLevel,
+          phase: room.phase,
+          summary: room.summary,
+          ...(room.gameMode === 'arsenal' ? {
+                                elapsedSec: room.elapsedSec,
+                                matchDurationSec: room.arsenalMatchDuration,
+                                maxKills: room.arsenalMaxKills,
+                                arsenalAutoEvents: room.arsenalAutoEvents,
+                              } : {}),
+          ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
+        };
 
     this.broadcastToRoom(room, { type: 'room:tick', payload: tickPayload });
   }
@@ -4381,7 +4581,7 @@ export class RoomManager {
       bot.isTypingPrompt = true;
     }
 
-    if (action.finishTypingPrompt && bot.canForgeWeapon && !bot.botForgePrompted) {
+    if (action.finishTypingPrompt && bot.canForgeWeapon && !bot.botForgePrompted && room.gameMode !== 'arsenal') {
       bot.isTypingPrompt = false;
       bot.botForgePrompted = true;
       bot.canForgeWeapon = false;
@@ -4480,15 +4680,16 @@ export class RoomManager {
     };
   }
 
-  private stripPlayer(p: ServerPlayer): PlayerNetWireState {
-    const now = Date.now();
-    const forgePhase: 'cooling' | 'ready' | 'writing' | 'dead' = !p.alive
-      ? 'dead'
-      : p.prompt?.kind === 'weapon'
-        ? 'writing'
-        : p.canForgeWeapon
-          ? 'ready'
-          : 'cooling';
+  private stripPlayer(p: ServerPlayer, room: GameRoom): PlayerNetWireState {
+      const now = Date.now();
+      const isArsenal = room.gameMode === 'arsenal';
+      const forgePhase: 'cooling' | 'ready' | 'writing' | 'dead' = !p.alive || isArsenal
+        ? 'dead'
+        : p.prompt?.kind === 'weapon'
+          ? 'writing'
+          : p.canForgeWeapon
+            ? 'ready'
+            : 'cooling';
     const forgeEndsAt =
       forgePhase === 'writing'
         ? p.prompt?.endsAt ?? null
@@ -4526,14 +4727,18 @@ export class RoomManager {
       prompt: p.prompt ? { ...p.prompt } : null,
       forge: { phase: forgePhase, endsAt: forgeEndsAt },
       kills: p.kills,
-      weaponsCreated: p.weaponsCreated,
+            deaths: p.deaths,
+            assists: p.assists,
+            recentDamageSources: p.recentDamageSources,
+            weaponsCreated: p.weaponsCreated,
       grappleTarget: p.grappleTarget,
       burnUntil: p.burnUntil,
       freezeUntil: p.freezeUntil,
       relicBuff: p.relicBuff ? { ...p.relicBuff } : null,
       shieldHp: p.shieldHp,
       personalityLabel: p.personalityLabel,
-    };
+            respawnAt: p.respawnAt,
+          };
   }
 
   private buildLobbyStatePayload(room: GameRoom, playerId: string): LobbyStatePayload {
@@ -4613,41 +4818,47 @@ export class RoomManager {
   }
 
   private buildInitPayload(room: GameRoom, playerId: string): RoomInitWirePayload {
-    const hostName = room.players.get(room.hostId)?.name ?? 'Master';
-    const lootDrops = room.lootDrops
-      .map(stripLootDrop)
-      .filter((drop): drop is LootDropWireState => drop !== null);
-    return {
-      roomId: room.id,
-      roomName: room.name,
-      playerId,
-      hostId: room.hostId,
-      hostName,
-      accessMode: room.accessMode,
-      seed: room.seed,
-      dimX: room.dimX,
-      dimY: room.dimY,
-      dimZ: room.dimZ,
-      deltas: room.deltas,
-      players: Array.from(room.players.values()).map((p) => this.stripPlayer(p)),
-      activeEvents: room.activeEvents.map(stripMapEvent),
-      lootDrops,
-      entities: room.entities,
-      contentItems: this.collectWeaponContent(room),
-      serverNow: Date.now(),
-      event: this.buildEventCycleState(room),
-      catalogVersion: getCatalogVersion(),
-      assetVersion: getAssetVersion(),
-      contentPool: summarizeContentPool(room.contentPool, true),
-      eventCooldownSec: Math.round(room.eventCooldownSec),
-      rafflePlayerId: room.rafflePlayerId,
-      rafflePlayerName: room.rafflePlayerName,
-      raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
-      phase: room.phase,
-      devMode: this.devEnabled,
-      ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
-    };
-  }
+        const hostName = room.players.get(room.hostId)?.name ?? 'Master';
+        const lootDrops = room.lootDrops
+          .map(stripLootDrop)
+          .filter((drop): drop is LootDropWireState => drop !== null);
+        return {
+          roomId: room.id,
+          roomName: room.name,
+          playerId,
+          hostId: room.hostId,
+          hostName,
+          accessMode: room.accessMode,
+          gameMode: room.gameMode,
+          seed: room.seed,
+        dimX: room.dimX,
+        dimY: room.dimY,
+        dimZ: room.dimZ,
+        deltas: room.deltas,
+        players: Array.from(room.players.values()).map((p) => this.stripPlayer(p, room)),
+        activeEvents: room.activeEvents.map(stripMapEvent),
+        lootDrops,
+        entities: room.entities,
+        contentItems: this.collectWeaponContent(room),
+        serverNow: Date.now(),
+        event: this.buildEventCycleState(room),
+        catalogVersion: getCatalogVersion(),
+        assetVersion: getAssetVersion(),
+        contentPool: summarizeContentPool(room.contentPool, true),
+        eventCooldownSec: Math.round(room.eventCooldownSec),
+        rafflePlayerId: room.rafflePlayerId,
+        rafflePlayerName: room.rafflePlayerName,
+        raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
+        phase: room.phase,
+        devMode: this.devEnabled,
+        ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
+        ...(room.gameMode === 'arsenal' ? {
+                  arsenalMatchDuration: room.arsenalMatchDuration,
+                  arsenalMaxKills: room.arsenalMaxKills,
+                  arsenalAutoEvents: room.arsenalAutoEvents,
+                } : {}),
+      };
+    }
 
   private sendToPlayer(player: ServerPlayer, msg: unknown): void {
     this.sendSocketMsg(player.ws, msg);

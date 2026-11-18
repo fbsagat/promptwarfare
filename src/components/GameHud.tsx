@@ -27,6 +27,7 @@ import type {
   MapEventState,
   PlayerNetState,
   SpawnedEntityNetState,
+  GameMode,
 } from '../shared/types.ts';
 import { RELICS } from '../shared/relics.ts';
 import {
@@ -97,45 +98,52 @@ interface GameHudProps {
   onOpenSettings: () => void;
   onPause: () => void;
   onSelectSlot: (slot: number) => void;
-  onOpenWeaponPrompt: () => void;
-  onOpenEventPrompt: () => void;
-  onFeedback: (itemId: string, rating: 1 | -1, kind?: 'weapon' | 'event') => void;
-}
+    onOpenWeaponPrompt: () => void;
+      onOpenEventPrompt: () => void;
+      onFeedback: (itemId: string, rating: 1 | -1, kind?: 'weapon' | 'event') => void;
+      gameMode: GameMode;
+      elapsedSec?: number;
+      matchDurationSec?: number;
+      maxKills?: number;
+      arsenalMatchDuration?: number;
+      arsenalMaxKills?: number;
+      showScoreboard: boolean;
+    }
 
-const BEHAVIOR_LABELS: Record<string, string> = {
-  standard: 'Balístico',
-  bouncing: 'Ricochete',
-  homing_weak: 'Teleguiado',
-  sticky_bomb: 'Adesiva',
-  piercing: 'Perfurante',
-};
+    const BEHAVIOR_LABELS: Record<string, string> = {
+    standard: 'Balístico',
+    bouncing: 'Ricochete',
+    homing_weak: 'Teleguiado',
+    sticky_bomb: 'Adesiva',
+    piercing: 'Perfurante',
+  };
 
-const EFFECT_LABELS: Record<string, string> = {
-  none: 'Neutro',
-  knockback: 'Repulsão',
-  burn: 'Incendiário',
-  freeze: 'Criogênico',
-  gravity_pull: 'Gravitacional',
-};
+  const EFFECT_LABELS: Record<string, string> = {
+    none: 'Neutro',
+    knockback: 'Repulsão',
+    burn: 'Incendiário',
+    freeze: 'Criogênico',
+    gravity_pull: 'Gravitacional',
+  };
 
-const RISK_LABELS: Record<string, string> = {
-  recoil_launch: 'Coice Extremo',
-  overheat_explosion: 'Explosão Térmica',
-  toxic_leak: 'Vazamento Tóxico',
-};
+  const RISK_LABELS: Record<string, string> = {
+    recoil_launch: 'Coice Extremo',
+    overheat_explosion: 'Explosão Térmica',
+    toxic_leak: 'Vazamento Tóxico',
+  };
 
-const COMPASS_POINTS: Array<{ label: string; deg: number }> = [
-  { label: 'N', deg: 0 },
-  { label: 'NE', deg: 45 },
-  { label: 'E', deg: 90 },
-  { label: 'SE', deg: 135 },
-  { label: 'S', deg: 180 },
-  { label: 'SO', deg: 225 },
-  { label: 'O', deg: 270 },
-  { label: 'NO', deg: 315 },
-];
+  const COMPASS_POINTS: Array<{ label: string; deg: number }> = [
+    { label: 'N', deg: 0 },
+    { label: 'NE', deg: 45 },
+    { label: 'E', deg: 90 },
+    { label: 'SE', deg: 135 },
+    { label: 'S', deg: 180 },
+    { label: 'SO', deg: 225 },
+    { label: 'O', deg: 270 },
+    { label: 'NO', deg: 315 },
+  ];
 
-const CompassBar: React.FC<{ yaw: number }> = ({ yaw }) => {
+  const CompassBar: React.FC<{ yaw: number }> = ({ yaw }) => {
   const heading = ((((yaw * 180) / Math.PI) % 360) + 360) % 360;
   return (
     <div className="relative h-6 w-60 md:w-72 rounded-md bg-[#0b101b]/72 border border-white/12 overflow-hidden pointer-events-none">
@@ -162,9 +170,58 @@ const CompassBar: React.FC<{ yaw: number }> = ({ yaw }) => {
       </span>
     </div>
   );
-};
+  };
 
-function renderSlotIcon(item: InventorySlotItem | null) {
+  const Scoreboard: React.FC<{ players: PlayerNetState[]; localPlayerId: string | null }> = ({ players, localPlayerId }) => {
+    const sortedPlayers = [...players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none bg-black/60">
+        <div className="pointer-events-auto bg-[#0b101b]/98 border border-rose-400/30 rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+          <div className="bg-gradient-to-r from-rose-500/20 to-rose-600/10 border-b border-rose-400/30 px-4 py-3 flex items-center justify-between">
+            <h2 className="text-xl font-display font-bold text-rose-200">PLACAR - MODO ARSENAL</h2>
+            <span className="text-sm font-mono-tabular text-rose-300/80">Segure TAB para fechar</span>
+          </div>
+          <div className="overflow-x-auto overflow-y-auto p-4">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10">
+                  <th className="text-left pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px]">Jogador</th>
+                  <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Kills</th>
+                  <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Mortes</th>
+                  <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Assist.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedPlayers.map((player, index) => (
+                  <tr
+                    key={player.id}
+                    className={`border-b border-white/5 last:border-b-0 transition-colors ${
+                      player.id === localPlayerId ? 'bg-rose-500/10' : ''
+                    }`}
+                  >
+                    <td className="py-2 pr-3 font-medium truncate max-w-[200px]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono-tabular text-slate-500 text-[11px] w-5 text-right">{index + 1}.</span>
+                        <span className={`font-display ${player.alive ? 'text-white' : 'text-slate-400 line-through'}`}>
+                          {player.name}
+                        </span>
+                        {player.isBot && <span className="text-[9px] bg-slate-700 text-slate-300 px-1 rounded">BOT</span>}
+                      </div>
+                    </td>
+                    <td className="py-2 text-right font-mono-tabular text-rose-200 font-bold w-20">{player.kills}</td>
+                    <td className="py-2 text-right font-mono-tabular text-rose-400 w-20">{player.deaths}</td>
+                    <td className="py-2 text-right font-mono-tabular text-amber-300 w-20">{player.assists}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  function renderSlotIcon(item: InventorySlotItem | null) {
   if (!item) return null;
   if (item.kind === 'shovel') {
     return (
@@ -246,7 +303,14 @@ export const GameHud: React.FC<GameHudProps> = ({
   onOpenWeaponPrompt,
   onOpenEventPrompt,
   onFeedback,
-}) => {
+    gameMode,
+    elapsedSec,
+    matchDurationSec,
+    maxKills,
+    arsenalMatchDuration,
+    arsenalMaxKills,
+        showScoreboard,
+      }) => {
   const [ghostHp, setGhostHp] = useState(100);
   const [feedback, setFeedback] = useState<Record<string, 1 | -1>>({});
   const currentHp = localPlayer?.hp ?? 0;
@@ -287,19 +351,36 @@ export const GameHud: React.FC<GameHudProps> = ({
   const isHot = (localPlayer?.heat ?? 0) >= 72 || isOverheated;
 
   const crosshairTickClass =
-    aimContext === 'enemy'
-      ? 'bg-rose-400'
-      : aimContext === 'grapple'
-        ? 'bg-cyan-400'
-        : aimContext === 'dig'
-          ? 'bg-amber-300'
-          : 'bg-white/85';
+      aimContext === 'enemy'
+        ? 'bg-rose-400'
+        : aimContext === 'grapple'
+          ? 'bg-cyan-400'
+          : aimContext === 'dig'
+            ? 'bg-amber-300'
+            : 'bg-white/85';
 
-  const hitmarkerSlashClass = hitmarkerHeavy
-    ? 'w-4 h-[2px] bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.9)]'
-    : 'w-3 h-[1.5px] bg-rose-400';
+    const hitmarkerSlashClass = hitmarkerHeavy
+      ? 'w-4 h-[2px] bg-amber-300 shadow-[0_0_6px_rgba(252,211,77,0.9)]'
+      : 'w-3 h-[1.5px] bg-rose-400';
 
-  const offscreenMarkers = (() => {
+    // Arsenal mode HUD state
+        const isArsenal = gameMode === 'arsenal';
+        // Use init payload values as fallback when tick payload not yet received
+        const effectiveMatchDuration = matchDurationSec ?? arsenalMatchDuration ?? 300;
+        const effectiveMaxKills = maxKills ?? arsenalMaxKills ?? 20;
+        const matchTimerSec = isArsenal && elapsedSec !== undefined
+          ? Math.max(0, effectiveMatchDuration - elapsedSec)
+          : 0;
+        const localPlayerKills = localPlayer?.kills ?? 0;
+        const isDead = localPlayer && !localPlayer.alive;
+        const respawnTimerSec = isArsenal && isDead && localPlayer.respawnAt
+          ? Math.max(0, Math.ceil((localPlayer.respawnAt - serverNow) / 1000))
+          : 0;
+        const matchProgress = isArsenal && elapsedSec !== undefined
+          ? Math.min(100, (elapsedSec / effectiveMatchDuration) * 100)
+          : 0;
+
+    const offscreenMarkers = (() => {
     if (!localPlayer) return [];
     return activeEvents
       .map((evt) => {
@@ -460,59 +541,82 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
 
         {/* Top-Center: Global Map Event Raffle Timer [Y], Warning Banner, Stacked Events */}
-        <div className="flex flex-col items-center gap-2 max-w-md w-full">
-          <CompassBar yaw={localPlayer?.yaw ?? 0} />
-          {isRaffled ? (
-            <button
-              type="button"
-              data-testid="event-raffle-btn"
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onOpenEventPrompt();
-              }}
-              className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm shadow-lg cursor-pointer whitespace-nowrap animate-pulse"
-            >
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>
-                Você foi sorteado — Enter para escrever ({eventRemainingSec}s)
-              </span>
-            </button>
-          ) : (
-            <div
-              data-testid="event-timer"
-              className="w-full bg-[#0b101b]/84 border border-amber-400/25 rounded-lg px-3.5 py-1.5 text-xs text-slate-200 font-mono-tabular"
-            >
-              {eventCycle.rafflePlayerId ? (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-amber-300 truncate">
-                    🎲 {raffledName || 'Jogador'}
-                    {eventCycle.phase === 'writing' || eventCycle.phase === 'bot'
-                      ? ' · preparando'
-                      : ' · sorteado'}
-                  </span>
-                  <span className="text-amber-200">{eventRemainingSec}s</span>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <span>Evento global em</span>
-                  <span className="text-amber-200">{eventRemainingSec}s</span>
-                </div>
-              )}
-              <div className="mt-1 h-1 rounded bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-amber-400 transition-all duration-100"
-                  style={{
-                    width: `${Math.max(
-                      3,
-                      Math.min(100, (eventRemainingSec / eventWindowSec) * 100),
-                    )}%`,
-                  }}
-                />
-              </div>
-            </div>
-          )}
+                <div className="flex flex-col items-center gap-2 max-w-md w-full">
+                  <CompassBar yaw={localPlayer?.yaw ?? 0} />
 
-          {warningEvent && (
+                  {/* Arsenal Mode: Match Timer + Kill Counter */}
+                  {isArsenal && (
+                    <div className="w-full bg-[#0b101b]/84 border border-rose-400/25 rounded-lg px-3.5 py-2 text-xs text-slate-200 font-mono-tabular">
+                      <div className="flex items-center justify-between gap-3 mb-1">
+                        <span className="text-rose-300">⏱️ Partida</span>
+                        <span className="text-rose-200 font-bold">
+                          {Math.floor(matchTimerSec / 60).toString().padStart(2, '0')}:{(matchTimerSec % 60).toString().padStart(2, '0')}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-rose-400 transition-all duration-100"
+                          style={{ width: `${matchProgress}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-3 mt-1">
+                                              <span className="text-slate-300">🏆 Kills</span>
+                                              <span className="text-rose-200 font-bold">{localPlayerKills}/{effectiveMaxKills}</span>
+                                            </div>
+                    </div>
+                  )}
+
+                                    {!isArsenal && isRaffled ? (
+                                      <button
+                                        type="button"
+                                        data-testid="event-raffle-btn"
+                                        onClick={(e) => {
+                                          e.currentTarget.blur();
+                                          onOpenEventPrompt();
+                                        }}
+                                        className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm shadow-lg cursor-pointer whitespace-nowrap animate-pulse"
+                                      >
+                                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                                        <span>
+                                          Você foi sorteado — Enter para escrever ({eventRemainingSec}s)
+                                        </span>
+                                      </button>
+                                    ) : !isArsenal ? (
+                                      <div
+                                        data-testid="event-timer"
+                                        className="w-full bg-[#0b101b]/84 border border-amber-400/25 rounded-lg px-3.5 py-1.5 text-xs text-slate-200 font-mono-tabular"
+                                      >
+                                        {eventCycle.rafflePlayerId ? (
+                                          <div className="flex items-center justify-between gap-3">
+                                            <span className="text-amber-300 truncate">
+                                              🎲 {raffledName || 'Jogador'}
+                                              {eventCycle.phase === 'writing' || eventCycle.phase === 'bot'
+                                                ? ' · preparando'
+                                                : ' · sorteado'}
+                                            </span>
+                                            <span className="text-amber-200">{eventRemainingSec}s</span>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-between gap-3">
+                                            <span>Evento global em</span>
+                                            <span className="text-amber-200">{eventRemainingSec}s</span>
+                                          </div>
+                                        )}
+                                        <div className="mt-1 h-1 rounded bg-slate-800 overflow-hidden">
+                                          <div
+                                            className="h-full bg-amber-400 transition-all duration-100"
+                                            style={{
+                                              width: `${Math.max(
+                                                3,
+                                                Math.min(100, (eventRemainingSec / eventWindowSec) * 100),
+                                              )}%`,
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+                                    ) : null}
+
+                                    {warningEvent && (
             <div
               role="status"
               className="w-full bg-rose-950/92 border border-rose-400/60 rounded-lg px-4 py-2 text-center shadow-lg"
@@ -743,12 +847,31 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         )}
         {/* HUD de perspectiva removida */}
-        {!pointerLocked && (
-          <div className="mt-2 rounded-lg bg-[#0b101b]/85 border border-white/20 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap shadow-lg">
-            Clique para capturar o mouse · Esc pausa
-          </div>
-        )}
-      </div>
+                {!pointerLocked && (
+                  <div className="mt-2 rounded-lg bg-[#0b101b]/85 border border-white/20 px-3 py-1 text-[11px] text-slate-200 whitespace-nowrap shadow-lg">
+                    Clique para capturar o mouse · Esc pausa
+                  </div>
+                )}
+
+                {/* Arsenal Mode: Respawn Countdown Overlay */}
+                                {isArsenal && isDead && respawnTimerSec > 0 && (
+                                  <div className="fixed inset-0 flex flex-col items-center justify-center pointer-events-none z-20">
+                                    <div className="bg-[#0b101b]/95 border border-rose-400/50 rounded-2xl p-8 text-center shadow-2xl max-w-md mx-4">
+                                      <div className="text-4xl font-bold text-rose-400 mb-4">Renascendo</div>
+                                      <div className="text-6xl font-mono-tabular font-bold text-rose-200 mb-2 animate-pulse">
+                                        {respawnTimerSec}
+                                      </div>
+                                      <div className="text-slate-300 text-sm">Preparando renascimento...</div>
+                                      <div className="mt-4 h-2 w-full bg-slate-800 rounded overflow-hidden">
+                                        <div
+                                          className="h-full bg-rose-400 transition-all duration-300"
+                                          style={{ width: `${Math.max(0, 100 - (respawnTimerSec / 3) * 100)}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+              </div>
 
       {/* BOTTOM ROW: Loot Cue + Weapon Forge Status + Weapon Telemetry + 4-Slot Hotbar */}
       <div className="flex flex-col items-center gap-2">
@@ -764,23 +887,23 @@ export const GameHud: React.FC<GameHudProps> = ({
         )}
 
         <div className="flex flex-wrap items-center justify-center gap-2.5">
-          {forgePhase === 'ready' && (
-            <button
-              type="button"
-              tabIndex={-1}
-              data-testid="forge-weapon-btn"
-              onClick={(e) => {
-                e.currentTarget.blur();
-                onOpenWeaponPrompt();
-              }}
-              className="pointer-events-auto flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-display font-bold text-xs shadow cursor-pointer whitespace-nowrap animate-pulse"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Forja pronta — Enter para escrever</span>
-            </button>
-          )}
+          {!isArsenal && forgePhase === 'ready' && (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        data-testid="forge-weapon-btn"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onOpenWeaponPrompt();
+                        }}
+                        className="pointer-events-auto flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-display font-bold text-xs shadow cursor-pointer whitespace-nowrap animate-pulse"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Forja pronta — Enter para escrever</span>
+                      </button>
+                    )}
 
-          {forgePhase === 'cooling' && (
+                    {!isArsenal && forgePhase === 'cooling' && (
             <div
               data-testid="weapon-timer"
               className="bg-[#0b101b]/84 border border-sky-400/25 rounded-lg px-3 py-1.5 text-xs text-sky-200 font-mono-tabular flex items-center gap-2"
@@ -837,10 +960,10 @@ export const GameHud: React.FC<GameHudProps> = ({
           })()}
 
           {activeItem?.kind === 'weapon' && activeItem.weapon && (
-            <div className="bg-[#0b101b]/86 border border-white/15 rounded-lg px-3 py-1 text-[11px] text-slate-200 font-mono-tabular flex items-center gap-2.5">
-              <span className="text-amber-300 font-bold">
-                {activeItem.ammo ?? 0}/{activeItem.ammoMax ?? 0}
-              </span>
+                      <div className="bg-[#0b101b]/86 border border-white/15 rounded-lg px-3 py-1 text-[11px] text-slate-200 font-mono-tabular flex items-center gap-2.5">
+                        <span className="text-amber-300 font-bold">
+                          {isArsenal && (activeItem.ammo ?? 0) >= 999999 ? '∞' : `${activeItem.ammo ?? 0}/${activeItem.ammoMax ?? 0}`}
+                        </span>
               <span className="w-12 h-1.5 rounded bg-slate-900 overflow-hidden inline-block">
                 <span
                   className={`block h-full ${
@@ -941,12 +1064,14 @@ export const GameHud: React.FC<GameHudProps> = ({
                     [{idx + 1}]
                   </span>
                   {item ? (
-                    <span className="font-mono-tabular text-[11px] text-amber-300">
-                      {item.kind === 'weapon'
-                        ? `${item.ammo ?? 0}/${item.ammoMax ?? 0}`
-                        : `${item.massKg}kg`}
-                    </span>
-                  ) : (
+                                      <span className="font-mono-tabular text-[11px] text-amber-300">
+                                        {item.kind === 'weapon'
+                                          ? isArsenal && (item.ammo ?? 0) >= 999999
+                                            ? '∞'
+                                            : `${item.ammo ?? 0}/${item.ammoMax ?? 0}`
+                                          : `${item.massKg}kg`}
+                                      </span>
+                                    ) : (
                     <span className="text-[11px] text-slate-600">Vazio</span>
                   )}
                 </div>
@@ -1039,14 +1164,18 @@ export const GameHud: React.FC<GameHudProps> = ({
       )}
 
       {damageNumbers.map((num) => (
-        <div
-          key={num.id}
-          className="fixed pw-damage-float z-30 pointer-events-none font-display font-bold text-lg text-rose-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
-          style={{ left: num.x, top: num.y }}
-        >
-          -{num.amount}
-        </div>
-      ))}
-    </div>
-  );
-};
+              <div
+                key={num.id}
+                className="fixed pw-damage-float z-30 pointer-events-none font-display font-bold text-lg text-rose-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
+                style={{ left: num.x, top: num.y }}
+              >
+                -{num.amount}
+              </div>
+            ))}
+
+            {showScoreboard && isArsenal && (
+              <Scoreboard players={allPlayers} localPlayerId={localPlayer?.id ?? null} />
+            )}
+          </div>
+        );
+      };

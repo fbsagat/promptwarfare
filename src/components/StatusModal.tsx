@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Crown, Lock, LockOpen, Settings, ShieldBan } from 'lucide-react';
-import type { RoomAccessMode, RoomMatchSummary } from '../shared/types.ts';
+import { Crown, Lock, LockOpen, Settings, ShieldBan, RotateCcw, LogOut } from 'lucide-react';
+import type { RoomAccessMode, RoomMatchSummary, GameMode } from '../shared/types.ts';
 
 interface StatusModalProps {
   kind: 'paused' | 'gameover';
@@ -11,6 +11,7 @@ interface StatusModalProps {
   accessMode: RoomAccessMode;
   summary: RoomMatchSummary | null;
   localAlive: boolean;
+  gameMode: GameMode;
   onResume: () => void;
   onRestart: () => void;
   onUpdateAccess: (accessMode: RoomAccessMode, password?: string) => void;
@@ -27,6 +28,7 @@ export const StatusModal: React.FC<StatusModalProps> = ({
   accessMode,
   summary,
   localAlive,
+  gameMode,
   onResume,
   onRestart,
   onUpdateAccess,
@@ -191,104 +193,179 @@ export const StatusModal: React.FC<StatusModalProps> = ({
     );
   }
 
-  const isVictory = summary
-    ? summary.winnerId === localPlayerId
-    : localAlive;
-  const localStats = summary?.standings.find((s) => s.id === localPlayerId);
+    // Arsenal mode gameover: full scoreboard with restart/lobby buttons (matching TAB scoreboard)
+        if (kind === 'gameover' && gameMode === 'arsenal') {
+          const standings = summary?.standings ?? [];
+          // Sort by kills desc, deaths asc, name asc (matching TAB scoreboard)
+          const sortedStandings = [...standings].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
 
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-4">
-      <div className="w-full max-w-lg bg-[#0b101b]/95 border border-white/15 rounded-xl p-6 shadow-2xl">
-        <div className="flex items-baseline justify-between gap-3 mb-1">
-          <h2
-            className={`font-display text-3xl font-bold ${
-              isVictory ? 'text-amber-400' : 'text-rose-400'
-            }`}
-          >
-            {isVictory ? 'Último Sobrevivente' : 'Você Foi Eliminado'}
-          </h2>
-          {summary && (
-            <span className="font-mono-tabular text-xs text-slate-400">
-              {summary.durationSec}s
-            </span>
-          )}
-        </div>
-        <p className="text-sm text-slate-300 mb-4">
-          {summary
-            ? `Vencedor da rodada: ${summary.winnerName}`
-            : 'A rodada continua na ilha. Acompanhe ou retorne ao lobby.'}
-        </p>
+          return (
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-4">
+              <div className="w-full max-w-2xl bg-[#0b101b]/95 border border-rose-400/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+                <div className="bg-gradient-to-r from-rose-500/20 to-rose-600/10 border-b border-rose-400/30 px-4 py-3 flex items-center justify-between">
+                  <h2 className="text-xl font-display font-bold text-rose-200">PLACAR - MODO ARSENAL</h2>
+                  {summary && (
+                    <span className="font-mono-tabular text-xs text-rose-300/80">{summary.durationSec}s</span>
+                  )}
+                </div>
+                <div className="overflow-x-auto overflow-y-auto p-4 max-h-[60vh]">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th className="text-left pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px]">Jogador</th>
+                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Kills</th>
+                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Mortes</th>
+                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Assist.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedStandings.map((row, index) => (
+                        <tr
+                          key={row.id}
+                          className={`border-b border-white/5 last:border-b-0 transition-colors ${
+                            row.id === localPlayerId ? 'bg-rose-500/10' : ''
+                          }`}
+                        >
+                          <td className="py-2 pr-3 font-medium truncate max-w-[200px]">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono-tabular text-slate-500 text-[11px] w-5 text-right">{index + 1}.</span>
+                              <span className={`font-display ${row.alive ? 'text-white' : 'text-slate-400 line-through'}`}>
+                                {row.name}
+                              </span>
+                              {row.isBot && <span className="text-[9px] bg-slate-700 text-slate-300 px-1 rounded">BOT</span>}
+                            </div>
+                          </td>
+                          <td className="py-2 text-right font-mono-tabular text-rose-200 font-bold w-20">{row.kills}</td>
+                          <td className="py-2 text-right font-mono-tabular text-rose-400 w-20">{row.deaths}</td>
+                          <td className="py-2 text-right font-mono-tabular text-amber-300 w-20">{row.assists}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-        <div className="grid grid-cols-3 gap-2.5 mb-4">
-          <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
-            <div className="text-[11px] text-slate-400">Abates</div>
-            <div className="font-mono-tabular text-xl font-bold text-white">
-              {localStats?.kills ?? 0}
-            </div>
-          </div>
-          <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
-            <div className="text-[11px] text-slate-400">Armas IA</div>
-            <div className="font-mono-tabular text-xl font-bold text-white">
-              {localStats?.weaponsCreated ?? 0}
-            </div>
-          </div>
-          <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
-            <div className="text-[11px] text-slate-400">Eventos</div>
-            <div className="font-mono-tabular text-xl font-bold text-white">
-              {summary?.eventsTriggered ?? 0}
-            </div>
-          </div>
-        </div>
-
-        {summary && summary.standings.length > 0 && (
-          <div className="mb-5 bg-[#141c2e]/70 border border-white/10 rounded-lg divide-y divide-white/5 max-h-44 overflow-y-auto">
-            {summary.standings.slice(0, 6).map((row, idx) => (
-              <div
-                key={row.id}
-                className={`flex items-center justify-between px-3 py-1.5 text-xs ${
-                  row.id === localPlayerId ? 'text-amber-300 font-semibold' : 'text-slate-200'
-                }`}
-              >
-                <span className="truncate">
-                  {idx + 1}. {row.name}
-                  {row.personalityLabel ? (
-                    <span className="ml-1.5 text-[10px] text-slate-400 font-normal">
-                      · {row.personalityLabel}
-                    </span>
-                  ) : null}
-                </span>
-                <span className="font-mono-tabular text-slate-300 shrink-0 ml-3">
-                  {row.kills} abates · {row.weaponsCreated} armas
-                </span>
+                <div className="flex gap-2.5 px-4 py-4 bg-[#141c2e]/50 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={onRestart}
+                    className="flex-1 h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Reiniciar partida
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onBackToTitle}
+                    className="flex-1 h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-white font-medium text-sm cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Lobby
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        }
 
-        <div className="flex gap-2.5">
-          {isHost ? (
+    // Default gameover for other modes (warfare, disaster, laboratory)
+    const isVictory = summary
+      ? summary.winnerId === localPlayerId
+      : localAlive;
+    const localStats = summary?.standings.find((s) => s.id === localPlayerId);
+
+    return (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-4">
+        <div className="w-full max-w-lg bg-[#0b101b]/95 border border-white/15 rounded-xl p-6 shadow-2xl">
+          <div className="flex items-baseline justify-between gap-3 mb-1">
+            <h2
+              className={`font-display text-3xl font-bold ${
+                isVictory ? 'text-amber-400' : 'text-rose-400'
+              }`}
+            >
+              {isVictory ? 'Último Sobrevivente' : 'Você Foi Eliminado'}
+            </h2>
+            {summary && (
+              <span className="font-mono-tabular text-xs text-slate-400">
+                {summary.durationSec}s
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-300 mb-4">
+            {summary
+              ? `Vencedor da rodada: ${summary.winnerName}`
+              : 'A rodada continua na ilha. Acompanhe ou retorne ao lobby.'}
+          </p>
+
+          <div className="grid grid-cols-3 gap-2.5 mb-4">
+            <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
+              <div className="text-[11px] text-slate-400">Abates</div>
+              <div className="font-mono-tabular text-xl font-bold text-white">
+                {localStats?.kills ?? 0}
+              </div>
+            </div>
+            <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
+              <div className="text-[11px] text-slate-400">Armas IA</div>
+              <div className="font-mono-tabular text-xl font-bold text-white">
+                {localStats?.weaponsCreated ?? 0}
+              </div>
+            </div>
+            <div className="bg-[#141c2e] border border-white/10 rounded-lg p-3">
+              <div className="text-[11px] text-slate-400">Eventos</div>
+              <div className="font-mono-tabular text-xl font-bold text-white">
+                {summary?.eventsTriggered ?? 0}
+              </div>
+            </div>
+          </div>
+
+          {summary && summary.standings.length > 0 && (
+            <div className="mb-5 bg-[#141c2e]/70 border border-white/10 rounded-lg divide-y divide-white/5 max-h-44 overflow-y-auto">
+              {summary.standings.slice(0, 6).map((row, idx) => (
+                <div
+                  key={row.id}
+                  className={`flex items-center justify-between px-3 py-1.5 text-xs ${
+                    row.id === localPlayerId ? 'text-amber-300 font-semibold' : 'text-slate-200'
+                  }`}
+                >
+                  <span className="truncate">
+                    {idx + 1}. {row.name}
+                    {row.personalityLabel ? (
+                      <span className="ml-1.5 text-[10px] text-slate-400 font-normal">
+                        · {row.personalityLabel}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="font-mono-tabular text-slate-300 shrink-0 ml-3">
+                    {row.kills} abates · {row.weaponsCreated} armas
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex gap-2.5">
+            {isHost ? (
+              <button
+                type="button"
+                data-start="true"
+                onClick={onRestart}
+                className="flex-1 h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm cursor-pointer"
+              >
+                Jogar Novamente (Master)
+              </button>
+            ) : (
+              <div className="flex-1 h-11 px-3 rounded-lg bg-[#141c2e] border border-white/10 flex items-center text-xs text-slate-300">
+                Aguardando Master ({hostName}) reiniciar...
+              </div>
+            )}
             <button
               type="button"
-              data-start="true"
-              onClick={onRestart}
-              className="flex-1 h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm cursor-pointer"
+              onClick={onBackToTitle}
+              className="px-4 h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-white font-medium text-sm cursor-pointer"
             >
-              Jogar Novamente (Master)
+              Lobby
             </button>
-          ) : (
-            <div className="flex-1 h-11 px-3 rounded-lg bg-[#141c2e] border border-white/10 flex items-center text-xs text-slate-300">
-              Aguardando Master ({hostName}) reiniciar...
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={onBackToTitle}
-            className="px-4 h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-white font-medium text-sm cursor-pointer"
-          >
-            Lobby
-          </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
-};
+    );
+  };

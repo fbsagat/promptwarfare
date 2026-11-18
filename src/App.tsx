@@ -43,6 +43,7 @@ import {
   type PlayerNetState,
   type PromptKind,
   type RoomAccessMode,
+  type GameMode,
   type RoomInitWirePayload,
   type RoomMatchSummary,
   type RoomPublicSummary,
@@ -107,6 +108,9 @@ export default function App() {
   const [hostId, setHostId] = useState<string | null>(null);
   const [hostName, setHostName] = useState('Master');
   const [roomAccessMode, setRoomAccessMode] = useState<RoomAccessMode>('open');
+  const [gameMode, setGameMode] = useState<GameMode>('warfare');
+  const [arsenalMatchDuration, setArsenalMatchDuration] = useState(300);
+  const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
   const [lobbyState, setLobbyState] = useState<LobbyStatePayload | null>(null);
 
   const [rooms, setRooms] = useState<RoomPublicSummary[]>([]);
@@ -171,6 +175,7 @@ export default function App() {
   const [aimContext, setAimContext] = useState<'neutral' | 'dig' | 'grapple' | 'enemy'>('neutral');
   const [nearbyLootName, setNearbyLootName] = useState<string | null>(null);
   const [nearbyZipline, setNearbyZipline] = useState<string | null>(null);
+  const [showScoreboard, setShowScoreboard] = useState(false);
 
   const [islandSizeMeters, setIslandSizeMeters] = useState(88);
   const [lootDrops, setLootDrops] = useState<LootDropState[]>([]);
@@ -565,6 +570,9 @@ export default function App() {
           setHostId(init.hostId);
           setHostName(init.hostName);
           setRoomAccessMode(init.accessMode);
+          setGameMode(init.gameMode ?? 'warfare');
+          if (init.arsenalMatchDuration) setArsenalMatchDuration(init.arsenalMatchDuration);
+          if (init.arsenalMaxKills) setArsenalMaxKills(init.arsenalMaxKills);
           setServerDevMode(Boolean(init.devMode));
           if (init.devState) setDevState(init.devState);
           setLocalPlayerId(init.playerId);
@@ -813,7 +821,7 @@ export default function App() {
             prevHpRef.current = null;
           }
 
-          if (tick.phase === 'ended' || (local && !local.alive && gameStateRef.current === 'playing')) {
+          if (tick.phase === 'ended') {
             setSummary(tick.summary ?? null);
             setPlayers(tick.players);
             setActiveEvents(tick.activeEvents);
@@ -879,9 +887,12 @@ export default function App() {
       roomName: string;
       roomId: string;
       accessMode: RoomAccessMode;
+      gameMode: GameMode;
       password: string;
       targetPlayers: number;
       fillWithBots: boolean;
+      arsenalMatchDuration: number;
+      arsenalMaxKills: number;
     }) => {
       openSocketAndSend({
         type: 'room:create',
@@ -992,11 +1003,25 @@ export default function App() {
         } else if (gameStateRef.current === 'paused') {
           setGameState('playing');
         }
+      } else if (e.code === 'Tab' && gameStateRef.current === 'playing') {
+        e.preventDefault();
+        setShowScoreboard(true);
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Tab') {
+        e.preventDefault();
+        setShowScoreboard(false);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
   }, [settingsOpen, toggleFullscreen]);
 
   const handleToggleMute = () => {
@@ -1221,6 +1246,10 @@ export default function App() {
           onToggleFullscreen={() => void toggleFullscreen()}
           onOpenSettings={openSettings}
           onPause={() => setGameState('paused')}
+          gameMode={gameMode}
+          arsenalMatchDuration={arsenalMatchDuration}
+          arsenalMaxKills={arsenalMaxKills}
+          showScoreboard={showScoreboard}
           onSelectSlot={(slot) => arenaRef.current?.selectSlot(slot)}
           onOpenWeaponPrompt={() => openWeaponPrompt()}
           onOpenEventPrompt={() => openEventPrompt()}
@@ -1266,6 +1295,7 @@ export default function App() {
           accessMode={roomAccessMode}
           summary={summary}
           localAlive={Boolean(localPlayer?.alive)}
+          gameMode={gameMode}
           onResume={() => {
             setGameState('playing');
             canvasRef.current?.focus();

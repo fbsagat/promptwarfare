@@ -326,23 +326,27 @@ async function startServer() {
         }
 
         if (msg?.type === 'room:create') {
-          releaseCurrentBinding();
-          const res = roomManager.createAndJoinRoom(ws, {
-            roomId: msg.payload?.roomId,
-            roomName: msg.payload?.roomName,
-            playerName: msg.payload?.playerName,
-            accessMode: msg.payload?.accessMode,
-            password: msg.payload?.password,
-            targetPlayers: msg.payload?.targetPlayers,
-            fillWithBots: msg.payload?.fillWithBots,
-            startImmediately: msg.payload?.startImmediately,
-          });
-          if (res) {
-            boundRoomId = res.room.id;
-            boundPlayerId = res.playerId;
-          }
-          return;
-        }
+                                  releaseCurrentBinding();
+                                  const res = roomManager.createAndJoinRoom(ws, {
+                                    roomId: msg.payload?.roomId,
+                                    roomName: msg.payload?.roomName,
+                                    playerName: msg.payload?.playerName,
+                                    accessMode: msg.payload?.accessMode,
+                                    gameMode: msg.payload?.gameMode,
+                                    password: msg.payload?.password,
+                                    targetPlayers: msg.payload?.targetPlayers,
+                                    fillWithBots: msg.payload?.fillWithBots,
+                                    startImmediately: msg.payload?.startImmediately,
+                                    arsenalMatchDuration: msg.payload?.arsenalMatchDuration,
+                                    arsenalMaxKills: msg.payload?.arsenalMaxKills,
+                                    arsenalAutoEvents: msg.payload?.arsenalAutoEvents,
+                                  });
+                  if (res) {
+                    boundRoomId = res.room.id;
+                    boundPlayerId = res.playerId;
+                  }
+                  return;
+                }
 
         if (msg?.type === 'room:join') {
           releaseCurrentBinding();
