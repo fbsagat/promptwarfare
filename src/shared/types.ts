@@ -401,13 +401,17 @@ export interface PlayerNetState {
   prompt: PromptWindowState | null;
   forge: ForgeState;
   kills: number;
-  weaponsCreated: number;
-  grappleTarget: Vec3 | null;
+    weaponsCreated: number;
+    deaths: number;
+    assists: number;
+    recentDamageSources: string[]; // Player IDs who recently damaged this player (for assists)
+    grappleTarget: Vec3 | null;
   burnUntil: number;
   freezeUntil: number;
   relicBuff: RelicBuffState | null;
   shieldHp: number;
   personalityLabel?: string;
+  respawnAt?: number; // timestamp when player will respawn (Arsenal mode)
 }
 
 /** Estado de jogador transmitido a 20 Hz; slots carregam apenas referências. */
@@ -493,12 +497,16 @@ export interface RoomMatchSummary {
     isBot: boolean;
     alive: boolean;
     kills: number;
+    deaths: number;
+    assists: number;
     weaponsCreated: number;
     personalityLabel?: string;
   }>;
 }
 
 export type RoomAccessMode = 'open' | 'password' | 'closed';
+
+export type GameMode = 'warfare' | 'arsenal' | 'disaster' | 'laboratory';
 
 export interface RoomPublicSummary {
   id: string;
@@ -615,6 +623,7 @@ export interface RoomInitPayload {
   hostId: string;
   hostName: string;
   accessMode: RoomAccessMode;
+  gameMode: GameMode;
   seed: number;
   dimX: number;
   dimY: number;
@@ -636,12 +645,19 @@ export interface RoomInitPayload {
   phase: 'lobby' | 'playing' | 'ended';
   devMode?: boolean;
   devState?: DevRoomState;
-}
+  /** Configuração do modo Arsenal: duração máxima da partida em segundos (ex.: 300). */
+  arsenalMatchDuration?: number;
+  /** Configuração do modo Arsenal: número máximo de kills para vitória (ex.: 20). */
+    arsenalMaxKills?: number;
+    /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
+    arsenalAutoEvents?: boolean;
+  }
 
 export interface RoomTickPayload {
   hostId: string;
   hostName: string;
   accessMode: RoomAccessMode;
+  gameMode: GameMode;
   players: PlayerNetState[];
   projectiles: ProjectileNetState[];
   lootDrops: LootDropState[];
@@ -661,7 +677,15 @@ export interface RoomTickPayload {
   phase: 'lobby' | 'playing' | 'ended';
   summary?: RoomMatchSummary;
   devState?: DevRoomState;
-}
+  /** Tempo decorrido da partida em segundos (apenas relevante em modos com tempo limite). */
+  elapsedSec?: number;
+  /** Duração máxima da partida em segundos (ex.: 300 para Arsenal). */
+  matchDurationSec?: number;
+  /** Número máximo de kills para vitória (ex.: 20 para Arsenal). */
+    maxKills?: number;
+    /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
+    arsenalAutoEvents?: boolean;
+  }
 
 /**
  * Conteúdo estático de armas enviado uma única vez por instância. O cliente
