@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - CORS_ORIGINS=http://localhost:3000
+      - PROMPT_LEDGER_DB_PATH=./data/prompt-ledger.db
+      - SERVE_CLIENT=false
+    volumes:
+      - ./data:/app/data
+      - ./content:/app/content
+      - ./dist:/app/dist
+
+  # Optional: Add a database if you want to switch from SQLite to Postgres in production
+  # db:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: user
+  #     POSTGRES_PASSWORD: password
+  #     POSTGRES_DB: warfare
+  #   ports:
+  #     - "5432:5432"
