@@ -11,7 +11,7 @@ import {
   ArrowRightLeft,
   LogOut,
 } from 'lucide-react';
-import type { LobbyStatePayload, RoomAccessMode } from '../shared/types.ts';
+import type { LobbyStatePayload, RoomAccessMode, TeamId } from '../shared/types.ts';
 
 interface WaitingRoomOverlayProps {
   lobby: LobbyStatePayload;
@@ -28,6 +28,7 @@ interface WaitingRoomOverlayProps {
   onKickPlayer: (targetPlayerId: string) => void;
   onTransferHost: (targetPlayerId: string) => void;
   onLeaveRoom: () => void;
+  onSelectTeam: (team: TeamId) => void;
 }
 
 export const WaitingRoomOverlay: React.FC<WaitingRoomOverlayProps> = ({
@@ -40,6 +41,7 @@ export const WaitingRoomOverlay: React.FC<WaitingRoomOverlayProps> = ({
   onKickPlayer,
   onTransferHost,
   onLeaveRoom,
+  onSelectTeam,
 }) => {
   const [copied, setCopied] = useState(false);
   const [pwdDraft, setPwdDraft] = useState('');
@@ -161,55 +163,101 @@ export const WaitingRoomOverlay: React.FC<WaitingRoomOverlayProps> = ({
           </div>
           <div className="bg-[#141c2e]/80 border border-white/10 rounded-lg divide-y divide-white/5 max-h-44 overflow-y-auto">
             {lobby.members.map((m) => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: m.color }}
-                  />
-                  <span className="text-white font-medium truncate">
-                    {m.name}
-                    {m.id === lobby.playerId ? (
-                      <span className="ml-1.5 text-xs text-slate-400">(Você)</span>
-                    ) : null}
-                  </span>
-                  {m.isHost && (
-                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/35 text-[11px] font-semibold text-amber-300 shrink-0">
-                      <Crown className="w-3 h-3" />
-                      Master
-                    </span>
-                  )}
-                </div>
+                          <div
+                            key={m.id}
+                            className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: m.color }}
+                              />
+                              <span className="text-white font-medium truncate">
+                                {m.name}
+                                {m.id === lobby.playerId ? (
+                                  <span className="ml-1.5 text-xs text-slate-400">(Você)</span>
+                                ) : null}
+                              </span>
+                              {m.isHost && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/35 text-[11px] font-semibold text-amber-300 shrink-0">
+                                  <Crown className="w-3 h-3" />
+                                  Master
+                                </span>
+                              )}
+                              {/* Team badge for Arsenal teams mode */}
+                              {lobby.gameMode === 'arsenal' && lobby.arsenalTeams && m.team && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold shrink-0 ${
+                                    m.team === 'blue'
+                                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                                      : 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                  }`}
+                                >
+                                  {m.team === 'blue' ? '🔵' : '🟠'} {m.team === 'blue' ? 'Azul' : 'Laranja'}
+                                </span>
+                              )}
+                            </div>
 
-                {isHost && !m.isHost && (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => onTransferHost(m.id)}
-                      aria-label={`Passar Master para ${m.name}`}
-                      title="Passar Master"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-amber-500/20 border border-white/10 text-[11px] text-amber-300 cursor-pointer"
-                    >
-                      <ArrowRightLeft className="w-3 h-3" />
-                      <span>Master</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onKickPlayer(m.id)}
-                      aria-label={`Expulsar ${m.name}`}
-                      title="Expulsar jogador"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-rose-500/25 border border-white/10 text-[11px] text-rose-300 cursor-pointer"
-                    >
-                      <UserX className="w-3 h-3" />
-                      <span>Expulsar</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+                            {isHost && !m.isHost && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => onTransferHost(m.id)}
+                                  aria-label={`Passar Master para ${m.name}`}
+                                  title="Passar Master"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-amber-500/20 border border-white/10 text-[11px] text-amber-300 cursor-pointer"
+                                >
+                                  <ArrowRightLeft className="w-3 h-3" />
+                                  <span>Master</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onKickPlayer(m.id)}
+                                  aria-label={`Expulsar ${m.name}`}
+                                  title="Expulsar jogador"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800 hover:bg-rose-500/25 border border-white/10 text-[11px] text-rose-300 cursor-pointer"
+                                >
+                                  <UserX className="w-3 h-3" />
+                                  <span>Expulsar</span>
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Team selection for Arsenal teams mode - only for self, not host actions */}
+                            {m.id === lobby.playerId && lobby.gameMode === 'arsenal' && lobby.arsenalTeams && (
+                              <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                {m.team === null ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectTeam('blue')}
+                                      aria-label="Entrar no Time Azul"
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-sky-500/20 hover:bg-sky-500/35 border border-sky-400 text-sky-300 cursor-pointer text-[11px]"
+                                    >
+                                      🔵 Azul
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onSelectTeam('orange')}
+                                      aria-label="Entrar no Time Laranja"
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400 text-amber-300 cursor-pointer text-[11px]"
+                                    >
+                                      🟠 Laranja
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold ${
+                                    m.team === 'blue'
+                                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                                      : 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                  }`}>
+                                    {m.team === 'blue' ? '🔵 Time Azul' : '🟠 Time Laranja'}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
           </div>
         </div>
 

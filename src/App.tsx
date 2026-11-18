@@ -111,6 +111,7 @@ export default function App() {
   const [gameMode, setGameMode] = useState<GameMode>('warfare');
   const [arsenalMatchDuration, setArsenalMatchDuration] = useState(300);
   const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
+  const [arsenalTeams, setArsenalTeams] = useState(false);
   const [lobbyState, setLobbyState] = useState<LobbyStatePayload | null>(null);
 
   const [rooms, setRooms] = useState<RoomPublicSummary[]>([]);
@@ -573,6 +574,7 @@ export default function App() {
           setGameMode(init.gameMode ?? 'warfare');
           if (init.arsenalMatchDuration) setArsenalMatchDuration(init.arsenalMatchDuration);
           if (init.arsenalMaxKills) setArsenalMaxKills(init.arsenalMaxKills);
+          if (init.arsenalTeams !== undefined) setArsenalTeams(init.arsenalTeams);
           setServerDevMode(Boolean(init.devMode));
           if (init.devState) setDevState(init.devState);
           setLocalPlayerId(init.playerId);
@@ -1208,6 +1210,7 @@ export default function App() {
             sendWs({ type: 'room:transfer_host', payload: { targetPlayerId } })
           }
           onLeaveRoom={handleBackToTitle}
+          onSelectTeam={(team) => sendWs({ type: 'room:select_team', payload: { team } })}
         />
       )}
 
@@ -1249,6 +1252,7 @@ export default function App() {
           gameMode={gameMode}
           arsenalMatchDuration={arsenalMatchDuration}
           arsenalMaxKills={arsenalMaxKills}
+          arsenalTeams={arsenalTeams}
           showScoreboard={showScoreboard}
           onSelectSlot={(slot) => arenaRef.current?.selectSlot(slot)}
           onOpenWeaponPrompt={() => openWeaponPrompt()}

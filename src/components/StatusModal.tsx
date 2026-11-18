@@ -194,78 +194,109 @@ export const StatusModal: React.FC<StatusModalProps> = ({
   }
 
     // Arsenal mode gameover: full scoreboard with restart/lobby buttons (matching TAB scoreboard)
-        if (kind === 'gameover' && gameMode === 'arsenal') {
-          const standings = summary?.standings ?? [];
-          // Sort by kills desc, deaths asc, name asc (matching TAB scoreboard)
-          const sortedStandings = [...standings].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+            if (kind === 'gameover' && gameMode === 'arsenal') {
+              const standings = summary?.standings ?? [];
+              // Sort by kills desc, deaths asc, name asc (matching TAB scoreboard)
+              const sortedStandings = [...standings].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+          
+              // Calculate team scores for Arsenal teams mode
+              const teamScores = summary?.arsenalTeams
+                ? {
+                    blue: sortedStandings.filter(p => p.team === 'blue').reduce((sum, p) => sum + p.kills, 0),
+                    orange: sortedStandings.filter(p => p.team === 'orange').reduce((sum, p) => sum + p.kills, 0),
+                  }
+                : null;
 
-          return (
-            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-4">
-              <div className="w-full max-w-2xl bg-[#0b101b]/95 border border-rose-400/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-                <div className="bg-gradient-to-r from-rose-500/20 to-rose-600/10 border-b border-rose-400/30 px-4 py-3 flex items-center justify-between">
-                  <h2 className="text-xl font-display font-bold text-rose-200">PLACAR - MODO ARSENAL</h2>
-                  {summary && (
-                    <span className="font-mono-tabular text-xs text-rose-300/80">{summary.durationSec}s</span>
-                  )}
-                </div>
-                <div className="overflow-x-auto overflow-y-auto p-4 max-h-[60vh]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-white/10">
-                        <th className="text-left pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px]">Jogador</th>
-                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Kills</th>
-                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Mortes</th>
-                        <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Assist.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedStandings.map((row, index) => (
-                        <tr
-                          key={row.id}
-                          className={`border-b border-white/5 last:border-b-0 transition-colors ${
-                            row.id === localPlayerId ? 'bg-rose-500/10' : ''
-                          }`}
-                        >
-                          <td className="py-2 pr-3 font-medium truncate max-w-[200px]">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono-tabular text-slate-500 text-[11px] w-5 text-right">{index + 1}.</span>
-                              <span className={`font-display ${row.alive ? 'text-white' : 'text-slate-400 line-through'}`}>
-                                {row.name}
-                              </span>
-                              {row.isBot && <span className="text-[9px] bg-slate-700 text-slate-300 px-1 rounded">BOT</span>}
-                            </div>
-                          </td>
-                          <td className="py-2 text-right font-mono-tabular text-rose-200 font-bold w-20">{row.kills}</td>
-                          <td className="py-2 text-right font-mono-tabular text-rose-400 w-20">{row.deaths}</td>
-                          <td className="py-2 text-right font-mono-tabular text-amber-300 w-20">{row.assists}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              return (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-4">
+                  <div className="w-full max-w-2xl bg-[#0b101b]/95 border border-rose-400/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+                    <div className="bg-gradient-to-r from-rose-500/20 to-rose-600/10 border-b border-rose-400/30 px-4 py-3 flex items-center justify-between">
+                      <h2 className="text-xl font-display font-bold text-rose-200">PLACAR - MODO ARSENAL</h2>
+                      {summary && (
+                        <span className="font-mono-tabular text-xs text-rose-300/80">{summary.durationSec}s</span>
+                      )}
+                    </div>
+                    {/* Team scores banner for Arsenal teams mode */}
+                    {teamScores && (
+                      <div className="bg-gradient-to-r from-sky-500/10 to-amber-500/10 border-b border-white/10 px-4 py-2 flex items-center justify-center gap-8">
+                        <div className="flex items-center gap-2 bg-sky-500/20 border border-sky-400 rounded-lg px-3 py-1">
+                          <span className="text-sky-300 font-display font-bold">🔵 Time Azul</span>
+                          <span className="font-mono-tabular text-sky-100 text-lg">{teamScores.blue}</span>
+                        </div>
+                        <div className="flex items-center gap-2 bg-amber-500/20 border border-amber-400 rounded-lg px-3 py-1">
+                          <span className="text-amber-300 font-display font-bold">🟠 Time Laranja</span>
+                          <span className="font-mono-tabular text-amber-100 text-lg">{teamScores.orange}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div className="overflow-x-auto overflow-y-auto p-4 max-h-[60vh]">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            <th className="text-left pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px]">Jogador</th>
+                            <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Kills</th>
+                            <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Mortes</th>
+                            <th className="text-right pb-2 font-mono-tabular text-slate-400 uppercase tracking-wider text-[11px] w-20">Assist.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sortedStandings.map((row, index) => (
+                            <tr
+                              key={row.id}
+                              className={`border-b border-white/5 last:border-b-0 transition-colors ${
+                                row.id === localPlayerId ? 'bg-rose-500/10' : ''
+                              }`}
+                            >
+                              <td className="py-2 pr-3 font-medium truncate max-w-[200px]">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono-tabular text-slate-500 text-[11px] w-5 text-right">{index + 1}.</span>
+                                  <span className={`font-display ${row.alive ? 'text-white' : 'text-slate-400 line-through'}`}>
+                                    {row.name}
+                                  </span>
+                                  {row.isBot && <span className="text-[9px] bg-slate-700 text-slate-300 px-1 rounded">BOT</span>}
+                                  {/* Team badge for Arsenal teams mode */}
+                                  {summary?.arsenalTeams && row.team && (
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                                      row.team === 'blue'
+                                        ? 'bg-sky-500/20 border-sky-400 text-sky-300'
+                                        : 'bg-amber-500/20 border-amber-400 text-amber-300'
+                                    }`}>
+                                      {row.team === 'blue' ? '🔵' : '🟠'}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2 text-right font-mono-tabular text-rose-200 font-bold w-20">{row.kills}</td>
+                              <td className="py-2 text-right font-mono-tabular text-rose-400 w-20">{row.deaths}</td>
+                              <td className="py-2 text-right font-mono-tabular text-amber-300 w-20">{row.assists}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
 
-                <div className="flex gap-2.5 px-4 py-4 bg-[#141c2e]/50 border-t border-white/10">
-                  <button
-                    type="button"
-                    onClick={onRestart}
-                    className="flex-1 h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Reiniciar partida
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onBackToTitle}
-                    className="flex-1 h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-white font-medium text-sm cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    Lobby
-                  </button>
+                    <div className="flex gap-2.5 px-4 py-4 bg-[#141c2e]/50 border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={onRestart}
+                        className="flex-1 h-11 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-bold text-sm cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Reiniciar partida
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onBackToTitle}
+                        className="flex-1 h-11 rounded-lg bg-[#141c2e] hover:bg-slate-800 border border-white/15 text-white font-medium text-sm cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Lobby
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          );
-        }
+              );
+            }
 
     // Default gameover for other modes (warfare, disaster, laboratory)
     const isVictory = summary

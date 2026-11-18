@@ -40,6 +40,7 @@ import {
   type RoomTickWirePayload,
   type RoomMatchSummary,
   type SpawnedEntityNetState,
+  type TeamId,
   type Vec3,
   type VoxelDelta,
   type WeaponBlueprint,
@@ -144,6 +145,7 @@ interface ServerPlayer extends PlayerNetState {
   promptOpenCount: number;
   feedbackWindowStart: number;
   feedbackCount: number;
+  team: TeamId;
 }
 
 interface ServerProjectile extends ProjectileNetState {
@@ -178,6 +180,7 @@ interface GameRoom {
   arsenalMatchDuration: number;
   arsenalMaxKills: number;
   arsenalAutoEvents: boolean;
+  arsenalTeams: boolean;
   grid: VoxelGrid;
   ziplines: IslandZipline[];
   deltas: VoxelDelta[];
@@ -509,34 +512,36 @@ export class RoomManager {
       }
 
       private buildMatchSummary(room: GameRoom): RoomMatchSummary {
-        // Find winner (player with most kills, or alive player if tie)
-        const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
-        const allPlayers = Array.from(room.players.values());
-        const winner = alivePlayers.length === 1
-          ? alivePlayers[0]
-          : allPlayers.reduce((best, p) => (p.kills > best.kills ? p : best), allPlayers[0] ?? { id: '', name: 'Ninguém', kills: 0 });
+              // Find winner (player with most kills, or alive player if tie)
+              const alivePlayers = Array.from(room.players.values()).filter((p) => p.alive);
+              const allPlayers = Array.from(room.players.values());
+              const winner = alivePlayers.length === 1
+                ? alivePlayers[0]
+                : allPlayers.reduce((best, p) => (p.kills > best.kills ? p : best), allPlayers[0] ?? { id: '', name: 'Ninguém', kills: 0 });
 
-        return {
-          winnerId: winner?.id ?? null,
-          winnerName: winner?.name ?? 'Ninguém',
-          durationSec: Math.round(room.elapsedSec),
-          totalKills: room.totalKills,
-          eventsTriggered: room.eventsTriggered,
-          standings: allPlayers
-            .sort((a, b) => Number(b.alive) - Number(a.alive) || b.kills - a.kills)
-            .map((p) => ({
-              id: p.id,
-              name: p.name,
-              isBot: p.isBot,
-              alive: p.alive,
-              kills: p.kills,
-              deaths: p.deaths,
-              assists: p.assists,
-              weaponsCreated: p.weaponsCreated,
-              personalityLabel: p.personalityLabel,
-            })),
-        };
-      }
+              return {
+                winnerId: winner?.id ?? null,
+                winnerName: winner?.name ?? 'Ninguém',
+                durationSec: Math.round(room.elapsedSec),
+                totalKills: room.totalKills,
+                eventsTriggered: room.eventsTriggered,
+                arsenalTeams: room.arsenalTeams,
+                standings: allPlayers
+                  .sort((a, b) => Number(b.alive) - Number(a.alive) || b.kills - a.kills)
+                  .map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    isBot: p.isBot,
+                    alive: p.alive,
+                    kills: p.kills,
+                    deaths: p.deaths,
+                    assists: p.assists,
+                    weaponsCreated: p.weaponsCreated,
+                    personalityLabel: p.personalityLabel,
+                    team: p.team,
+                  })),
+              };
+            }
 
       getRuntimeStats(): {
         rooms: number;
@@ -638,87 +643,89 @@ export class RoomManager {
             arsenalMatchDuration?: number;
             arsenalMaxKills?: number;
             arsenalAutoEvents?: boolean;
+            arsenalTeams?: boolean;
           },
         ): { room: GameRoom; playerId: string } | null {
-    const requestedId = this.sanitizeRoomId(opts.roomId);
-    const roomId = requestedId || this.generateUniqueRoomId();
-    const existing = this.rooms.get(roomId);
-    if (existing && existing.phase !== 'ended') {
-      this.sendRoomError(ws, 'ROOM_EXISTS', `Já existe uma sala ativa com o código ${roomId}.`);
-      return null;
-    }
+      const requestedId = this.sanitizeRoomId(opts.roomId);
+      const roomId = requestedId || this.generateUniqueRoomId();
+      const existing = this.rooms.get(roomId);
+      if (existing && existing.phase !== 'ended') {
+        this.sendRoomError(ws, 'ROOM_EXISTS', `Já existe uma sala ativa com o código ${roomId}.`);
+        return null;
+      }
 
-    const accessMode: RoomAccessMode =
-          opts.accessMode === 'password' || opts.accessMode === 'closed' ? opts.accessMode : 'open';
-        const gameMode: GameMode = opts.gameMode === 'arsenal' || opts.gameMode === 'disaster' || opts.gameMode === 'laboratory' ? opts.gameMode : 'warfare';
-        const password = String(opts.password ?? '').trim().slice(0, 24);
-    if (accessMode === 'password' && !password) {
-      this.sendRoomError(
-        ws,
-        'PASSWORD_REQUIRED_ON_CREATE',
-        'Defina uma senha para criar uma sala protegida.',
-      );
-      return null;
-    }
+      const accessMode: RoomAccessMode =
+            opts.accessMode === 'password' || opts.accessMode === 'closed' ? opts.accessMode : 'open';
+          const gameMode: GameMode = opts.gameMode === 'arsenal' || opts.gameMode === 'disaster' || opts.gameMode === 'laboratory' ? opts.gameMode : 'warfare';
+          const password = String(opts.password ?? '').trim().slice(0, 24);
+      if (accessMode === 'password' && !password) {
+        this.sendRoomError(
+          ws,
+          'PASSWORD_REQUIRED_ON_CREATE',
+          'Defina uma senha para criar uma sala protegida.',
+        );
+        return null;
+      }
 
-    const cleanPlayerName = (opts.playerName || 'Viajante').trim().slice(0, 18) || 'Viajante';
-    const cleanRoomName =
-      (opts.roomName || '').trim().slice(0, 28) || `Arena de ${cleanPlayerName}`;
-    const targetPlayers = Math.max(4, Math.min(14, Math.round(opts.targetPlayers ?? 6)));
-    const fillWithBots = opts.fillWithBots ?? true;
+      const cleanPlayerName = (opts.playerName || 'Viajante').trim().slice(0, 18) || 'Viajante';
+      const cleanRoomName =
+        (opts.roomName || '').trim().slice(0, 28) || `Arena de ${cleanPlayerName}`;
+      const targetPlayers = Math.max(4, Math.min(14, Math.round(opts.targetPlayers ?? 6)));
+      const fillWithBots = opts.fillWithBots ?? true;
 
-    const playerId = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-    const { dimX, dimY, dimZ } = computeIslandDimensions(targetPlayers);
-    const seed = Math.floor(Math.random() * 100000) + 1;
+      const playerId = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const { dimX, dimY, dimZ } = computeIslandDimensions(targetPlayers);
+      const seed = Math.floor(Math.random() * 100000) + 1;
 
-    const room: GameRoom = {
-                  id: roomId,
-                  name: cleanRoomName,
-                  hostId: playerId,
-                  matchId: '',
-                  accessMode,
-                  gameMode,
-                  password: accessMode === 'password' ? password : '',
-              createdAt: Date.now(),
-              seed,
-              contentPool: null,
-              dimX,
-              dimY,
-              dimZ,
-              targetPlayers,
-              fillWithBots,
-              arsenalMatchDuration: Math.max(60, Math.min(1800, Math.round(opts.arsenalMatchDuration ?? 300))),
-              arsenalMaxKills: Math.max(5, Math.min(100, Math.round(opts.arsenalMaxKills ?? 20))),
-              arsenalAutoEvents: opts.arsenalAutoEvents ?? true,
-              grid: new VoxelGrid(1, 1, 1),
-            ziplines: [],
-          deltas: [],
-          pendingTickDeltas: [],
-          players: new Map(),
-          projectiles: [],
-          lootDrops: [],
-          entities: [],
-          activeEvents: [],
-          sceneryPlans: new Map(),
-      eventPhase: 'cooldown',
-      eventEndsAt: Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000,
-      eventCooldownSec: EVENT_CYCLE_COOLDOWN_SEC,
-      rafflePlayerId: null,
-      rafflePlayerName: null,
-      rafflePendingIsBot: false,
-      raffleRemainingSec: 0,
-      phase: 'lobby',
-      elapsedSec: 0,
-      lastKillElapsedSec: 0,
-      stagnationLevel: 0,
-      eventsTriggered: 0,
-      totalKills: 0,
-      tickTimer: null,
-      weatherTickAccum: 0,
-      devGodMode: false,
-      devInfiniteSandbox: false,
-      devBotsFrozen: false,
-      devAutoEventsPaused: false,
+      const room: GameRoom = {
+                    id: roomId,
+                    name: cleanRoomName,
+                    hostId: playerId,
+                    matchId: '',
+                    accessMode,
+                    gameMode,
+                    password: accessMode === 'password' ? password : '',
+                createdAt: Date.now(),
+                seed,
+                contentPool: null,
+                dimX,
+                dimY,
+                dimZ,
+                targetPlayers,
+                fillWithBots,
+                arsenalMatchDuration: Math.max(60, Math.min(1800, Math.round(opts.arsenalMatchDuration ?? 300))),
+                arsenalMaxKills: Math.max(5, Math.min(100, Math.round(opts.arsenalMaxKills ?? 20))),
+                arsenalAutoEvents: opts.arsenalAutoEvents ?? true,
+                arsenalTeams: opts.arsenalTeams ?? false,
+                grid: new VoxelGrid(1, 1, 1),
+              ziplines: [],
+            deltas: [],
+            pendingTickDeltas: [],
+            players: new Map(),
+            projectiles: [],
+            lootDrops: [],
+            entities: [],
+            activeEvents: [],
+            sceneryPlans: new Map(),
+        eventPhase: 'cooldown',
+        eventEndsAt: Date.now() + EVENT_CYCLE_COOLDOWN_SEC * 1000,
+        eventCooldownSec: EVENT_CYCLE_COOLDOWN_SEC,
+        rafflePlayerId: null,
+        rafflePlayerName: null,
+        rafflePendingIsBot: false,
+        raffleRemainingSec: 0,
+        phase: 'lobby',
+        elapsedSec: 0,
+        lastKillElapsedSec: 0,
+        stagnationLevel: 0,
+        eventsTriggered: 0,
+        totalKills: 0,
+        tickTimer: null,
+        weatherTickAccum: 0,
+        devGodMode: false,
+        devInfiniteSandbox: false,
+        devBotsFrozen: false,
+        devAutoEventsPaused: false,
     };
 
     const hostPlayer = this.createHumanPlayer(
@@ -885,84 +892,85 @@ export class RoomManager {
   }
 
   private createHumanPlayer(
-      playerId: string,
-      name: string,
-      colorIdx: number,
-      ws: SocketLike,
-      spawn: Vec3,
-      yaw: number,
-      gameMode?: GameMode,
-    ): ServerPlayer {
-      const slots = createStarterSlots(gameMode);
-      return {
-        id: playerId,
-      name,
-      isBot: false,
-      color: PLAYER_COLORS[colorIdx % PLAYER_COLORS.length],
-      alive: true,
-      hp: 100,
-      oxygen: 100,
-      massKg: computePlayerMassKg(slots),
-      position: { ...spawn },
-      velocity: { x: 0, y: 0, z: 0 },
-      yaw,
-      pitch: 0.16,
-      slots,
-      activeSlot: 0,
-      heat: 0,
-      overheatedUntil: 0,
-      stamina: 100,
-      sprinting: false,
-      crouching: false,
-      sliding: false,
-      slideCooldownSec: 0,
-      climbing: false,
-      ziplineRouteId: null,
-      isTypingPrompt: false,
-      canForgeWeapon: false,
-            weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
-            prompt: null,
-            forge: { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 },
-            kills: 0,
-            weaponsCreated: 0,
-            deaths: 0,
-                  assists: 0,
-                  recentDamageSources: [],
-                  grappleTarget: null,
-                  burnUntil: 0,
-                  freezeUntil: 0,
-      relicBuff: null,
-      shieldHp: 0,
-      ws,
-      joinedAt: Date.now(),
-      lastFireMs: 0,
-      moveX: 0,
-      moveZ: 0,
-      jumpQueued: false,
-      botTargetId: null,
-      botThinkTimer: 0,
-      botForgePrompted: false,
-      botBrain: null,
-      devDummy: false,
-      grappleTimerSec: 0,
-      grappleMode: null,
-      grappleTargetId: null,
-      promptSessionId: null,
-      promptOpenedAt: null,
-      promptOpenWindowStart: 0,
-      promptOpenCount: 0,
-      feedbackWindowStart: 0,
-      feedbackCount: 0,
-      sprint: false,
-      jumpHeld: false,
-      crouchHeld: false,
-      slideTimerSec: 0,
-      slideDirX: 0,
-      slideDirZ: 0,
-      mantleCooldownSec: 0,
-      ziplineT: 0,
-    };
-  }
+        playerId: string,
+        name: string,
+        colorIdx: number,
+        ws: SocketLike,
+        spawn: Vec3,
+        yaw: number,
+        gameMode?: GameMode,
+      ): ServerPlayer {
+        const slots = createStarterSlots(gameMode);
+        return {
+          id: playerId,
+          name,
+          isBot: false,
+          color: PLAYER_COLORS[colorIdx % PLAYER_COLORS.length],
+          alive: true,
+          hp: 100,
+          oxygen: 100,
+          massKg: computePlayerMassKg(slots),
+          position: { ...spawn },
+          velocity: { x: 0, y: 0, z: 0 },
+          yaw,
+          pitch: 0.16,
+          slots,
+          activeSlot: 0,
+          heat: 0,
+          overheatedUntil: 0,
+          stamina: 100,
+          sprinting: false,
+          crouching: false,
+          sliding: false,
+          slideCooldownSec: 0,
+          climbing: false,
+          ziplineRouteId: null,
+          isTypingPrompt: false,
+          canForgeWeapon: false,
+          weaponCooldownSec: WEAPON_INITIAL_COOLDOWN_SEC,
+          prompt: null,
+          forge: { phase: 'cooling', endsAt: Date.now() + WEAPON_INITIAL_COOLDOWN_SEC * 1000 },
+          kills: 0,
+          weaponsCreated: 0,
+          deaths: 0,
+          assists: 0,
+          recentDamageSources: [],
+          grappleTarget: null,
+          burnUntil: 0,
+          freezeUntil: 0,
+          relicBuff: null,
+          shieldHp: 0,
+          team: null,
+          ws,
+          joinedAt: Date.now(),
+          lastFireMs: 0,
+          moveX: 0,
+          moveZ: 0,
+          jumpQueued: false,
+          botTargetId: null,
+          botThinkTimer: 0,
+          botForgePrompted: false,
+          botBrain: null,
+          devDummy: false,
+          grappleTimerSec: 0,
+          grappleMode: null,
+          grappleTargetId: null,
+          promptSessionId: null,
+          promptOpenedAt: null,
+          promptOpenWindowStart: 0,
+          promptOpenCount: 0,
+          feedbackWindowStart: 0,
+          feedbackCount: 0,
+          sprint: false,
+          jumpHeld: false,
+          crouchHeld: false,
+          slideTimerSec: 0,
+          slideDirX: 0,
+          slideDirZ: 0,
+          mantleCooldownSec: 0,
+          ziplineT: 0,
+        };
+    }
 
   private startRoomMatch(room: GameRoom): void {
     const { dimX, dimY, dimZ } = computeIslandDimensions(room.targetPlayers);
@@ -1071,10 +1079,15 @@ export class RoomManager {
           }
 
           if (room.fillWithBots) {
-            this.ensureBotsForRoom(room);
-          }
+                      this.ensureBotsForRoom(room);
+                    }
 
-    if (room.tickTimer) {
+                    // Arsenal teams mode: assign teams to players and bots
+                    if (room.gameMode === 'arsenal' && room.arsenalTeams) {
+                      this.assignArsenalTeams(room);
+                    }
+
+              if (room.tickTimer) {
       clearInterval(room.tickTimer);
     }
     room.tickTimer = setInterval(() => this.tickRoom(room, 0.05), 50);
@@ -1091,105 +1104,134 @@ export class RoomManager {
   }
 
   private spawnSingleBot(room: GameRoom, spawnPos?: Vec3): ServerPlayer {
-      const spawns = findSafeSpawnPositions(room.grid, Math.max(room.targetPlayers, room.players.size + 1), room.seed);
-      const usedNames = new Set(Array.from(room.players.values()).map((p) => p.name));
-      const idx = room.players.size;
-      const botId = `bot_${idx}_${Math.random().toString(36).slice(2, 6)}`;
-      const slots = createStarterSlots(room.gameMode);
-      const spawn = spawnPos ?? spawns[idx % spawns.length];
+        const spawns = findSafeSpawnPositions(room.grid, Math.max(room.targetPlayers, room.players.size + 1), room.seed);
+        const usedNames = new Set(Array.from(room.players.values()).map((p) => p.name));
+        const idx = room.players.size;
+        const botId = `bot_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+        const slots = createStarterSlots(room.gameMode);
+        const spawn = spawnPos ?? spawns[idx % spawns.length];
 
-      // Arsenal mode: give random weapon to bot
-      if (room.gameMode === 'arsenal') {
-        const weapon = getRandomArsenalWeapon();
-        if (weapon) {
-          slots[0] = createArsenalWeaponSlot(weapon);
+        // Arsenal mode: give random weapon to bot
+        if (room.gameMode === 'arsenal') {
+          const weapon = getRandomArsenalWeapon();
+          if (weapon) {
+            slots[0] = createArsenalWeaponSlot(weapon);
+          }
         }
-      }
-    const personality = createBotPersonality(
-      room.seed * 7919 + idx * 104729 + Math.floor(Math.random() * 99991),
-      usedNames,
-    );
-    const bot: ServerPlayer = {
-      id: botId,
-      name: personality.handle,
-      isBot: true,
-      color: PLAYER_COLORS[idx % PLAYER_COLORS.length],
-      alive: true,
-      hp: 100,
-      oxygen: 100,
-      massKg: computePlayerMassKg(slots),
-      position: { ...spawn },
-      velocity: { x: 0, y: 0, z: 0 },
-      yaw: Math.random() * Math.PI * 2,
-      pitch: 0,
-      slots,
-      activeSlot: 0,
-      heat: 0,
-      overheatedUntil: 0,
-      stamina: 100,
-      sprinting: false,
-      crouching: false,
-      sliding: false,
-      slideCooldownSec: 0,
-      climbing: false,
-      ziplineRouteId: null,
-      isTypingPrompt: false,
-      canForgeWeapon: false,
-      weaponCooldownSec: 6 + Math.random() * 5,
-      prompt: null,
-      forge: { phase: 'cooling', endsAt: Date.now() + (6 + Math.random() * 5) * 1000 },
-      kills: 0,
-            weaponsCreated: 0,
-            deaths: 0,
-                  assists: 0,
-                  recentDamageSources: [],
-                  grappleTarget: null,
-                  burnUntil: 0,
-                  freezeUntil: 0,
-      relicBuff: null,
-      shieldHp: 0,
-      personalityLabel: personality.label,
-      ws: null,
-      joinedAt: Date.now(),
-      lastFireMs: 0,
-      moveX: 0,
-      moveZ: 0,
-      jumpQueued: false,
-      botTargetId: null,
-      botThinkTimer: 0.4 + Math.random() * 0.8,
-      botForgePrompted: false,
-      botBrain: createBotBrainState(personality, spawn),
-      devDummy: false,
-      grappleTimerSec: 0,
-      grappleMode: null,
-      grappleTargetId: null,
-      promptSessionId: null,
-      promptOpenedAt: null,
-      promptOpenWindowStart: 0,
-      promptOpenCount: 0,
-      feedbackWindowStart: 0,
-      feedbackCount: 0,
-      sprint: false,
-      jumpHeld: false,
-      crouchHeld: false,
-      slideTimerSec: 0,
-      slideDirX: 0,
-      slideDirZ: 0,
-      mantleCooldownSec: 0,
-      ziplineT: 0,
-    };
-    room.players.set(botId, bot);
-    return bot;
-  }
+      const personality = createBotPersonality(
+        room.seed * 7919 + idx * 104729 + Math.floor(Math.random() * 99991),
+        usedNames,
+      );
+      const bot: ServerPlayer = {
+        id: botId,
+        name: personality.handle,
+        isBot: true,
+        color: PLAYER_COLORS[idx % PLAYER_COLORS.length],
+        alive: true,
+        hp: 100,
+        oxygen: 100,
+        massKg: computePlayerMassKg(slots),
+        position: { ...spawn },
+        velocity: { x: 0, y: 0, z: 0 },
+        yaw: Math.random() * Math.PI * 2,
+        pitch: 0,
+        slots,
+        activeSlot: 0,
+        heat: 0,
+        overheatedUntil: 0,
+        stamina: 100,
+        sprinting: false,
+        crouching: false,
+        sliding: false,
+        slideCooldownSec: 0,
+        climbing: false,
+        ziplineRouteId: null,
+        isTypingPrompt: false,
+        canForgeWeapon: false,
+        weaponCooldownSec: 6 + Math.random() * 5,
+        prompt: null,
+        forge: { phase: 'cooling', endsAt: Date.now() + (6 + Math.random() * 5) * 1000 },
+        kills: 0,
+        weaponsCreated: 0,
+        deaths: 0,
+        assists: 0,
+        recentDamageSources: [],
+        grappleTarget: null,
+        burnUntil: 0,
+        freezeUntil: 0,
+        relicBuff: null,
+        shieldHp: 0,
+        team: null,
+        personalityLabel: personality.label,
+        ws: null,
+        joinedAt: Date.now(),
+        lastFireMs: 0,
+        moveX: 0,
+        moveZ: 0,
+        jumpQueued: false,
+        botTargetId: null,
+        botThinkTimer: 0.4 + Math.random() * 0.8,
+        botForgePrompted: false,
+        botBrain: createBotBrainState(personality, spawn),
+        devDummy: false,
+        grappleTimerSec: 0,
+        grappleMode: null,
+        grappleTargetId: null,
+        promptSessionId: null,
+        promptOpenedAt: null,
+        promptOpenWindowStart: 0,
+        promptOpenCount: 0,
+        feedbackWindowStart: 0,
+        feedbackCount: 0,
+        sprint: false,
+        jumpHeld: false,
+        crouchHeld: false,
+        slideTimerSec: 0,
+        slideDirX: 0,
+        slideDirZ: 0,
+        mantleCooldownSec: 0,
+        ziplineT: 0,
+      };
+      room.players.set(botId, bot);
+      return bot;
+    }
 
   private ensureBotsForRoom(room: GameRoom): void {
-    const spawns = findSafeSpawnPositions(room.grid, room.targetPlayers, room.seed);
-    while (room.players.size < room.targetPlayers) {
-      this.spawnSingleBot(room, spawns[room.players.size % spawns.length]);
+      const spawns = findSafeSpawnPositions(room.grid, room.targetPlayers, room.seed);
+      while (room.players.size < room.targetPlayers) {
+        this.spawnSingleBot(room, spawns[room.players.size % spawns.length]);
+      }
     }
-  }
 
-  private promoteNextHostIfNeeded(room: GameRoom, departedId: string): boolean {
+    /** Atribui times (Azul/Laranja) aos jogadores no modo Arsenal com times.
+     * Jogadores humanos mantêm sua escolha feita no lobby (se já tiverem team definida).
+     * Bots são distribuídos alternadamente para balancear os times. */
+    private assignArsenalTeams(room: GameRoom): void {
+      const players = Array.from(room.players.values());
+      const humans = players.filter((p) => !p.isBot);
+      const bots = players.filter((p) => p.isBot);
+
+      // Jogadores humanos já escolheram seu time no lobby (ou ficaram null se não escolheram)
+      // Para jogadores sem time definido, atribuir balanceando
+      for (const p of humans) {
+        if (p.team === null) {
+          // Contar quantos humanos em cada time
+          const blueCount = humans.filter((h) => h.team === 'blue').length;
+          const orangeCount = humans.filter((h) => h.team === 'orange').length;
+          p.team = blueCount <= orangeCount ? 'blue' : 'orange';
+        }
+      }
+
+      // Bots: embaralhar e distribuir alternadamente para balancear
+      const shuffledBots = [...bots].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < shuffledBots.length; i++) {
+        const blueTotal = players.filter((p) => p.team === 'blue').length;
+        const orangeTotal = players.filter((p) => p.team === 'orange').length;
+        shuffledBots[i].team = blueTotal <= orangeTotal ? 'blue' : 'orange';
+      }
+    }
+
+    private promoteNextHostIfNeeded(room: GameRoom, departedId: string): boolean {
     if (room.hostId !== departedId) return false;
     const candidates = Array.from(room.players.values())
       .filter((p) => !p.isBot && p.ws !== null && p.id !== departedId)
@@ -1615,21 +1657,32 @@ export class RoomManager {
       }
 
       case 'room:restart': {
-        if (playerId !== room.hostId) {
-          this.sendRoomError(
-            player.ws,
-            'NOT_HOST',
-            'Apenas o Master da partida pode reiniciar a ilha.',
-          );
-          return;
+              if (playerId !== room.hostId) {
+                this.sendRoomError(
+                  player.ws,
+                  'NOT_HOST',
+                  'Apenas o Master da partida pode reiniciar a ilha.',
+                );
+                return;
+              }
+              if (room.phase === 'ended' || room.phase === 'playing') {
+                this.restartRoom(room);
+              }
+              break;
+            }
+
+            case 'room:select_team': {
+              if (room.phase !== 'lobby') return;
+              if (!room.arsenalTeams) return;
+              const team = msg.payload?.team as TeamId | undefined;
+              if (team !== 'blue' && team !== 'orange') return;
+              if (player.isBot) return;
+              player.team = team;
+              this.broadcastLobbyState(room);
+              break;
+            }
+          }
         }
-        if (room.phase === 'ended' || room.phase === 'playing') {
-          this.restartRoom(room);
-        }
-        break;
-      }
-    }
-  }
 
   private restartRoom(room: GameRoom): void {
       room.seed = Math.floor(Math.random() * 100000) + 1;
@@ -3170,15 +3223,16 @@ export class RoomManager {
           stagnationLevel: room.stagnationLevel,
           waterLevelWorld: effectiveWaterLevel,
           phase: room.phase,
-          summary: room.summary,
-          ...(room.gameMode === 'arsenal' ? {
-                                elapsedSec: room.elapsedSec,
-                                matchDurationSec: room.arsenalMatchDuration,
-                                maxKills: room.arsenalMaxKills,
-                                arsenalAutoEvents: room.arsenalAutoEvents,
-                              } : {}),
-          ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
-        };
+                    summary: room.summary,
+                    ...(room.gameMode === 'arsenal' ? {
+                                          elapsedSec: room.elapsedSec,
+                                          matchDurationSec: room.arsenalMatchDuration,
+                                          maxKills: room.arsenalMaxKills,
+                                          arsenalAutoEvents: room.arsenalAutoEvents,
+                                          arsenalTeams: room.arsenalTeams,
+                                        } : {}),
+                    ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
+                  };
 
     this.broadcastToRoom(room, { type: 'room:tick', payload: tickPayload });
   }
@@ -4737,37 +4791,39 @@ export class RoomManager {
       relicBuff: p.relicBuff ? { ...p.relicBuff } : null,
       shieldHp: p.shieldHp,
       personalityLabel: p.personalityLabel,
-            respawnAt: p.respawnAt,
-          };
+                  respawnAt: p.respawnAt,
+                  team: p.team,
+                };
   }
 
   private buildLobbyStatePayload(room: GameRoom, playerId: string): LobbyStatePayload {
-    const members = Array.from(room.players.values())
-      .filter((p) => !p.isBot && p.ws !== null)
-      .sort((a, b) => a.joinedAt - b.joinedAt)
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        color: p.color,
-        isHost: p.id === room.hostId,
-        joinedAt: p.joinedAt,
-      }));
-    const hostName = room.players.get(room.hostId)?.name ?? members[0]?.name ?? 'Master';
-    return {
-      roomId: room.id,
-      roomName: room.name,
-      playerId,
-      hostId: room.hostId,
-      hostName,
-      accessMode: room.accessMode,
-      hasPassword: room.accessMode === 'password',
-      targetPlayers: room.targetPlayers,
-      fillWithBots: room.fillWithBots,
-      phase: room.phase,
-      members,
-      devMode: this.devEnabled,
-    };
-  }
+      const members = Array.from(room.players.values())
+        .filter((p) => !p.isBot && p.ws !== null)
+        .sort((a, b) => a.joinedAt - b.joinedAt)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          color: p.color,
+          isHost: p.id === room.hostId,
+          joinedAt: p.joinedAt,
+          team: p.team,
+        }));
+      const hostName = room.players.get(room.hostId)?.name ?? members[0]?.name ?? 'Master';
+      return {
+        roomId: room.id,
+        roomName: room.name,
+        playerId,
+        hostId: room.hostId,
+        hostName,
+        accessMode: room.accessMode,
+        hasPassword: room.accessMode === 'password',
+        targetPlayers: room.targetPlayers,
+        fillWithBots: room.fillWithBots,
+        phase: room.phase,
+        members,
+        devMode: this.devEnabled,
+      };
+    }
 
   private broadcastLobbyState(room: GameRoom): void {
     for (const p of room.players.values()) {
@@ -4818,47 +4874,48 @@ export class RoomManager {
   }
 
   private buildInitPayload(room: GameRoom, playerId: string): RoomInitWirePayload {
-        const hostName = room.players.get(room.hostId)?.name ?? 'Master';
-        const lootDrops = room.lootDrops
-          .map(stripLootDrop)
-          .filter((drop): drop is LootDropWireState => drop !== null);
-        return {
-          roomId: room.id,
-          roomName: room.name,
-          playerId,
-          hostId: room.hostId,
-          hostName,
-          accessMode: room.accessMode,
-          gameMode: room.gameMode,
-          seed: room.seed,
-        dimX: room.dimX,
-        dimY: room.dimY,
-        dimZ: room.dimZ,
-        deltas: room.deltas,
-        players: Array.from(room.players.values()).map((p) => this.stripPlayer(p, room)),
-        activeEvents: room.activeEvents.map(stripMapEvent),
-        lootDrops,
-        entities: room.entities,
-        contentItems: this.collectWeaponContent(room),
-        serverNow: Date.now(),
-        event: this.buildEventCycleState(room),
-        catalogVersion: getCatalogVersion(),
-        assetVersion: getAssetVersion(),
-        contentPool: summarizeContentPool(room.contentPool, true),
-        eventCooldownSec: Math.round(room.eventCooldownSec),
-        rafflePlayerId: room.rafflePlayerId,
-        rafflePlayerName: room.rafflePlayerName,
-        raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
-        phase: room.phase,
-        devMode: this.devEnabled,
-        ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
-        ...(room.gameMode === 'arsenal' ? {
-                  arsenalMatchDuration: room.arsenalMatchDuration,
-                  arsenalMaxKills: room.arsenalMaxKills,
-                  arsenalAutoEvents: room.arsenalAutoEvents,
-                } : {}),
-      };
-    }
+          const hostName = room.players.get(room.hostId)?.name ?? 'Master';
+          const lootDrops = room.lootDrops
+            .map(stripLootDrop)
+            .filter((drop): drop is LootDropWireState => drop !== null);
+          return {
+            roomId: room.id,
+            roomName: room.name,
+            playerId,
+            hostId: room.hostId,
+            hostName,
+            accessMode: room.accessMode,
+            gameMode: room.gameMode,
+            seed: room.seed,
+          dimX: room.dimX,
+          dimY: room.dimY,
+          dimZ: room.dimZ,
+          deltas: room.deltas,
+          players: Array.from(room.players.values()).map((p) => this.stripPlayer(p, room)),
+          activeEvents: room.activeEvents.map(stripMapEvent),
+          lootDrops,
+          entities: room.entities,
+          contentItems: this.collectWeaponContent(room),
+          serverNow: Date.now(),
+          event: this.buildEventCycleState(room),
+          catalogVersion: getCatalogVersion(),
+          assetVersion: getAssetVersion(),
+          contentPool: summarizeContentPool(room.contentPool, true),
+          eventCooldownSec: Math.round(room.eventCooldownSec),
+          rafflePlayerId: room.rafflePlayerId,
+          rafflePlayerName: room.rafflePlayerName,
+          raffleRemainingSec: Math.ceil(room.raffleRemainingSec),
+          phase: room.phase,
+          devMode: this.devEnabled,
+          ...(this.devEnabled ? { devState: this.buildDevState(room) } : {}),
+          ...(room.gameMode === 'arsenal' ? {
+                    arsenalMatchDuration: room.arsenalMatchDuration,
+                    arsenalMaxKills: room.arsenalMaxKills,
+                    arsenalAutoEvents: room.arsenalAutoEvents,
+                    arsenalTeams: room.arsenalTeams,
+                  } : {}),
+        };
+      }
 
   private sendToPlayer(player: ServerPlayer, msg: unknown): void {
     this.sendSocketMsg(player.ws, msg);

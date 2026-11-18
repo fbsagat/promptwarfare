@@ -24,17 +24,18 @@ interface LobbyOverlayProps {
   loadingRooms: boolean;
   onRefreshRooms: () => void;
   onCreateRoom: (opts: {
-        roomName: string;
-        roomId: string;
-        accessMode: RoomAccessMode;
-        gameMode: GameMode;
-        password: string;
-        targetPlayers: number;
-        fillWithBots: boolean;
-        arsenalMatchDuration: number;
-        arsenalMaxKills: number;
-        arsenalAutoEvents: boolean;
-      }) => void;
+          roomName: string;
+          roomId: string;
+          accessMode: RoomAccessMode;
+          gameMode: GameMode;
+          password: string;
+          targetPlayers: number;
+          fillWithBots: boolean;
+          arsenalMatchDuration: number;
+          arsenalMaxKills: number;
+          arsenalAutoEvents: boolean;
+          arsenalTeams: boolean;
+        }) => void;
   onJoinRoom: (opts: { roomId: string; password?: string }) => void;
   onQuickPlay: () => void;
   connecting: boolean;
@@ -92,9 +93,10 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
     const [accessMode, setAccessMode] = useState<RoomAccessMode>('open');
       const [gameMode, setGameMode] = useState<GameMode>('warfare');
         const [arsenalMatchDuration, setArsenalMatchDuration] = useState(300);
-        const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
-        const [arsenalAutoEvents, setArsenalAutoEvents] = useState(true);
-        const [createPassword, setCreatePassword] = useState('');
+                const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
+                const [arsenalAutoEvents, setArsenalAutoEvents] = useState(true);
+                const [arsenalTeams, setArsenalTeams] = useState(false);
+                const [createPassword, setCreatePassword] = useState('');
   const [targetPlayers, setTargetPlayers] = useState(6);
   const [fillWithBots, setFillWithBots] = useState(true);
   const [localValidationError, setLocalValidationError] = useState<string | null>(null);
@@ -130,17 +132,18 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
       return;
     }
     onCreateRoom({
-                  roomName: roomName.trim(),
-                  roomId: roomId.trim().toUpperCase(),
-                  accessMode,
-                  gameMode,
-                  password: createPassword.trim(),
-                  targetPlayers,
-                  fillWithBots,
-                  arsenalMatchDuration: gameMode === 'arsenal' ? arsenalMatchDuration : 300,
-                  arsenalMaxKills: gameMode === 'arsenal' ? arsenalMaxKills : 20,
-                  arsenalAutoEvents: gameMode === 'arsenal' ? arsenalAutoEvents : true,
-                });
+                      roomName: roomName.trim(),
+                      roomId: roomId.trim().toUpperCase(),
+                      accessMode,
+                      gameMode,
+                      password: createPassword.trim(),
+                      targetPlayers,
+                      fillWithBots,
+                      arsenalMatchDuration: gameMode === 'arsenal' ? arsenalMatchDuration : 300,
+                      arsenalMaxKills: gameMode === 'arsenal' ? arsenalMaxKills : 20,
+                      arsenalAutoEvents: gameMode === 'arsenal' ? arsenalAutoEvents : true,
+                      arsenalTeams: gameMode === 'arsenal' ? arsenalTeams : false,
+                    });
   };
 
   const handleDirectJoinSubmit = (e: React.FormEvent) => {
@@ -699,58 +702,71 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                                                       {/* Arsenal Configuration - only show when Arsenal mode is selected */}
                                                                                                             {gameMode === 'arsenal' && (
                                                                                                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-white/10 mt-1">
-                                                                                                                <div>
-                                                                                                                  <label
-                                                                                                                    htmlFor="vf-arsenal-duration"
-                                                                                                                    className="block text-xs font-semibold text-slate-300 mb-1"
-                                                                                                                  >
-                                                                                                                    Tempo da Partida (segundos)
-                                                                                                                  </label>
-                                                                                                                  <input
-                                                                                                                    id="vf-arsenal-duration"
-                                                                                                                    type="number"
-                                                                                                                    min={60}
-                                                                                                                    max={1800}
-                                                                                                                    step={30}
-                                                                                                                    value={arsenalMatchDuration}
-                                                                                                                    onChange={(e) => setArsenalMatchDuration(Math.max(60, Math.min(1800, Number(e.target.value) || 300)))}
-                                                                                                                    className="w-full h-10 px-3 rounded-lg bg-[#141c2e] border border-white/15 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
-                                                                                                                  />
-                                                                                                                  <div className="text-[10px] text-slate-400 mt-0.5">60 a 1800 segundos (padrão: 300s = 5min)</div>
-                                                                                                                </div>
-                                                                                                                <div>
-                                                                                                                  <label
-                                                                                                                    htmlFor="vf-arsenal-maxkills"
-                                                                                                                    className="block text-xs font-semibold text-slate-300 mb-1"
-                                                                                                                  >
-                                                                                                                    Limite de Kills para Vitória
-                                                                                                                  </label>
-                                                                                                                  <input
-                                                                                                                    id="vf-arsenal-maxkills"
-                                                                                                                    type="number"
-                                                                                                                    min={5}
-                                                                                                                    max={100}
-                                                                                                                    step={1}
-                                                                                                                    value={arsenalMaxKills}
-                                                                                                                    onChange={(e) => setArsenalMaxKills(Math.max(5, Math.min(100, Number(e.target.value) || 20)))}
-                                                                                                                    className="w-full h-10 px-3 rounded-lg bg-[#141c2e] border border-white/15 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
-                                                                                                                  />
-                                                                                                                  <div className="text-[10px] text-slate-400 mt-0.5">5 a 100 kills (padrão: 20)</div>
-                                                                                                                </div>
-                                                                                                                <div className="sm:col-span-2">
-                                                                                                                  <label className="flex items-center gap-3 cursor-pointer">
-                                                                                                                    <input
-                                                                                                                      id="vf-arsenal-autoevents"
-                                                                                                                      type="checkbox"
-                                                                                                                      checked={arsenalAutoEvents}
-                                                                                                                      onChange={(e) => setArsenalAutoEvents(e.target.checked)}
-                                                                                                                      className="w-4 h-4 accent-amber-400 rounded border-white/20 bg-[#141c2e] border-white/15 cursor-pointer focus:ring-amber-400"
-                                                                                                                    />
-                                                                                                                    <span className="text-xs font-semibold text-slate-200">Eventos globais automáticos</span>
-                                                                                                                  </label>
-                                                                                                                  <div className="text-[10px] text-slate-400 mt-0.5 ml-7">Ativa eventos catastróficos automáticos durante a partida (padrão: ligado)</div>
-                                                                                                                </div>
-                                                                                                              </div>
+                                                                                                                                                                                                                              <div>
+                                                                                                                                                                                                                                <label
+                                                                                                                                                                                                                                  htmlFor="vf-arsenal-duration"
+                                                                                                                                                                                                                                  className="block text-xs font-semibold text-slate-300 mb-1"
+                                                                                                                                                                                                                                >
+                                                                                                                                                                                                                                  Tempo da Partida (segundos)
+                                                                                                                                                                                                                                </label>
+                                                                                                                                                                                                                                <input
+                                                                                                                                                                                                                                  id="vf-arsenal-duration"
+                                                                                                                                                                                                                                  type="number"
+                                                                                                                                                                                                                                  min={60}
+                                                                                                                                                                                                                                  max={1800}
+                                                                                                                                                                                                                                  step={30}
+                                                                                                                                                                                                                                  value={arsenalMatchDuration}
+                                                                                                                                                                                                                                  onChange={(e) => setArsenalMatchDuration(Math.max(60, Math.min(1800, Number(e.target.value) || 300)))}
+                                                                                                                                                                                                                                  className="w-full h-10 px-3 rounded-lg bg-[#141c2e] border border-white/15 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                                                                                                                                                                                                                                />
+                                                                                                                                                                                                                                <div className="text-[10px] text-slate-400 mt-0.5">60 a 1800 segundos (padrão: 300s = 5min)</div>
+                                                                                                                                                                                                                              </div>
+                                                                                                                                                                                                                              <div>
+                                                                                                                                                                                                                                <label
+                                                                                                                                                                                                                                  htmlFor="vf-arsenal-maxkills"
+                                                                                                                                                                                                                                  className="block text-xs font-semibold text-slate-300 mb-1"
+                                                                                                                                                                                                                                >
+                                                                                                                                                                                                                                  Limite de Kills para Vitória
+                                                                                                                                                                                                                                </label>
+                                                                                                                                                                                                                                <input
+                                                                                                                                                                                                                                  id="vf-arsenal-maxkills"
+                                                                                                                                                                                                                                  type="number"
+                                                                                                                                                                                                                                  min={5}
+                                                                                                                                                                                                                                  max={100}
+                                                                                                                                                                                                                                  step={1}
+                                                                                                                                                                                                                                  value={arsenalMaxKills}
+                                                                                                                                                                                                                                  onChange={(e) => setArsenalMaxKills(Math.max(5, Math.min(100, Number(e.target.value) || 20)))}
+                                                                                                                                                                                                                                  className="w-full h-10 px-3 rounded-lg bg-[#141c2e] border border-white/15 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                                                                                                                                                                                                                                />
+                                                                                                                                                                                                                                <div className="text-[10px] text-slate-400 mt-0.5">5 a 100 kills (padrão: 20)</div>
+                                                                                                                                                                                                                              </div>
+                                                                                                                                                                                                                              <div className="sm:col-span-2">
+                                                                                                                                                                                                                                <label className="flex items-center gap-3 cursor-pointer">
+                                                                                                                                                                                                                                  <input
+                                                                                                                                                                                                                                    id="vf-arsenal-autoevents"
+                                                                                                                                                                                                                                    type="checkbox"
+                                                                                                                                                                                                                                    checked={arsenalAutoEvents}
+                                                                                                                                                                                                                                    onChange={(e) => setArsenalAutoEvents(e.target.checked)}
+                                                                                                                                                                                                                                    className="w-4 h-4 accent-amber-400 rounded border-white/20 bg-[#141c2e] border-white/15 cursor-pointer focus:ring-amber-400"
+                                                                                                                                                                                                                                  />
+                                                                                                                                                                                                                                  <span className="text-xs font-semibold text-slate-200">Eventos globais automáticos</span>
+                                                                                                                                                                                                                                </label>
+                                                                                                                                                                                                                                <div className="text-[10px] text-slate-400 mt-0.5 ml-7">Ativa eventos catastróficos automáticos durante a partida (padrão: ligado)</div>
+                                                                                                                                                                                                                              </div>
+                                                                                                                                                                                                                              <div className="sm:col-span-2">
+                                                                                                                                                                                                                                <label className="flex items-center gap-3 cursor-pointer">
+                                                                                                                                                                                                                                  <input
+                                                                                                                                                                                                                                    id="vf-arsenal-teams"
+                                                                                                                                                                                                                                    type="checkbox"
+                                                                                                                                                                                                                                    checked={arsenalTeams}
+                                                                                                                                                                                                                                    onChange={(e) => setArsenalTeams(e.target.checked)}
+                                                                                                                                                                                                                                    className="w-4 h-4 accent-sky-400 rounded border-white/20 bg-[#141c2e] border-white/15 cursor-pointer focus:ring-sky-400"
+                                                                                                                                                                                                                                  />
+                                                                                                                                                                                                                                  <span className="text-xs font-semibold text-slate-200">Modo Times (Azul vs Laranja)</span>
+                                                                                                                                                                                                                                </label>
+                                                                                                                                                                                                                                <div className="text-[10px] text-slate-400 mt-0.5 ml-7">Divide a partida em dois times; bots são balanceados, jogadores escolhem time no lobby (padrão: desligado)</div>
+                                                                                                                                                                                                                              </div>
+                                                                                                                                                                                                                            </div>
                                                                                                             )}
 
                                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">

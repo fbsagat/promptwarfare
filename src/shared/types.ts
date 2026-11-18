@@ -412,7 +412,8 @@ export interface PlayerNetState {
   shieldHp: number;
   personalityLabel?: string;
   respawnAt?: number; // timestamp when player will respawn (Arsenal mode)
-}
+    team?: TeamId; // time do jogador no modo Arsenal com times (blue/orange/null)
+  }
 
 /** Estado de jogador transmitido a 20 Hz; slots carregam apenas referências. */
 export interface PlayerNetWireState extends Omit<PlayerNetState, 'slots'> {
@@ -491,18 +492,26 @@ export interface RoomMatchSummary {
   durationSec: number;
   totalKills: number;
   eventsTriggered: number;
+  arsenalTeams?: boolean;
   standings: Array<{
-    id: string;
-    name: string;
-    isBot: boolean;
-    alive: boolean;
-    kills: number;
-    deaths: number;
-    assists: number;
-    weaponsCreated: number;
-    personalityLabel?: string;
-  }>;
-}
+      id: string;
+      name: string;
+      isBot: boolean;
+      alive: boolean;
+      kills: number;
+      deaths: number;
+      assists: number;
+      weaponsCreated: number;
+      personalityLabel?: string;
+      team?: TeamId; // time do jogador no modo Arsenal com times
+    }>;
+  }
+
+/**
+ * Identificador de time para modo Arsenal com times.
+ * 'blue' = Time Azul, 'orange' = Time Laranja, null = sem time / não atribuído.
+ */
+export type TeamId = 'blue' | 'orange' | null;
 
 export type RoomAccessMode = 'open' | 'password' | 'closed';
 
@@ -529,6 +538,7 @@ export interface LobbyMemberInfo {
   color: string;
   isHost: boolean;
   joinedAt: number;
+  team?: TeamId; // time do jogador no modo Arsenal com times
 }
 
 export interface DevRoomState {
@@ -604,6 +614,8 @@ export interface LobbyStatePayload {
   phase: 'lobby' | 'playing' | 'ended';
   members: LobbyMemberInfo[];
   devMode?: boolean;
+  gameMode?: GameMode;
+  arsenalTeams?: boolean;
 }
 
 export interface ContentPoolNetInfo {
@@ -648,10 +660,12 @@ export interface RoomInitPayload {
   /** Configuração do modo Arsenal: duração máxima da partida em segundos (ex.: 300). */
   arsenalMatchDuration?: number;
   /** Configuração do modo Arsenal: número máximo de kills para vitória (ex.: 20). */
-    arsenalMaxKills?: number;
-    /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
-    arsenalAutoEvents?: boolean;
-  }
+  arsenalMaxKills?: number;
+  /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
+  arsenalAutoEvents?: boolean;
+  /** Configuração do modo Arsenal: se modo de times está ativado (Azul vs Laranja). */
+  arsenalTeams?: boolean;
+}
 
 export interface RoomTickPayload {
   hostId: string;
@@ -682,10 +696,12 @@ export interface RoomTickPayload {
   /** Duração máxima da partida em segundos (ex.: 300 para Arsenal). */
   matchDurationSec?: number;
   /** Número máximo de kills para vitória (ex.: 20 para Arsenal). */
-    maxKills?: number;
-    /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
-    arsenalAutoEvents?: boolean;
-  }
+  maxKills?: number;
+  /** Configuração do modo Arsenal: se eventos globais automáticos estão ativados. */
+  arsenalAutoEvents?: boolean;
+  /** Configuração do modo Arsenal: se modo de times está ativado (Azul vs Laranja). */
+  arsenalTeams?: boolean;
+}
 
 /**
  * Conteúdo estático de armas enviado uma única vez por instância. O cliente
