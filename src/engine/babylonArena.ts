@@ -6,6 +6,7 @@ import {
   DynamicTexture,
   Engine,
   HemisphericLight,
+  Constants,
   LinesMesh,
   Matrix,
   Mesh,
@@ -43,6 +44,8 @@ import {
   type Vec3,
   type VoxelDelta,
   type WeaponBlueprint,
+  type GameMode,
+  type TeamId,
 } from '../shared/types.ts';
 import {
   applyPointerLookDelta,
@@ -326,6 +329,19 @@ function parseChunkKey(key: string): ChunkAddress {
   };
 }
 
+type PlayerRigEntry = {
+  rig: PlayerAvatarRig;
+  targetPos: Vector3;
+  currentPos: Vector3;
+  targetYaw: number;
+  currentYaw: number;
+  equippedKey: string;
+  equippedNode: TransformNode | Mesh | null;
+  grappleLine: LinesMesh | null;
+  teamOutlineMeshes: Mesh[];
+  teamOutlinePairs: Array<{ source: Mesh; clone: Mesh }>;
+};
+
 export class BabylonVoxelArena {
   private canvas: HTMLCanvasElement;
   private engine: Engine;
@@ -474,20 +490,8 @@ export class BabylonVoxelArena {
   private islandSeed = 1337;
   private readonly GRASS_CAP = 729;
 
-  // Dynamic entities
-  private playerRigs = new Map<
-    string,
-    {
-      rig: PlayerAvatarRig;
-      targetPos: Vector3;
-      currentPos: Vector3;
-      targetYaw: number;
-      currentYaw: number;
-      equippedKey: string;
-      equippedNode: TransformNode | Mesh | null;
-      grappleLine: LinesMesh | null;
-    }
-  >();
+  // Dynamic entities — aliases live at module scope (see PlayerRigEntry above)
+  private playerRigs = new Map<string, PlayerRigEntry>();
 
   private projectileMeshes = new Map<string, Mesh>();
   private eventWaypointMeshes = new Map<string, EventWaypointVisual>();
@@ -551,9 +555,14 @@ export class BabylonVoxelArena {
   private lastAimContext: 'neutral' | 'dig' | 'grapple' | 'enemy' = 'neutral';
 
   // Controls & state
-  private mode: 'title' | 'playing' | 'paused' | 'gameover' = 'title';
-  private localPlayerId: string | null = null;
-  private latestTick: RoomTickPayload | null = null;
+    private mode: 'title' | 'playing' | 'paused' | 'gameover' = 'title';
+    private localPlayerId: string | null = null;
+      private localPlayerTeam: TeamId = null; // team of local player (for Arsenal teams mode)
+      private gameMode: GameMode = 'warfare'; // current game mode
+      private arsenalTeams = false; // whether Arsenal team mode is enabled
+      private teamOutlineMatBlue: StandardMaterial | null = null;
+      private teamOutlineMatOrange: StandardMaterial | null = null;
+      private latestTick: RoomTickPayload | null = null;
   private keysPressed = new Set<string>();
   private yaw = 0;
   private pitch = 0.12;
@@ -630,12 +639,12 @@ export class BabylonVoxelArena {
     imgCfg.exposure = 1.08;
 
     this.camera = new UniversalCamera('mainCam', new Vector3(64, 26, 64), this.scene);
-    this.camera.minZ = 0.08;
-    this.camera.maxZ = 950;
-    this.camera.fov = 1.08;
-    this.ensureBloomPipeline();
+                this.camera.minZ = 0.08;
+                this.camera.maxZ = 950;
+                this.camera.fov = 1.08;
+                this.ensureBloomPipeline();
 
-    // Gradient sky dome (zenith cobalt -> sunlit horizon -> deep abyssal nadir)
+                                // Gradient sky dome (zenith cobalt -> sunlit horizon -> deep abyssal nadir)
     const skyDome = MeshBuilder.CreateSphere(
       'skyDome',
       { diameter: 1100, segments: 12, sideOrientation: Mesh.BACKSIDE },
@@ -2097,23 +2106,27 @@ export class BabylonVoxelArena {
   }
 
   public getPerfStats(): PerfStats {
-    const activeMeshes = this.scene.getActiveMeshes();
-    let chunksCoarse = 0;
-    for (const key of this.chunkMeshes.keys()) {
-      if (parseChunkKey(key).lod === 1) chunksCoarse++;
+      const activeMeshes = this.scene.getActiveMeshes();
+      let chunksCoarse = 0;
+      for (const key of this.chunkMeshes.keys()) {
+        if (parseChunkKey(key).lod === 1) chunksCoarse++;
+      }
+      return {
+        fps: this.engine.getFps(),
+        frameMs: this.engine.getDeltaTime(),
+        chunks: this.chunkMeshes.size,
+        chunksCoarse,
+        chunksPending: this.pendingChunkQueue.length + this.pendingJobs.size,
+        activeMeshes: activeMeshes.length,
+        vertices: this.scene.getTotalVertices(),
+      };
     }
-    return {
-      fps: this.engine.getFps(),
-      frameMs: this.engine.getDeltaTime(),
-      chunks: this.chunkMeshes.size,
-      chunksCoarse,
-      chunksPending: this.pendingChunkQueue.length + this.pendingJobs.size,
-      activeMeshes: activeMeshes.length,
-      vertices: this.scene.getTotalVertices(),
-    };
-  }
 
-  private getAsset(id: string | undefined): AssetEntry | null {
+    public updateLocalPlayerTeam(team: TeamId): void {
+      this.localPlayerTeam = team;
+    }
+
+    private getAsset(id: string | undefined): AssetEntry | null {
     if (!id) return null;
     return this.assetIndex.get(id) ?? null;
   }
@@ -2167,20 +2180,25 @@ export class BabylonVoxelArena {
   }
 
   public loadRoomInit(init: RoomInitPayload): void {
-    // Descarta malhas e jobs da sala anterior antes de trocar a VoxelGrid.
-    this.clearChunkState();
-    this.localPlayerId = init.playerId;
-    this.islandSeed = init.seed;
-    this.nearbyZiplineId = null;
-    this.callbacks.onZiplineNearby?.(null);
-    this.islandMeta = { ziplines: [] };
-    this.grid = createProceduralIsland(
-      init.seed,
-      init.dimX,
-      init.dimY,
-      init.dimZ,
-      this.islandMeta,
-    );
+      // Descarta malhas e jobs da sala anterior antes de trocar a VoxelGrid.
+      this.clearChunkState();
+      this.localPlayerId = init.playerId;
+      // Store game mode and Arsenal teams setting for team outlines
+      this.gameMode = init.gameMode ?? 'warfare';
+      this.arsenalTeams = init.arsenalTeams ?? false;
+      // Find local player's team
+      const localPlayer = init.players.find((p) => p.id === init.playerId);
+      this.localPlayerTeam = localPlayer?.team ?? null;
+      this.islandSeed = init.seed;
+          this.islandMeta = { ziplines: [] };
+          this.grid = createProceduralIsland(
+            init.seed,
+            init.dimX,
+            init.dimY,
+            init.dimZ,
+            this.islandMeta,
+            init.arsenalForcedBiome,
+          );
     this.grid.applyDeltas(init.deltas);
     const cx = (init.dimX * VOXEL_SIZE) / 2;
     const cz = (init.dimZ * VOXEL_SIZE) / 2;
@@ -2247,7 +2265,11 @@ export class BabylonVoxelArena {
       this.camera.rotation.set(this.pitch, this.yaw, 0);
     }
 
-    this.rebuildAllChunks();
+    if (local) {
+      this.rebuildAllChunks(this.quality.chunkJobsPerFrame * 10, local.position);
+    } else {
+      this.rebuildAllChunks();
+    }
     this.rebuildShoreFoam();
     this.rebuildZiplines();
     this.rebuildGrass();
@@ -2430,7 +2452,7 @@ export class BabylonVoxelArena {
     this.pendingJobs.clear();
   }
 
-  private rebuildAllChunks(): void {
+  private rebuildAllChunks(immediateLimit = this.quality.chunkJobsPerFrame, playerPos?: Vec3): void {
     this.streamEpoch++;
     this.clearChunkState();
 
@@ -2445,7 +2467,14 @@ export class BabylonVoxelArena {
         }
       }
     }
-    this.flushDirtyChunks(this.quality.chunkJobsPerFrame);
+
+    if (playerPos) {
+      const pCx = Math.floor(playerPos.x / (CHUNK_SIZE * VOXEL_SIZE));
+      const pCy = Math.floor(playerPos.y / (CHUNK_SIZE * VOXEL_SIZE));
+      const pCz = Math.floor(playerPos.z / (CHUNK_SIZE * VOXEL_SIZE));
+      this.markChunkDirty(pCx, pCy, pCz, 0);
+    }
+    this.flushDirtyChunks(immediateLimit);
   }
 
   private markChunkDirty(cx: number, cy: number, cz: number, lod: ChunkLevel = 0): void {
@@ -2792,37 +2821,153 @@ export class BabylonVoxelArena {
     }
   }
 
+  /**
+   * Material compartilhado do contorno de time.
+   *
+   * Importante: NÃO usamos mais `HighlightLayer` aqui. O HighlightLayer é um
+   * pós-processo que, combinado com o `DefaultRenderingPipeline`/bloom, deixava a
+   * cena inteira escura. A solução abaixo é só de malha: clones "casca" com
+   * material não iluminado, `depthFunction = ALWAYS` e sem gravação de
+   * profundidade. Renderiza por cima do cenário sem tocar no pipeline.
+   */
+  private ensureTeamOutlineMaterial(team: TeamId): StandardMaterial | null {
+    if (!team) return null;
+    const existing = team === 'blue' ? this.teamOutlineMatBlue : this.teamOutlineMatOrange;
+    if (existing) return existing;
+
+    const mat = new StandardMaterial(`teamOutline_${team}`, this.scene);
+    const color = team === 'blue' ? new Color3(0.22, 0.62, 1.0) : new Color3(1.0, 0.52, 0.08);
+    mat.disableLighting = true;
+    mat.emissiveColor = color;
+    mat.diffuseColor = Color3.Black();
+    mat.specularColor = Color3.Black();
+    mat.ambientColor = Color3.Black();
+    mat.backFaceCulling = false;
+    // Ignora a profundidade do cenário (aparece através de paredes) mas não
+    // escreve profundidade, para não ocluir o avatar nem outros objetos.
+    mat.depthFunction = Constants.ALWAYS;
+    mat.disableDepthWrite = true;
+    // Evita que neblina/clima/água "lave" o contorno e o torne invisível.
+    mat.fogEnabled = false;
+    mat.freeze();
+
+    // Grupo dedicado: desenha após o mundo (grupo 0) sem ser sobrescrito por
+    // chunks recriados depois; limpa só depth/stencil, nunca a cor, para não
+    // escurecer/apagar a cena.
+    this.scene.setRenderingAutoClearDepthStencil(1, false, false, false);
+
+    if (team === 'blue') this.teamOutlineMatBlue = mat;
+    else this.teamOutlineMatOrange = mat;
+    return mat;
+  }
+
+  /** Remove os clones de contorno de um jogador, devolvendo as malhas ao pool. */
+  private disposeTeamOutlines(entry: { teamOutlineMeshes: Mesh[]; teamOutlinePairs?: Array<{ source: Mesh; clone: Mesh }> }): void {
+    for (const clone of entry.teamOutlineMeshes) {
+      clone.dispose();
+    }
+    entry.teamOutlineMeshes.length = 0;
+    if (entry.teamOutlinePairs) entry.teamOutlinePairs.length = 0;
+  }
+
+  /**
+   * Cria (ou remove) os clones de contorno de um aliado.
+   * Cada clone é uma casca levemente maior que acompanha a malha original.
+   */
+  private syncTeamOutline(entry: PlayerRigEntry, show: boolean, team: TeamId): void {
+    const hasOutlines = entry.teamOutlineMeshes.length > 0;
+    if (!show || !team) {
+      if (hasOutlines) this.disposeTeamOutlines(entry);
+      return;
+    }
+    if (hasOutlines) return;
+
+    const mat = this.ensureTeamOutlineMaterial(team);
+    if (!mat) return;
+
+    for (const source of entry.rig.bodyGroup.getChildMeshes()) {
+      // O disco de sombra e a placa de nome não fazem parte da silhueta.
+      if (source.name.startsWith('shadow_') || source === entry.rig.namePlate) continue;
+      if (!(source instanceof Mesh)) continue;
+
+      const clone = source.clone(`${source.name}_outline`, null, true);
+      if (!clone) continue;
+      clone.parent = source.parent;
+      clone.position.copyFrom(source.position);
+      clone.rotation.copyFrom(source.rotation);
+      clone.scaling.copyFrom(source.scaling);
+      clone.scaling.scaleInPlace(1.06);
+      clone.material = mat;
+      clone.isPickable = false;
+      clone.receiveShadows = false;
+      // Renderiza após o grupo 0 para não ser sobrescrito por geometria
+      // desenhada depois (chunks em streaming). Auto-clear de cor desativado
+      // para o grupo 1 em ensureTeamOutlineMaterial — depth/stencil mantidos.
+      clone.renderingGroupId = 1;
+
+      entry.teamOutlineMeshes.push(clone);
+      entry.teamOutlinePairs?.push({ source, clone });
+    }
+  }
+
+  /** Mantém os clones alinhados com a animação (pernas balançando, etc.). */
+  private syncTeamOutlineTransforms(): void {
+    for (const entry of this.playerRigs.values()) {
+      if (!entry.teamOutlinePairs) continue;
+      for (const { source, clone } of entry.teamOutlinePairs) {
+        clone.position.copyFrom(source.position);
+        clone.rotation.copyFrom(source.rotation);
+        clone.scaling.copyFrom(source.scaling);
+        clone.scaling.scaleInPlace(1.06);
+      }
+    }
+  }
+
   private syncPlayers(players: PlayerNetState[]): void {
-    const seen = new Set<string>();
-    for (const p of players) {
-      seen.add(p.id);
-      if (p.slots[p.activeSlot]?.weapon) {
-        const w = p.slots[p.activeSlot]!.weapon!;
-        this.weaponCache.set(w.id, w);
-      }
+      const seen = new Set<string>();
+      const isArsenalTeams = this.gameMode === 'arsenal' && this.arsenalTeams;
 
-      let entry = this.playerRigs.get(p.id);
-      if (!entry) {
-        const rig = buildPlayerAvatarMesh(this.scene, p.id, p.color);
-        if (this.shadowGenerator) {
-          for (const m of rig.bodyGroup.getChildMeshes()) {
-            this.shadowGenerator.addShadowCaster(m, false);
-          }
+      for (const p of players) {
+        seen.add(p.id);
+        if (p.slots[p.activeSlot]?.weapon) {
+          const w = p.slots[p.activeSlot]!.weapon!;
+          this.weaponCache.set(w.id, w);
         }
-        entry = {
-          rig,
-          targetPos: new Vector3(p.position.x, p.position.y, p.position.z),
-          currentPos: new Vector3(p.position.x, p.position.y, p.position.z),
-          targetYaw: p.yaw,
-          currentYaw: p.yaw,
-          equippedKey: '',
-          equippedNode: null,
-          grappleLine: null,
-        };
-        this.playerRigs.set(p.id, entry);
-      }
 
-      entry.rig.label.text = p.name;
+        let entry = this.playerRigs.get(p.id);
+        if (!entry) {
+          const rig = buildPlayerAvatarMesh(this.scene, p.id, p.color);
+          if (this.shadowGenerator) {
+            for (const m of rig.bodyGroup.getChildMeshes()) {
+              this.shadowGenerator.addShadowCaster(m, false);
+            }
+          }
+          entry = {
+            rig,
+            targetPos: new Vector3(p.position.x, p.position.y, p.position.z),
+            currentPos: new Vector3(p.position.x, p.position.y, p.position.z),
+            targetYaw: p.yaw,
+            currentYaw: p.yaw,
+            equippedKey: '',
+            equippedNode: null,
+            grappleLine: null,
+            teamOutlineMeshes: [],
+            teamOutlinePairs: [],
+          };
+          this.playerRigs.set(p.id, entry);
+        }
+
+        // Contorno de companheiro de time (modo Arsenal por times), visível
+        // através de paredes. Implementado com malhas-casca, sem pós-processo.
+        const isTeammate =
+          isArsenalTeams &&
+          !!p.team &&
+          !!this.localPlayerTeam &&
+          p.team === this.localPlayerTeam &&
+          p.id !== this.localPlayerId;
+        this.syncTeamOutline(entry, isTeammate, isTeammate ? p.team! : null);
+
+        entry.rig.label.text = p.name;
       entry.rig.root.setEnabled(p.alive);
       entry.targetPos.set(p.position.x, p.position.y, p.position.z);
       entry.targetYaw = p.yaw;
@@ -2946,12 +3091,13 @@ export class BabylonVoxelArena {
     }
 
     for (const [id, entry] of this.playerRigs) {
-      if (!seen.has(id)) {
-        entry.grappleLine?.dispose();
-        entry.rig.dispose();
-        this.playerRigs.delete(id);
-      }
-    }
+          if (!seen.has(id)) {
+            this.disposeTeamOutlines(entry);
+            entry.grappleLine?.dispose();
+            entry.rig.dispose();
+            this.playerRigs.delete(id);
+          }
+        }
   }
 
   private syncLocalViewModel(item: InventorySlotItem | null): void {
@@ -5273,6 +5419,8 @@ export class BabylonVoxelArena {
         entry.rig.bodyGroup.setEnabled(this.currentZoom >= 0.75);
       }
     }
+    // Clones de contorno acompanham pernas/rotação animadas acima.
+    this.syncTeamOutlineTransforms();
 
     for (const e of this.entityMeshes.values()) {
       Vector3.LerpToRef(e.node.position, e.targetPos, lerpAlpha, e.node.position);
@@ -5940,12 +6088,17 @@ export class BabylonVoxelArena {
     this.mesherWorker.terminate();
     for (const r of this.playerRigs.values()) {
       r.grappleLine?.dispose();
+      this.disposeTeamOutlines(r);
       r.rig.dispose();
     }
     this.playerRigs.clear();
     this.bloomPipeline?.dispose();
-    this.bloomPipeline = null;
-    this.shoreFoamMesh?.dispose();
+        this.bloomPipeline = null;
+        this.teamOutlineMatBlue?.dispose();
+        this.teamOutlineMatBlue = null;
+        this.teamOutlineMatOrange?.dispose();
+        this.teamOutlineMatOrange = null;
+        this.shoreFoamMesh?.dispose();
     this.shoreFoamMesh = null;
     this.shoreFoamMat?.dispose(true, true);
     this.shoreFoamMat = null;

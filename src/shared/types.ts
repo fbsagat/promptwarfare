@@ -3,6 +3,8 @@ export const CHUNK_SIZE = 16; // 16x16x16 micro-voxels por chunk (5m x 5m x 5m)
 export const WATER_LEVEL_VOXEL = 10; // y <= 10 é oceano (3.125m)
 export const WATER_LEVEL_WORLD = WATER_LEVEL_VOXEL * VOXEL_SIZE;
 
+export type BiomeKind = 'desert' | 'forest' | 'swamp' | 'tundra' | 'volcanic' | 'city';
+
 export const MAT = {
   AIR: 0,
   BEDROCK: 1,
@@ -665,6 +667,8 @@ export interface RoomInitPayload {
   arsenalAutoEvents?: boolean;
   /** Configuração do modo Arsenal: se modo de times está ativado (Azul vs Laranja). */
   arsenalTeams?: boolean;
+  /** Configuração do modo Arsenal: bioma forçado para a ilha (ex.: 'desert', 'forest', etc.). */
+  arsenalForcedBiome?: BiomeKind;
 }
 
 export interface RoomTickPayload {

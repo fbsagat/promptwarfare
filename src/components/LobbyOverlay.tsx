@@ -14,7 +14,7 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import type { RoomAccessMode, GameMode, RoomPublicSummary } from '../shared/types.ts';
+import type { RoomAccessMode, GameMode, RoomPublicSummary, BiomeKind } from '../shared/types.ts';
 
 interface LobbyOverlayProps {
   playerName: string;
@@ -34,8 +34,9 @@ interface LobbyOverlayProps {
           arsenalMatchDuration: number;
           arsenalMaxKills: number;
           arsenalAutoEvents: boolean;
-          arsenalTeams: boolean;
-        }) => void;
+                    arsenalTeams: boolean;
+                    arsenalForcedBiome?: BiomeKind;
+                  }) => void;
   onJoinRoom: (opts: { roomId: string; password?: string }) => void;
   onQuickPlay: () => void;
   connecting: boolean;
@@ -95,8 +96,9 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
         const [arsenalMatchDuration, setArsenalMatchDuration] = useState(300);
                 const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
                 const [arsenalAutoEvents, setArsenalAutoEvents] = useState(true);
-                const [arsenalTeams, setArsenalTeams] = useState(false);
-                const [createPassword, setCreatePassword] = useState('');
+                                const [arsenalTeams, setArsenalTeams] = useState(false);
+                                const [arsenalForcedBiome, setArsenalForcedBiome] = useState<BiomeKind | 'random'>('random');
+                                const [createPassword, setCreatePassword] = useState('');
   const [targetPlayers, setTargetPlayers] = useState(6);
   const [fillWithBots, setFillWithBots] = useState(true);
   const [localValidationError, setLocalValidationError] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                       arsenalMaxKills: gameMode === 'arsenal' ? arsenalMaxKills : 20,
                       arsenalAutoEvents: gameMode === 'arsenal' ? arsenalAutoEvents : true,
                       arsenalTeams: gameMode === 'arsenal' ? arsenalTeams : false,
+                      arsenalForcedBiome: gameMode === 'arsenal' && arsenalForcedBiome !== 'random' ? arsenalForcedBiome : undefined,
                     });
   };
 
@@ -765,9 +768,29 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                                                                                                                                                                                                                                   <span className="text-xs font-semibold text-slate-200">Modo Times (Azul vs Laranja)</span>
                                                                                                                                                                                                                                 </label>
                                                                                                                                                                                                                                 <div className="text-[10px] text-slate-400 mt-0.5 ml-7">Divide a partida em dois times; bots são balanceados, jogadores escolhem time no lobby (padrão: desligado)</div>
-                                                                                                                                                                                                                              </div>
-                                                                                                                                                                                                                            </div>
-                                                                                                            )}
+                                                                                                                                                                                                                                </div>
+
+                                                                                                                                                                                                                                <div className="sm:col-span-2">
+                                                                                                                                                                                                                                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                                                                                                                                                                                                                    Mapa (Bioma)
+                                                                                                                                                                                                                                  </label>
+                                                                                                                                                                                                                                  <select
+                                                                                                                                                                                                                                    value={arsenalForcedBiome}
+                                                                                                                                                                                                                                    onChange={(e) => setArsenalForcedBiome(e.target.value as any)}
+                                                                                                                                                                                                                                    className="w-full h-10 px-3 rounded-lg bg-[#141c2e] border border-white/15 text-white text-xs focus:outline-none focus:border-amber-400"
+                                                                                                                                                                                                                                  >
+                                                                                                                                                                                                                                    <option value="random">Aleatório (Todos os Biomas)</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="desert">Deserto</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="forest">Floresta</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="swamp">Pântano</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="tundra">Tundra</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="volcanic">Vulcânico</option>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                        <option value="city">Cidade</option>
+                                                                                                                                                                                                                                  </select>
+                                                                                                                                                                                                                                  <div className="text-[10px] text-slate-400 mt-1">Força o mapa inteiro a ser deste bioma (padrão: aleatório)</div>
+                                                                                                                                                                                                                                </div>
+                                                                                                                                                                                                                                </div>
+                                                                                                                                                                                                                                )}
 
                                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">
               <div>

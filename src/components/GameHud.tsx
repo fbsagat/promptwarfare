@@ -1130,8 +1130,10 @@ export const GameHud: React.FC<GameHudProps> = ({
           <svg width="88" height="88" viewBox="0 0 88 88" className="block">
             <circle cx="44" cy="44" r="41" fill="#071324" stroke="rgba(255,255,255,0.12)" strokeWidth="1" />
             <circle cx="44" cy="44" r="34" fill="#132b24" stroke="rgba(74,222,128,0.28)" strokeWidth="1" />
-            {/* Central crystal shrine landmark */}
-            <polygon points="44,40 47.5,44 44,48 40.5,44" fill="#38bdf8" opacity="0.85" />
+            {/* Central crystal shrine landmark (oculto no Arsenal) */}
+            {!isArsenal && (
+              <polygon points="44,40 47.5,44 44,48 40.5,44" fill="#38bdf8" opacity="0.85" />
+            )}
 
             {/* Loot drops */}
             {lootDrops.map((d) => {
@@ -1151,12 +1153,16 @@ export const GameHud: React.FC<GameHudProps> = ({
               );
             })}
 
-            {/* Enemy combatants */}
+            {/* Other combatants */}
             {allPlayers.map((p) => {
               if (!p.alive || p.id === localPlayer.id) return null;
               const rx = (p.position.x / islandSizeMeters) * 80 + 4;
               const rz = 84 - (p.position.z / islandSizeMeters) * 80;
-              return <circle key={p.id} cx={rx} cy={rz} r="2.6" fill="#fb7185" />;
+              let fill = '#fb7185'; // inimigo (padrão)
+              if (isArsenal && arsenalTeams && localPlayer.team && p.team === localPlayer.team) {
+                fill = p.team === 'blue' ? '#3b82f6' : '#f97316';
+              }
+              return <circle key={p.id} cx={rx} cy={rz} r="2.6" fill={fill} />;
             })}
 
             {/* Local player heading indicator */}

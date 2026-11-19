@@ -341,6 +341,7 @@ async function startServer() {
                                             arsenalMaxKills: msg.payload?.arsenalMaxKills,
                                             arsenalAutoEvents: msg.payload?.arsenalAutoEvents,
                                             arsenalTeams: msg.payload?.arsenalTeams,
+                                            arsenalForcedBiome: msg.payload?.arsenalForcedBiome,
                                           });
                           if (res) {
                             boundRoomId = res.room.id;

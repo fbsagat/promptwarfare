@@ -7,7 +7,9 @@ import {
   type IslandZipline,
   type Vec3,
   type VoxelDelta,
+  type BiomeKind,
 } from './types.ts';
+import { getBiomeStructures, type StructureDefinition } from './structureCatalog.ts';
 
 export class VoxelGrid {
   readonly dimX: number;
@@ -96,8 +98,6 @@ function fbm2D(x: number, z: number, seed: number): number {
   return val;
 }
 
-type BiomeKind = 'desert' | 'forest' | 'swamp' | 'tundra' | 'volcanic';
-
 function smoothstep01(t: number): number {
   const c = Math.max(0, Math.min(1, t));
   return c * c * (3 - 2 * c);
@@ -107,12 +107,145 @@ function smoothstepRange(edge0: number, edge1: number, x: number): number {
   return smoothstep01((x - edge0) / (edge1 - edge0));
 }
 
+/**
+ * --------------------------------------------------------------------------
+ * Perfis de relevo por bioma
+ * --------------------------------------------------------------------------
+ * Cada bioma tem uma "assinatura" de altura própria. O gerador não usa mais
+ * um único perfil de ilha radial: a máscara de continentalidade só define a
+ * costa, e o formato do interior vem destas funções. Tudo é determinístico e
+ * depende apenas de (seed, coordenadas), para que servidor e cliente gerem a
+ * mesma grade sem trocar voxels pela rede.
+ */
+interface TerrainProfile {
+  /** Altura em unidades de metros do jogo (antes de resScale). */
+  height: number;
+  /** 0..1 — presença de água superficial (rio ou lago). */
+  water: number;
+  /** 0..1 — presença de lava superficial. */
+  lava: number;
+  /** 0..1 — cobertura de cinzas. */
+  ash: number;
+}
+
+/** Eixo central serpenteado usado por rios e rios de lava. */
+function riverCenterAt(sz: number, seed: number): number {
+  return (
+    Math.sin(sz * 0.045 + seed * 0.0007) * 26 + Math.sin(sz * 0.017 + seed * 0.0013) * 14
+  );
+}
+
+interface ProfileContext {
+  sx: number;
+  sz: number;
+  seed: number;
+  n: number;
+  detail: number;
+  fine: number;
+  ridge: number;
+  volcanoCx: number;
+  volcanoCz: number;
+  volcanoRadius: number;
+}
+
+function profileForest(ctx: ProfileContext): TerrainProfile {
+  const rolling = 15 + ctx.n * 11 + (1 - ctx.ridge) * 5 + (ctx.fine - 0.5) * 2.2;
+  const riverDist = Math.abs(ctx.sx - riverCenterAt(ctx.sz, ctx.seed));
+  const water = 1 - smoothstepRange(2.4, 5.2, riverDist);
+  return { height: rolling - water * 8, water, lava: 0, ash: 0 };
+}
+
+function profileDesert(ctx: ProfileContext): TerrainProfile {
+  // Dunas amplas modeladas por senoide, interrompidas por planícies e cânions.
+  const dunes =
+    Math.sin(ctx.sx * 0.055 + ctx.sz * 0.028 + ctx.seed * 0.0005) * 3.2 +
+    Math.sin(ctx.sx * 0.021 - ctx.sz * 0.061) * 1.8;
+  const flat = 13 + dunes + (ctx.fine - 0.5) * 1.0;
+  const canyonDist = Math.abs(ctx.sz - Math.sin(ctx.sx * 0.03 + ctx.seed * 0.0009) * 22);
+  const canyon = 1 - smoothstepRange(2.2, 4.8, canyonDist);
+  return { height: flat - canyon * 9, water: 0, lava: 0, ash: 0 };
+}
+
+function profileSwamp(ctx: ProfileContext): TerrainProfile {
+  // Depressões rasas e lagos escuros, com musgo no solo.
+  const basins = 11 + ctx.n * 7 - ctx.detail * 5 + (ctx.fine - 0.5) * 1.5;
+  const lakeNoise = fbm2D(ctx.sx * 0.028, ctx.sz * 0.028, ctx.seed + 2011);
+  const water = smoothstepRange(0.56, 0.72, lakeNoise) * 0.9;
+  return { height: basins - water * 5, water, lava: 0, ash: 0 };
+}
+
+function profileTundra(ctx: ProfileContext): TerrainProfile {
+  // Elevação mais alta, picos angulosos e lagos congelados.
+  const peaks = 19 + ctx.n * 20 + ctx.ridge * 12 + (ctx.detail - 0.5) * 4;
+  const lakeNoise = fbm2D(ctx.sx * 0.031, ctx.sz * 0.031, ctx.seed + 3077);
+  const water = smoothstepRange(0.66, 0.8, lakeNoise) * 0.8;
+  return { height: peaks - water * 7, water, lava: 0, ash: 0 };
+}
+
+function profileVolcanic(ctx: ProfileContext): TerrainProfile {
+  // Terreno acidentado com cristas vivas e um cone fora do centro.
+  const rough = 14 + ctx.n * 14 + ctx.ridge * 14 + (1 - ctx.detail) * 5;
+  const volcanoDist =
+    Math.hypot(ctx.sx - ctx.volcanoCx, ctx.sz - ctx.volcanoCz) / ctx.volcanoRadius;
+  const cone = Math.max(0, 1 - volcanoDist / 0.34);
+  const crater = Math.max(0, 1 - volcanoDist / 0.09);
+  const lavaDist = Math.abs(ctx.sx - (riverCenterAt(ctx.sz, ctx.seed + 991) + 30));
+  const lavaRiver = 1 - smoothstepRange(1.8, 4.0, lavaDist);
+  return {
+    height: rough + Math.pow(cone, 1.5) * 34 - crater * 12,
+    water: 0,
+    lava: Math.max(crater > 0.35 ? 1 : 0, lavaRiver),
+    ash: smoothstepRange(0.5, 0.9, 1 - cone) * 0.7,
+  };
+}
+
+function profileCity(ctx: ProfileContext): TerrainProfile {
+  // Completamente plano (nível do mar + 1) para ruas e prédios.
+  return { height: WATER_LEVEL_VOXEL + 1, water: 0, lava: 0, ash: 0 };
+}
+
+function terrainProfileFor(biome: BiomeKind, ctx: ProfileContext): TerrainProfile {
+  switch (biome) {
+    case 'desert':
+      return profileDesert(ctx);
+    case 'swamp':
+      return profileSwamp(ctx);
+    case 'tundra':
+      return profileTundra(ctx);
+    case 'volcanic':
+      return profileVolcanic(ctx);
+    case 'city':
+      return profileCity(ctx);
+    default:
+      return profileForest(ctx);
+  }
+}
+
+/** Mistura os perfis segundo os pesos de bioma do ponto (pizza apenas no random). */
+function blendTerrainProfiles(
+  weights: Record<BiomeKind, number>,
+  ctx: ProfileContext,
+): TerrainProfile {
+  const result: TerrainProfile = { height: 0, water: 0, lava: 0, ash: 0 };
+  for (const biome of BIOME_LIST) {
+    const weight = weights[biome];
+    if (weight <= 0) continue;
+    const profile = terrainProfileFor(biome, ctx);
+    result.height += profile.height * weight;
+    result.water = Math.max(result.water, profile.water * weight);
+    result.lava = Math.max(result.lava, profile.lava * weight);
+    result.ash = Math.max(result.ash, profile.ash * weight);
+  }
+  return result;
+}
+
 const BIOME_LIST: readonly BiomeKind[] = [
   'forest',
   'desert',
   'swamp',
   'tundra',
   'volcanic',
+  'city',
 ];
 
 function sampleBiomeInfo(
@@ -121,19 +254,33 @@ function sampleBiomeInfo(
   cx: number,
   cz: number,
   seed: number,
+  forcedBiome?: BiomeKind
 ): { biome: BiomeKind; weights: Record<BiomeKind, number> } {
+  if (forcedBiome) {
+    const weights: { [key in BiomeKind]: number } = {
+      forest: 0,
+      desert: 0,
+      swamp: 0,
+      tundra: 0,
+      volcanic: 0,
+      city: 0,
+    };
+    weights[forcedBiome] = 1;
+    return { biome: forcedBiome, weights };
+  }
   const s = VOXEL_SIZE / 0.5;
   const angle = Math.atan2(vz - cz, vx - cx) + (seed % 11) * 0.55;
   const warp = (fbm2D(vx * 0.015 * s, vz * 0.015 * s, seed + 177) - 0.5) * 1.15;
   const sector = (((angle + warp) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   const pos = (sector / (Math.PI * 2)) * 5; // [0, 5)
 
-  const weights: Record<BiomeKind, number> = {
+  const weights: { [key in BiomeKind]: number } = {
     forest: 0,
     desert: 0,
     swamp: 0,
     tundra: 0,
     volcanic: 0,
+    city: 0,
   };
 
   let sum = 0;
@@ -168,6 +315,7 @@ export function createProceduralIsland(
   dimY: number,
   dimZ: number,
   meta?: IslandMeta,
+  forcedBiome?: BiomeKind
 ): VoxelGrid {
   const grid = new VoxelGrid(dimX, dimY, dimZ);
   const ziplineAnchors: Vec3[] = [];
@@ -177,6 +325,10 @@ export function createProceduralIsland(
   const resScale = 0.5 / VOXEL_SIZE; // 1.6 at 0.3125m
   const coordScale = VOXEL_SIZE / 0.5; // 0.625 at 0.3125m
   const maxTerrainH = Math.max(Math.round(24 * resScale), dimY - Math.round(11 * resScale));
+  // Vulcão fora do centro, posição determinística por seed.
+  const volcanoCxS = cx * coordScale + Math.sin(seed * 0.0011) * islandRadius * coordScale * 0.5;
+  const volcanoCzS = cz * coordScale + Math.cos(seed * 0.0017) * islandRadius * coordScale * 0.5;
+  const volcanoRadiusS = islandRadius * coordScale;
 
   const biomeMap = new Array<BiomeKind>(dimX * dimZ);
   const topHeightMap = new Int16Array(dimX * dimZ);
@@ -186,7 +338,7 @@ export function createProceduralIsland(
       const dx = (vx - cx) / islandRadius;
       const dz = (vz - cz) / islandRadius;
       const radial = Math.sqrt(dx * dx + dz * dz);
-      const { biome, weights } = sampleBiomeInfo(vx, vz, cx, cz, seed);
+      const { biome, weights } = sampleBiomeInfo(vx, vz, cx, cz, seed, forcedBiome);
       biomeMap[vx + vz * dimX] = biome;
 
       const sx = vx * coordScale;
@@ -197,41 +349,45 @@ export function createProceduralIsland(
       const ridge = Math.abs(detail - 0.5) * 2;
       const caveMask = fbm2D(sx * 0.075, sz * 0.075, seed + 719);
 
-      // Peninsulas, coves, and smoothly blended high-resolution biome elevation
+      // A costa continua irregular, mas o perfil do interior é definido pelo
+      // bioma — não mais por um cone radial único.
       const coastWarp = (n - 0.5) * 0.42 + (detail - 0.5) * 0.14;
       const distNorm = radial + coastWarp;
-      const islandMask = Math.max(0, 1 - Math.pow(Math.max(0, distNorm), 2.15));
+      const landMask = smoothstepRange(1.02, 0.74, distNorm);
+      const profile = blendTerrainProfiles(weights, {
+        sx,
+        sz,
+        seed,
+        n,
+        detail,
+        fine,
+        ridge,
+        volcanoCx: volcanoCxS,
+        volcanoCz: volcanoCzS,
+        volcanoRadius: volcanoRadiusS,
+      });
 
-      const inlandBand =
-        smoothstepRange(0.18, 0.34, radial) * smoothstepRange(0.92, 0.74, radial);
-      const swampMod = (-3.6 + (detail - 0.5) * 2.6) * inlandBand;
-      const desertMod = Math.sin(sx * 0.075 + sz * 0.04) * 2.0 + (fine - 0.5) * 0.9;
-      const volcanicMod = (2.6 + (1 - ridge) * 3.6) * smoothstepRange(0.14, 0.36, radial);
-      const tundraMod = (1.8 + n * 3.4) * smoothstepRange(0.14, 0.36, radial);
-
-      const biomeHeightMod =
-        weights.desert * desertMod +
-        weights.swamp * swampMod +
-        weights.tundra * tundraMod +
-        weights.volcanic * volcanicMod;
-
-      const poolStrength =
-        weights.swamp *
-        smoothstepRange(0.42, 0.22, detail) *
-        smoothstepRange(0.22, 0.36, radial) *
-        smoothstepRange(0.84, 0.7, radial);
-
-      let topVy = Math.round(
-        (2 +
-          islandMask * (14 + n * 24 + (1 - ridge) * 10 + biomeHeightMod + (fine - 0.5) * 1.4) -
-          poolStrength * 10) *
-          resScale,
-      );
+      let topVy = Math.round((2 + landMask * (profile.height + (fine - 0.5) * 1.2)) * resScale);
       if (distNorm > 1.04) {
-        topVy = Math.max(2, Math.round(2 * resScale)); // abyssal seabed
+        topVy = Math.max(2, Math.round(2 * resScale)); // assoalho oceânico
+      }
+      // Rios e lagos ficam abaixo da linha d'água; a lava acima dela.
+      if (profile.water > 0.45) {
+        topVy = Math.min(topVy, WATER_LEVEL_VOXEL - 1);
+      }
+      if (profile.lava > 0.45) {
+        topVy = Math.min(topVy, WATER_LEVEL_VOXEL + 2);
+        topVy = Math.max(topVy, WATER_LEVEL_VOXEL + 2);
       }
       topVy = Math.max(1, Math.min(maxTerrainH, topVy));
       topHeightMap[vx + vz * dimX] = topVy;
+
+      // Material de superfície imposto por rios/lagos/cinzas.
+      let surfaceOverride: number | null = null;
+      if (profile.lava > 0.45) surfaceOverride = MAT.LAVA;
+      else if (profile.water > 0.45 && biome === 'tundra') surfaceOverride = MAT.ICE;
+      else if (profile.ash > 0.55 && biome === 'volcanic') surfaceOverride = MAT.SCORCHED;
+      else if (biome === 'city') surfaceOverride = MAT.STONE;
 
       const caveMinVy = WATER_LEVEL_VOXEL + 2;
       const caveRoofPad = Math.round(4 * resScale);
@@ -303,6 +459,7 @@ export function createProceduralIsland(
         } else {
           mat = biome === 'volcanic' ? MAT.BASALT : MAT.STONE;
         }
+        if (vy === topVy && surfaceOverride !== null) mat = surfaceOverride;
         grid.set(vx, vy, vz, mat);
       }
 
@@ -580,12 +737,21 @@ export function createProceduralIsland(
     }
   }
 
-  // Pass 3: Scatter biome-specific flora & organic props strictly outside structure footprints
+  // Grande vulcão fora do centro, reforçando o cone gerado no relevo.
+  if (forcedBiome === 'volcanic' || biomeMap.includes('volcanic')) {
+    const volVx = Math.round(volcanoCxS / coordScale);
+    const volVz = Math.round(volcanoCzS / coordScale);
+    const volTop = topHeightMap[volVx + volVz * dimX] ?? WATER_LEVEL_VOXEL + 12;
+    if (grid.inBounds(volVx, volTop, volVz)) {
+      placeVolcanoMassif(grid, volVx, volVz, volTop);
+    }
+  }
+
+  // Pass 3: flora e props orgânicos, agora sorteados pelo catálogo de estruturas do bioma.
   const rockTopFlora = Math.round(26 * resScale);
   for (let vz = 27; vz < dimZ - 22; vz += 9) {
     for (let vx = 27; vx < dimX - 22; vx += 9) {
       if (structureMask[vx + vz * dimX] !== 0) continue;
-      // Ensure tree canopy / shrub edges won't brush against neighboring buildings
       let nearStructure = false;
       for (let oz = -4; oz <= 4 && !nearStructure; oz += 4) {
         for (let ox = -4; ox <= 4; ox += 4) {
@@ -607,47 +773,13 @@ export function createProceduralIsland(
 
       const biome = biomeMap[vx + vz * dimX];
       const roll = hash2D(vx, vz, seed + 557);
-      if (biome === 'forest') {
-        if (roll > 0.58) {
-          placeVoxelTree(grid, vx, topVy + 1, vz, hash2D(vx, vz, seed + 613) > 0.58, false);
-        } else if (roll < 0.14) {
-          placeFallenLog(grid, vx, topVy + 1, vz, hash2D(vx, vz, seed + 617) > 0.5);
-        } else if (roll < 0.24) {
-          placeShrubCluster(grid, vx, topVy + 1, vz, MAT.LEAVES);
-        }
-      } else if (biome === 'tundra') {
-        if (roll > 0.65) {
-          if (roll > 0.85) {
-            placeIceSpire(grid, vx, topVy + 1, vz);
-          } else {
-            placeVoxelTree(grid, vx, topVy + 1, vz, true, true);
-          }
-        } else if (roll < 0.12) {
-          placeShrubCluster(grid, vx, topVy + 1, vz, MAT.SNOW);
-        }
-      } else if (biome === 'desert') {
-        if (roll > 0.7) {
-          placeCactus(grid, vx, topVy + 1, vz, 6 + Math.floor((roll * 10) % 5));
-        } else if (roll < 0.11) {
-          placeDesertRockPillar(grid, vx, topVy + 1, vz);
-        }
-      } else if (biome === 'swamp') {
-        if (roll > 0.62) {
-          if (roll > 0.8) {
-            placeGiantMushroom(grid, vx, topVy + 1, vz);
-          } else {
-            placeVoxelTree(grid, vx, topVy + 1, vz, false, false, true);
-          }
-        } else if (roll < 0.16) {
-          placeFallenLog(grid, vx, topVy + 1, vz, hash2D(vx, vz, seed + 619) > 0.5, true);
-        }
-      } else if (biome === 'volcanic') {
-        if (roll > 0.8) {
-          placeVolcanicVent(grid, vx, topVy + 1, vz);
-        } else if (roll < 0.12) {
-          placeDesertRockPillar(grid, vx, topVy + 1, vz, true);
-        }
-      }
+      if (roll < 0.35) continue; // densidade base
+
+      const entry = pickCatalogStructure(
+        getBiomeStructures(biome),
+        hash2D(vx, vz, seed + 559),
+      );
+      placeCatalogStructure(entry, grid, vx, topVy + 1, vz, biome, seed);
     }
   }
 
@@ -656,6 +788,233 @@ export function createProceduralIsland(
   }
 
   return grid;
+}
+
+/** Palmeira / bananeira: tronco alto e copa radial (floresta). */
+function placePalmTree(grid: VoxelGrid, vx: number, baseVy: number, vz: number, banana = false): void {
+  const trunkH = 9;
+  for (let dy = 0; dy < trunkH; dy++) {
+    const bend = Math.floor(dy / 4);
+    fillAnchoredPillar(grid, vx + bend, vz, baseVy + dy, 1, MAT.WOOD);
+  }
+  const topX = vx + Math.floor(trunkH / 4);
+  const topY = baseVy + trunkH;
+  for (let d = 0; d < 8; d++) {
+    const ang = (d / 8) * Math.PI * 2;
+    for (let step = 1; step <= 4; step++) {
+      const fx = Math.round(topX + Math.cos(ang) * step);
+      const fz = Math.round(vz + Math.sin(ang) * step);
+      grid.set(fx, topY - Math.floor(step / 2), fz, banana ? MAT.LEAVES : MAT.MOSS);
+    }
+  }
+  if (banana) {
+    for (let d = 0; d < 3; d++) {
+      grid.set(topX + d - 1, topY - 1, vz + 1, MAT.GOLD);
+    }
+  }
+}
+
+/** Obelisco de arenito (deserto). */
+function placeObelisk(grid: VoxelGrid, vx: number, baseVy: number, vz: number): void {
+  fillAnchoredPillar(grid, vx, vz, baseVy, 1, MAT.TERRACOTTA);
+  for (let dy = 1; dy <= 12; dy++) {
+    const r = dy >= 10 ? 0 : 1;
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dz = -r; dz <= r; dz++) {
+        grid.set(vx + dx, baseVy + dy, vz + dz, MAT.SAND);
+      }
+    }
+  }
+  grid.set(vx, baseVy + 13, vz, MAT.GOLD);
+}
+
+/** Iglu com cúpula e entrada (tundra). */
+function placeIgloo(grid: VoxelGrid, vx: number, baseVy: number, vz: number): void {
+  const radius = 6;
+  for (let dy = 1; dy <= 5; dy++) {
+    const r = Math.round(radius * Math.sqrt(Math.max(0, 1 - (dy / 6) ** 2)));
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const d2 = dx * dx + dz * dz;
+        if (d2 <= r * r && d2 >= (r - 1) * (r - 1)) {
+          grid.set(vx + dx, baseVy + dy, vz + dz, MAT.ICE);
+        }
+      }
+    }
+  }
+  // Entrada virada para +z (abertura de 2 blocos).
+  grid.set(vx - 1, baseVy + 1, vz + radius, MAT.AIR);
+  grid.set(vx, baseVy + 1, vz + radius, MAT.AIR);
+  grid.set(vx + 1, baseVy + 1, vz + radius, MAT.AIR);
+  grid.set(vx, baseVy + 6, vz, MAT.SNOW);
+}
+
+/** Gruta rasa com entrada escavada (tundra). */
+function placeTundraCave(grid: VoxelGrid, vx: number, baseVy: number, vz: number): void {
+  for (let dz = -2; dz <= 5; dz++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const arch = Math.abs(dx) <= 2 - Math.floor(Math.abs(dz) / 4);
+      if (!arch) continue;
+      for (let dy = 0; dy <= 3; dy++) {
+        grid.set(vx + dx, baseVy + dy, vz + dz, MAT.AIR);
+      }
+      grid.set(vx + dx, baseVy + 4, vz + dz, MAT.SNOW);
+    }
+  }
+  grid.set(vx - 2, baseVy + 2, vz + 4, MAT.ICE);
+  grid.set(vx + 2, baseVy + 2, vz + 4, MAT.ICE);
+}
+
+/** Ruínas alagadas de construção (pântano). */
+function placeSwampRuins(grid: VoxelGrid, vx: number, baseVy: number, vz: number): void {
+  for (const [dx, dz, h] of [
+    [-3, -3, 5],
+    [3, -3, 4],
+    [-3, 3, 3],
+    [3, 3, 6],
+  ]) {
+    fillAnchoredPillar(grid, vx + dx, vz + dz, baseVy, h, MAT.STONE);
+  }
+  for (let dx = -3; dx <= 3; dx++) {
+    grid.set(vx + dx, baseVy + 2, vz - 3, MAT.MOSS);
+    grid.set(vx + dx, baseVy + 2, vz + 3, MAT.MOSS);
+  }
+  grid.set(vx, baseVy + 1, vz, MAT.SLUDGE);
+}
+
+/** Caldeira e espirais de basalto reforçando o vulcão do relevo. */
+function placeVolcanoMassif(grid: VoxelGrid, vx: number, vz: number, topY: number): void {
+  for (let ring = 0; ring < 3; ring++) {
+    const r = 4 + ring * 3;
+    for (let d = 0; d < 12; d++) {
+      const ang = (d / 12) * Math.PI * 2 + ring * 0.4;
+      const px = vx + Math.round(Math.cos(ang) * r);
+      const pz = vz + Math.round(Math.sin(ang) * r);
+      if (!grid.inBounds(px, topY + 8, pz)) continue;
+      fillAnchoredPillar(grid, px, pz, topY, 5 - ring, MAT.BASALT);
+      grid.set(px, topY + 6 - ring, pz, ring === 2 ? MAT.LAVA : MAT.SCORCHED);
+    }
+  }
+}
+
+/** Gera um prédio alto (Skyscraper). */
+function placeSkyscraper(grid: VoxelGrid, vx: number, vy: number, vz: number): void {
+  const height = 15 + Math.floor(Math.random() * 20);
+  const size = 3; 
+  const materials = [MAT.STONE, MAT.SCORCHED, MAT.DIRT];
+  const mat = materials[Math.floor(Math.random() * materials.length)];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = -size; x <= size; x++) {
+      for (let z = -size; z <= size; z++) {
+        if (Math.abs(x) === size || Math.abs(z) === size) {
+           grid.set(vx + x, vy + y, vz + z, mat);
+        }
+      }
+    }
+  }
+}
+
+/** Árvore morta: tronco e galhos sem copa (pântano). */
+function placeDeadTree(grid: VoxelGrid, vx: number, baseVy: number, vz: number): void {
+  for (let dy = 0; dy < 9; dy++) grid.set(vx, baseVy + dy, vz, MAT.WOOD);
+  for (const [dx, dy, dz] of [
+    [1, 5, 0], [2, 6, 0], [-1, 6, 0], [-2, 7, 0],
+    [0, 7, 1], [0, 8, -1], [1, 8, 1], [-1, 5, -1],
+  ]) {
+    grid.set(vx + dx, baseVy + dy, vz + dz, MAT.WOOD);
+  }
+}
+
+/** Aplica uma entrada do catálogo no ponto escolhido. */
+function placeCatalogStructure(
+  entry: StructureDefinition,
+  grid: VoxelGrid,
+  vx: number,
+  baseVy: number,
+  vz: number,
+  biome: BiomeKind,
+  seed: number,
+): void {
+  const roll = hash2D(vx, vz, seed + 887);
+  switch (entry.generator) {
+    case 'placeSkyscraper':
+      placeSkyscraper(grid, vx, baseVy, vz);
+      break;
+    case 'placeVoxelTree':
+      placeVoxelTree(grid, vx, baseVy, vz, entry.id === 'snow_pine' || biome === 'tundra', biome === 'tundra', biome === 'swamp');
+      break;
+    case 'placeDeadTree':
+      placeDeadTree(grid, vx, baseVy, vz);
+      break;
+    case 'placePalmTree':
+      placePalmTree(grid, vx, baseVy, vz, entry.id === 'banana_tree');
+      break;
+    case 'placeShrubCluster':
+      placeShrubCluster(grid, vx, baseVy, vz, biome === 'tundra' ? MAT.SNOW : MAT.LEAVES);
+      break;
+    case 'placeFallenLog':
+      placeFallenLog(grid, vx, baseVy, vz, roll > 0.5, biome === 'swamp');
+      break;
+    case 'placeGiantMushroom':
+      placeGiantMushroom(grid, vx, baseVy, vz);
+      break;
+    case 'placeCactus':
+      placeCactus(grid, vx, baseVy, vz, 6 + Math.floor(roll * 5));
+      break;
+    case 'placeDesertRockPillar':
+      placeDesertRockPillar(grid, vx, baseVy, vz, biome === 'volcanic');
+      break;
+    case 'placeIceSpire':
+      placeIceSpire(grid, vx, baseVy, vz);
+      break;
+    case 'placeVolcanicVent':
+      placeVolcanicVent(grid, vx, baseVy, vz);
+      break;
+    case 'placeIgloo':
+      placeIgloo(grid, vx, baseVy, vz);
+      break;
+    case 'placeTundraCave':
+      placeTundraCave(grid, vx, baseVy, vz);
+      break;
+    case 'placeSwampRuins':
+      placeSwampRuins(grid, vx, baseVy, vz);
+      break;
+    case 'placeStoneRuinArch':
+      placeStoneRuinArch(grid, vx, baseVy, vz, roll > 0.5);
+      break;
+    case 'placeObelisk':
+      placeObelisk(grid, vx, baseVy, vz);
+      break;
+    case 'placeDesertPyramid':
+      placeDesertPyramid(grid, vx, baseVy, vz);
+      break;
+    case 'placeHouse':
+    case 'placeWatchtower':
+    case 'placeVoxelCastle':
+    case 'placeTacticalBunker':
+    case 'placeLanternPost':
+      // Estruturas arquitetônicas grandes já são posicionadas na Passagem 2.
+      break;
+    default:
+      break;
+  }
+}
+
+/** Sorteia uma entrada do catálogo ponderada por `density`. */
+function pickCatalogStructure(
+  entries: readonly StructureDefinition[],
+  roll: number,
+): StructureDefinition {
+  const usable = entries.filter((entry) => entry.generator.startsWith('place'));
+  if (usable.length === 0) return entries[0];
+  const total = usable.reduce((sum, entry) => sum + entry.density, 0);
+  let acc = roll * total;
+  for (const entry of usable) {
+    acc -= entry.density;
+    if (acc <= 0) return entry;
+  }
+  return usable[usable.length - 1];
 }
 
 function buildZiplineRoutes(anchors: Vec3[]): IslandZipline[] {
@@ -1669,6 +2028,10 @@ export function collapseFloatingClusters(
   const maxY = Math.min(grid.dimY - 1, cy + boxHalfExtentVoxels);
   const minZ = Math.max(0, cz - boxHalfExtentVoxels);
   const maxZ = Math.min(grid.dimZ - 1, cz + boxHalfExtentVoxels);
+
+  if (minX > maxX || minY > maxY || minZ > maxZ) {
+    return { collapsed: [], deltas: [] };
+  }
 
   const sx = maxX - minX + 1;
   const sy = maxY - minY + 1;
