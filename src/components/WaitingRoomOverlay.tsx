@@ -223,39 +223,38 @@ export const WaitingRoomOverlay: React.FC<WaitingRoomOverlayProps> = ({
                               </div>
                             )}
 
-                            {/* Team selection for Arsenal teams mode - only for self, not host actions */}
-                            {m.id === lobby.playerId && lobby.gameMode === 'arsenal' && lobby.arsenalTeams && (
+                            {/* Team selection for Arsenal teams mode */}
+                            {lobby.gameMode === 'arsenal' && lobby.arsenalTeams && (
                               <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                                {m.team === null ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => onSelectTeam('blue')}
-                                      aria-label="Entrar no Time Azul"
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-sky-500/20 hover:bg-sky-500/35 border border-sky-400 text-sky-300 cursor-pointer text-[11px]"
-                                    >
-                                      🔵 Azul
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => onSelectTeam('orange')}
-                                      aria-label="Entrar no Time Laranja"
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400 text-amber-300 cursor-pointer text-[11px]"
-                                    >
-                                      🟠 Laranja
-                                    </button>
-                                  </>
-                                ) : (
-                                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold ${
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectTeam('blue')}
+                                  disabled={m.team === 'blue'}
+                                  aria-label="Entrar no Time Azul"
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border cursor-pointer text-[11px] ${
                                     m.team === 'blue'
-                                      ? 'bg-sky-500/20 border-sky-400 text-sky-300'
-                                      : 'bg-amber-500/20 border-amber-400 text-amber-300'
-                                  }`}>
-                                    {m.team === 'blue' ? '🔵 Time Azul' : '🟠 Time Laranja'}
-                                  </span>
-                                )}
+                                      ? 'bg-sky-500/40 border-sky-400 text-white cursor-default'
+                                      : 'bg-sky-500/20 hover:bg-sky-500/35 border-sky-400 text-sky-300'
+                                  }`}
+                                >
+                                  🔵 Azul
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectTeam('orange')}
+                                  disabled={m.team === 'orange'}
+                                  aria-label="Entrar no Time Laranja"
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border cursor-pointer text-[11px] ${
+                                    m.team === 'orange'
+                                      ? 'bg-amber-500/40 border-amber-400 text-white cursor-default'
+                                      : 'bg-amber-500/20 hover:bg-amber-500/35 border-amber-400 text-amber-300'
+                                  }`}
+                                >
+                                  🟠 Laranja
+                                </button>
                               </div>
                             )}
+
                           </div>
                         ))}
           </div>

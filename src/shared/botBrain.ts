@@ -444,9 +444,9 @@ export function computeLeadAimPoint(
 }
 
 export function selectBotTarget<
-  T extends Pick<PlayerNetState, 'id' | 'alive' | 'position' | 'hp' | 'isTypingPrompt'>,
+  T extends Pick<PlayerNetState, 'id' | 'alive' | 'position' | 'hp' | 'isTypingPrompt' | 'team'>,
 >(
-  bot: Pick<PlayerNetState, 'id' | 'position' | 'hp' | 'slots'>,
+  bot: Pick<PlayerNetState, 'id' | 'position' | 'hp' | 'slots' | 'team'>,
   candidates: T[],
   brain: BotBrainState,
   waterLevelWorld: number,
@@ -456,6 +456,9 @@ export function selectBotTarget<
 
   for (const c of candidates) {
     if (!c.alive || c.id === bot.id) continue;
+    // Friendly fire check: ignore team members
+    if (bot.team && c.team && c.team === bot.team) continue;
+
     const dist = Math.hypot(
       c.position.x - bot.position.x,
       c.position.y - bot.position.y,
@@ -508,10 +511,10 @@ export function selectBotTarget<
 export interface BotDecisionContext {
   bot: Pick<
     PlayerNetState,
-    'id' | 'position' | 'velocity' | 'yaw' | 'pitch' | 'hp' | 'heat' | 'overheatedUntil' | 'slots' | 'activeSlot' | 'canForgeWeapon' | 'massKg' | 'isTypingPrompt'
+    'id' | 'position' | 'velocity' | 'yaw' | 'pitch' | 'hp' | 'heat' | 'overheatedUntil' | 'slots' | 'activeSlot' | 'canForgeWeapon' | 'massKg' | 'isTypingPrompt' | 'team'
   >;
   grid: VoxelGrid;
-  enemies: Array<Pick<PlayerNetState, 'id' | 'alive' | 'position' | 'velocity' | 'hp' | 'isTypingPrompt' | 'massKg'>>;
+  enemies: Array<Pick<PlayerNetState, 'id' | 'alive' | 'position' | 'velocity' | 'hp' | 'isTypingPrompt' | 'massKg' | 'team'>>;
   lootDrops: LootDropState[];
   entities: SpawnedEntityNetState[];
   waterLevelWorld: number;
@@ -1021,18 +1024,39 @@ export function stepBotBrain(brain: BotBrainState, ctx: BotDecisionContext): Bot
     };
   }
 
-  // 6. Natural exploration / high-ground patrolling when no target is visible
+  // 6. Natural exploration / buddy system / high-ground patrolling when no target is visible
   brain.roamTimer -= dt;
   if (brain.roamTimer <= 0 || justGotStuck) {
-    brain.roamTimer = 2.4 + Math.random() * 2.8;
-    // Bias roam angle inward toward center of island / high ground so bots stay in the fight
-    const toCenter = Math.atan2(centerWorldX - bot.position.x, centerWorldZ - bot.position.z);
-    const distFromCenter = Math.hypot(bot.position.x - centerWorldX, bot.position.z - centerWorldZ);
-    const maxSpan = grid.dimX * VOXEL_SIZE * 0.26;
-    if (distFromCenter > maxSpan) {
-      brain.roamYaw = toCenter + (Math.random() - 0.5) * 0.7;
+    brain.roamTimer = 2.0 + Math.random() * 2.0;
+
+    // Buddy system: seek nearest ally
+    let nearestAlly: typeof bot | null = null;
+    let minDist = 40;
+    for (const p of enemies) {
+      if (p.id === bot.id || !p.alive) continue;
+      // Only same team (or any if teams are off)
+      if (bot.team && p.team && p.team !== bot.team) continue;
+      
+      const d = Math.hypot(p.position.x - bot.position.x, p.position.z - bot.position.z);
+      if (d < minDist) {
+        minDist = d;
+        nearestAlly = p as typeof bot;
+      }
+    }
+
+    if (nearestAlly) {
+      // Move towards ally
+      brain.roamYaw = Math.atan2(nearestAlly.position.x - bot.position.x, nearestAlly.position.z - bot.position.z);
     } else {
-      brain.roamYaw = toCenter + (Math.random() - 0.5) * 2.4;
+      // Explore toward center
+      const toCenter = Math.atan2(centerWorldX - bot.position.x, centerWorldZ - bot.position.z);
+      const distFromCenter = Math.hypot(bot.position.x - centerWorldX, bot.position.z - centerWorldZ);
+      const maxSpan = grid.dimX * VOXEL_SIZE * 0.26;
+      if (distFromCenter > maxSpan) {
+        brain.roamYaw = toCenter + (Math.random() - 0.5) * 0.7;
+      } else {
+        brain.roamYaw = toCenter + (Math.random() - 0.5) * 2.4;
+      }
     }
   }
 

@@ -44,6 +44,7 @@ import {
   type Vec3,
   type VoxelDelta,
   type WeaponBlueprint,
+  type BiomeKind,
 } from '../src/shared/types.ts';
 import type {
   DevActionPayload,
@@ -181,6 +182,7 @@ interface GameRoom {
   arsenalMaxKills: number;
   arsenalAutoEvents: boolean;
   arsenalTeams: boolean;
+  arsenalForcedBiome?: BiomeKind;
   grid: VoxelGrid;
   ziplines: IslandZipline[];
   deltas: VoxelDelta[];
@@ -641,10 +643,11 @@ export class RoomManager {
             fillWithBots?: boolean;
             startImmediately?: boolean;
             arsenalMatchDuration?: number;
-            arsenalMaxKills?: number;
-            arsenalAutoEvents?: boolean;
-            arsenalTeams?: boolean;
-          },
+                        arsenalMaxKills?: number;
+                        arsenalAutoEvents?: boolean;
+                        arsenalTeams?: boolean;
+                        arsenalForcedBiome?: BiomeKind;
+                      },
         ): { room: GameRoom; playerId: string } | null {
       const requestedId = this.sanitizeRoomId(opts.roomId);
       const roomId = requestedId || this.generateUniqueRoomId();
@@ -697,6 +700,7 @@ export class RoomManager {
                 arsenalMaxKills: Math.max(5, Math.min(100, Math.round(opts.arsenalMaxKills ?? 20))),
                 arsenalAutoEvents: opts.arsenalAutoEvents ?? true,
                 arsenalTeams: opts.arsenalTeams ?? false,
+                arsenalForcedBiome: opts.arsenalForcedBiome,
                 grid: new VoxelGrid(1, 1, 1),
               ziplines: [],
             deltas: [],
@@ -990,7 +994,7 @@ export class RoomManager {
       console.warn('[Pool] falha ao montar arsenal da sala:', (err as Error).message);
     }
     const islandMeta: IslandMeta = { ziplines: [] };
-    room.grid = createProceduralIsland(room.seed, dimX, dimY, dimZ, islandMeta);
+    room.grid = createProceduralIsland(room.seed, dimX, dimY, dimZ, islandMeta, room.arsenalForcedBiome);
     room.ziplines = islandMeta.ziplines;
     room.deltas = [];
     room.pendingTickDeltas = [];
@@ -1672,15 +1676,16 @@ export class RoomManager {
             }
 
             case 'room:select_team': {
-              if (room.phase !== 'lobby') return;
-              if (!room.arsenalTeams) return;
-              const team = msg.payload?.team as TeamId | undefined;
-              if (team !== 'blue' && team !== 'orange') return;
-              if (player.isBot) return;
-              player.team = team;
-              this.broadcastLobbyState(room);
-              break;
-            }
+                          if (!room.arsenalTeams) return;
+                          if (player.isBot) return;
+                          const team = msg.payload?.team as TeamId | undefined;
+                          if (team !== 'blue' && team !== 'orange') return;
+                          player.team = team;
+                          if (room.phase === 'lobby') {
+                            this.broadcastLobbyState(room);
+                          }
+                          break;
+                        }
           }
         }
 
@@ -2379,15 +2384,26 @@ export class RoomManager {
   }
 
   private damagePlayer(
-    room: GameRoom,
-    victim: ServerPlayer,
-    amount: number,
-    attacker: ServerPlayer | null,
-    reason: string,
-  ): void {
-    if (!victim.alive) return;
-    if (this.devEnabled && room.devGodMode && !victim.isBot) return;
-    if (amount > 0 && this.relicBlocksDamage(victim, reason)) return;
+      room: GameRoom,
+      victim: ServerPlayer,
+      amount: number,
+      attacker: ServerPlayer | null,
+      reason: string,
+    ): void {
+      if (!victim.alive) return;
+      if (this.devEnabled && room.devGodMode && !victim.isBot) return;
+      // Friendly fire prevention in Arsenal team mode
+      if (
+        room.gameMode === 'arsenal' &&
+        room.arsenalTeams &&
+        attacker &&
+        attacker.team &&
+        victim.team &&
+        attacker.team === victim.team
+      ) {
+        return; // No friendly fire
+      }
+      if (amount > 0 && this.relicBlocksDamage(victim, reason)) return;
     if (amount > 0 && victim.shieldHp > 0) {
       const absorbed = Math.min(victim.shieldHp, amount);
       victim.shieldHp = Math.max(0, victim.shieldHp - absorbed);
@@ -4797,33 +4813,35 @@ export class RoomManager {
   }
 
   private buildLobbyStatePayload(room: GameRoom, playerId: string): LobbyStatePayload {
-      const members = Array.from(room.players.values())
-        .filter((p) => !p.isBot && p.ws !== null)
-        .sort((a, b) => a.joinedAt - b.joinedAt)
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          color: p.color,
-          isHost: p.id === room.hostId,
-          joinedAt: p.joinedAt,
-          team: p.team,
-        }));
-      const hostName = room.players.get(room.hostId)?.name ?? members[0]?.name ?? 'Master';
-      return {
-        roomId: room.id,
-        roomName: room.name,
-        playerId,
-        hostId: room.hostId,
-        hostName,
-        accessMode: room.accessMode,
-        hasPassword: room.accessMode === 'password',
-        targetPlayers: room.targetPlayers,
-        fillWithBots: room.fillWithBots,
-        phase: room.phase,
-        members,
-        devMode: this.devEnabled,
-      };
-    }
+        const members = Array.from(room.players.values())
+          .filter((p) => !p.isBot && p.ws !== null)
+          .sort((a, b) => a.joinedAt - b.joinedAt)
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            isHost: p.id === room.hostId,
+            joinedAt: p.joinedAt,
+            team: p.team,
+          }));
+        const hostName = room.players.get(room.hostId)?.name ?? members[0]?.name ?? 'Master';
+        return {
+          roomId: room.id,
+          roomName: room.name,
+          playerId,
+          hostId: room.hostId,
+          hostName,
+          accessMode: room.accessMode,
+          hasPassword: room.accessMode === 'password',
+          targetPlayers: room.targetPlayers,
+          fillWithBots: room.fillWithBots,
+          phase: room.phase,
+          members,
+          devMode: this.devEnabled,
+          gameMode: room.gameMode,
+          arsenalTeams: room.arsenalTeams,
+        };
+      }
 
   private broadcastLobbyState(room: GameRoom): void {
     for (const p of room.players.values()) {
@@ -4913,6 +4931,7 @@ export class RoomManager {
                     arsenalMaxKills: room.arsenalMaxKills,
                     arsenalAutoEvents: room.arsenalAutoEvents,
                     arsenalTeams: room.arsenalTeams,
+                    arsenalForcedBiome: room.arsenalForcedBiome,
                   } : {}),
         };
       }

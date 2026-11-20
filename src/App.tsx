@@ -53,6 +53,7 @@ import {
   type PromptKind,
   type RoomAccessMode,
   type GameMode,
+  type BiomeKind,
   type RoomInitWirePayload,
   type RoomMatchSummary,
   type RoomPublicSummary,
@@ -121,6 +122,7 @@ export default function App() {
   const [arsenalMatchDuration, setArsenalMatchDuration] = useState(300);
   const [arsenalMaxKills, setArsenalMaxKills] = useState(20);
   const [arsenalTeams, setArsenalTeams] = useState(false);
+  const [arsenalForcedBiome, setArsenalForcedBiome] = useState<BiomeKind>('forest');
   const [lobbyState, setLobbyState] = useState<LobbyStatePayload | null>(null);
 
   const [rooms, setRooms] = useState<RoomPublicSummary[]>([]);
@@ -200,6 +202,7 @@ export default function App() {
   const [nearbyLootName, setNearbyLootName] = useState<string | null>(null);
   const [nearbyZipline, setNearbyZipline] = useState<string | null>(null);
   const [showScoreboard, setShowScoreboard] = useState(false);
+  const [showTeamSwitcher, setShowTeamSwitcher] = useState(false);
 
   const [islandSizeMeters, setIslandSizeMeters] = useState(88);
   const [lootDrops, setLootDrops] = useState<LootDropState[]>([]);
@@ -224,6 +227,7 @@ export default function App() {
   const rafflePlayerIdRef = useRef<string | null>(null);
   const lastHudSyncRef = useRef<number>(0);
   const prevHpRef = useRef<number | null>(null);
+  const prevTeamRef = useRef<string | null>(null);
   const prevAliveRef = useRef<Map<string, boolean>>(new Map());
   const prevCanForgeRef = useRef<boolean>(false);
   const damageFlashTimerRef = useRef<number | null>(null);
@@ -743,6 +747,7 @@ export default function App() {
           if (init.arsenalMatchDuration) setArsenalMatchDuration(init.arsenalMatchDuration);
           if (init.arsenalMaxKills) setArsenalMaxKills(init.arsenalMaxKills);
           if (init.arsenalTeams !== undefined) setArsenalTeams(init.arsenalTeams);
+          if (init.arsenalForcedBiome !== undefined) setArsenalForcedBiome(init.arsenalForcedBiome);
           setServerDevMode(Boolean(init.devMode));
           if (init.devState) setDevState(init.devState);
           setLocalPlayerId(init.playerId);
@@ -957,6 +962,10 @@ export default function App() {
 
           const local = tick.players.find((p) => p.id === localPlayerIdRef.current);
           if (local) {
+            if (prevTeamRef.current !== local.team) {
+              prevTeamRef.current = local.team ?? null;
+              arenaRef.current?.updateLocalPlayerTeam(local.team as any);
+            }
             if (prevHpRef.current !== null && local.hp < prevHpRef.current - 0.5) {
               soundSynth.playDamageTaken();
               setDamageFlash(true);
@@ -989,6 +998,7 @@ export default function App() {
           } else {
             prevCanForgeRef.current = false;
             prevHpRef.current = null;
+            prevTeamRef.current = null;
           }
 
           if (tick.phase === 'ended') {
@@ -1063,6 +1073,9 @@ export default function App() {
       fillWithBots: boolean;
       arsenalMatchDuration: number;
       arsenalMaxKills: number;
+      arsenalAutoEvents: boolean;
+      arsenalTeams: boolean;
+      arsenalForcedBiome?: BiomeKind;
     }) => {
       openSocketAndSend({
         type: 'room:create',
@@ -1175,6 +1188,9 @@ export default function App() {
         } else if (gameStateRef.current === 'paused') {
           setGameState('playing');
         }
+      } else if (e.code === 'KeyN' && gameStateRef.current === 'playing' && gameMode === 'arsenal') {
+        e.preventDefault();
+        setShowTeamSwitcher(true);
       } else if (e.code === 'Tab' && gameStateRef.current === 'playing') {
         e.preventDefault();
         setShowScoreboard(true);
@@ -1473,6 +1489,33 @@ export default function App() {
         />
       )}
 
+      {showTeamSwitcher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#0b101b] border border-white/10 rounded-xl p-6 shadow-2xl w-80">
+            <h2 className="text-xl font-bold text-white mb-4 text-center">Escolha o Time</h2>
+            <div className="flex gap-4">
+              <button
+                onClick={() => {
+                  sendWs({ type: 'room:select_team', payload: { team: 'blue' } });
+                  setShowTeamSwitcher(false);
+                }}
+                className="flex-1 bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400 text-sky-200 py-4 rounded-lg font-bold cursor-pointer"
+              >
+                🔵 Azul
+              </button>
+              <button
+                onClick={() => {
+                  sendWs({ type: 'room:select_team', payload: { team: 'orange' } });
+                  setShowTeamSwitcher(false);
+                }}
+                className="flex-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400 text-amber-200 py-4 rounded-lg font-bold cursor-pointer"
+              >
+                🟠 Laranja
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {gameState === 'playing' && promptMode === null && (
         <GameHud
           localPlayer={localPlayer}
@@ -1550,26 +1593,27 @@ export default function App() {
 
       {(gameState === 'paused' || gameState === 'gameover') && (
         <StatusModal
-          kind={gameState}
-          localPlayerId={localPlayerId}
-          roomId={roomId}
-          hostId={hostId}
-          hostName={hostName}
-          accessMode={roomAccessMode}
-          summary={summary}
-          localAlive={Boolean(localPlayer?.alive)}
-          gameMode={gameMode}
-          onResume={() => {
-            setGameState('playing');
-            canvasRef.current?.focus();
-          }}
-          onRestart={handleRestart}
-          onUpdateAccess={(accessMode, password) =>
-            sendWs({ type: 'room:update_settings', payload: { accessMode, password } })
-          }
-          onOpenSettings={openSettings}
-          onBackToTitle={handleBackToTitle}
-        />
+                  kind={gameState}
+                  localPlayerId={localPlayerId}
+                  roomId={roomId}
+                  hostId={hostId}
+                  hostName={hostName}
+                  accessMode={roomAccessMode}
+                  summary={summary}
+                  localAlive={Boolean(localPlayer?.alive)}
+                  gameMode={gameMode}
+                  onResume={() => {
+                    setGameState('playing');
+                    canvasRef.current?.focus();
+                  }}
+                  onRestart={handleRestart}
+                  onUpdateAccess={(accessMode, password) =>
+                    sendWs({ type: 'room:update_settings', payload: { accessMode, password } })
+                  }
+                  onOpenSettings={openSettings}
+                  onSwitchTeam={() => setShowTeamSwitcher(true)}
+                  onBackToTitle={handleBackToTitle}
+                />
       )}
 
       {settingsOpen && (
@@ -1581,6 +1625,8 @@ export default function App() {
           onQualityChange={handleQualityChange}
           onToggleFullscreen={() => void toggleFullscreen()}
           onClose={closeSettings}
+          onSwitchTeam={() => setShowTeamSwitcher(true)}
+          gameMode={gameMode}
         />
       )}
     </main>

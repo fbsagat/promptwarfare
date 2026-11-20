@@ -26,6 +26,8 @@ interface SettingsModalProps {
   onQualityChange: (level: QualityLevel) => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
+  onSwitchTeam?: () => void;
+  gameMode?: string;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -36,6 +38,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onQualityChange,
   onToggleFullscreen,
   onClose,
+  onSwitchTeam,
+  gameMode,
 }) => {
   const patch = (partial: Partial<GameSettings>) => {
     onChange({ ...settings, ...partial });
@@ -72,6 +76,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="p-5 space-y-6">
+          {onSwitchTeam && gameMode === 'arsenal' && (
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <MousePointer2 className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-400">
+                  Ações do Arsenal
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => { onSwitchTeam(); onClose(); }}
+                className="w-full h-10 px-3 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/50 text-xs font-bold text-emerald-100 cursor-pointer flex items-center justify-center gap-2"
+              >
+                Trocar de Time
+              </button>
+            </section>
+          )}
           <section>
             <div className="flex items-center gap-2 mb-3">
               <Volume2 className="w-4 h-4 text-sky-300" />
