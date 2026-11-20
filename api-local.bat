@@ -87,6 +87,7 @@ if not defined PROMPT_LEDGER_DB_PATH set "PROMPT_LEDGER_DB_PATH=./data/local/pro
 
 echo   Modo      : strict (NODE_ENV=production, SERVE_CLIENT=false)
 echo   Porta     : %API_PORT%  ^(HOST=%HOST%^)
+echo   Dev tools : desativadas ^(F8 nao aparece; use MODE=dev^)
 echo   Ledger    : %PROMPT_LEDGER_DB_PATH%
 echo   CORS      : %CORS_ORIGINS%
 echo.
@@ -104,10 +105,14 @@ set "NODE_ENV=development"
 set "SERVE_CLIENT=true"
 set "PORT=%API_PORT%"
 if not defined PROMPT_LEDGER_DB_PATH set "PROMPT_LEDGER_DB_PATH=./data/local/prompt-ledger.db"
+rem Em dev o Vite embutido serve o cliente, mas o frontend.bat na 5173
+rem tambem precisa de CORS liberado para a API nao bloquear o /api/health.
+if not defined CORS_ORIGINS set "CORS_ORIGINS=http://localhost:%FRONTEND_PORT%,http://127.0.0.1:%FRONTEND_PORT%"
 
 echo   Modo      : dev (npm run dev, handshake afrouxado)
 echo   Porta     : %API_PORT%  ^(HOST=%HOST%^)
-echo   Frontend  : http://localhost:%API_PORT%  ^(Vite embutido, nao use frontend.bat^)
+echo   Dev tools : ativas ^(tecla F8 durante a partida^)
+echo   Frontend  : http://localhost:%API_PORT%  ^(Vite embutido; frontend.bat na 5173 tambem funciona^)
 echo.
 echo [..] Iniciando npm run dev em segundo plano...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Start-Process -FilePath 'npm.cmd' -ArgumentList 'run','dev' -WorkingDirectory '%CD%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath '%PID_FILE%' -Value $p.Id -Encoding ascii"
@@ -134,7 +139,8 @@ echo.
 if /i "%MODE%"=="dev" (
   echo   API       : http://localhost:%API_PORT%
   echo   WebSocket : ws://localhost:%API_PORT%/ws
-  echo   Frontend  : http://localhost:%API_PORT%
+  echo   Frontend  : http://localhost:%API_PORT%  ^(ou 5173 via frontend.bat^)
+  echo   Dev tools : F8 durante a partida
 ) else (
   echo   API       : http://localhost:%API_PORT%
   echo   WebSocket : ws://localhost:%API_PORT%/ws
@@ -142,6 +148,7 @@ if /i "%MODE%"=="dev" (
   echo   Assets    : http://localhost:%API_PORT%/assets/files
   echo.
   echo   Frontend  : frontend.bat API_URL=http://localhost:%API_PORT%
+  echo   Dev tools : desativadas ^(pare e rode com MODE=dev para usar F8^)
 )
 echo.
 echo   Logs : api-local.bat logs

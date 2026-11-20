@@ -112,7 +112,18 @@ Sem argumento abre o menu interativo. Também aceita `up` (build + subir), `star
 api-local.bat
 ```
 
-Sobe `node server.ts` em segundo plano na porta 3100, com `NODE_ENV=production` e `SERVE_CLIENT=false` (mesmo contrato de handshake do Docker). Usa `data/local/prompt-ledger.db`, separado do ledger do container, e imprime um aviso de que não é referência. Comandos: `start`, `stop`, `status`, `logs`, `help`. Use `MODE=dev` para rodar `npm run dev` (API + Vite no mesmo processo, handshake afrouxado). Opções: `API_PORT` (3100), `HOST` (127.0.0.1), `FRONTEND_PORT` (5173), `CORS_ORIGINS`, `ASSET_BASE_URL`, `PROMPT_LEDGER_DB_PATH`, `FORCE=1`, `NO_PAUSE=1`.
+Sobe `node server.ts` em segundo plano na porta 3100, com `NODE_ENV=production` e `SERVE_CLIENT=false` (mesmo contrato de handshake do Docker). Usa `data/local/prompt-ledger.db`, separado do ledger do container, e imprime um aviso de que não é referência. Comandos: `start`, `stop`, `status`, `logs`, `help`. Opções: `API_PORT` (3100), `HOST` (127.0.0.1), `FRONTEND_PORT` (5173), `CORS_ORIGINS`, `ASSET_BASE_URL`, `PROMPT_LEDGER_DB_PATH`, `FORCE=1`, `NO_PAUSE=1`.
+
+Com `MODE=dev` o mesmo script roda `npm run dev` (`tsx server.ts` em modo desenvolvimento): **um único processo** que serve a API, o WebSocket e o Vite com HMR na mesma porta, com handshake afrouxado e as **ferramentas de dev do jogo** liberadas (painel **F8** durante a partida: spawn de armas/eventos do catálogo, bots, alvo de treino, eventos pausados). Nesse modo a tecla F8 só funciona em partida, não no menu:
+
+```bat
+set MODE=dev
+api-local.bat
+```
+
+Abra <http://localhost:3100> (ou `API_PORT`, se você trocou) e pare com `api-local.bat stop`. O `frontend.bat` na 5173 também funciona junto — o script já libera essa origem no CORS.
+
+As ferramentas de dev do jogo são **duplamente bloqueadas**: precisam do cliente servido pelo Vite em modo dev **e** da API com `NODE_ENV` diferente de `production`. Por isso o container Docker (`api-docker.bat`) e o modo strict do `api-local.bat` **não** mostram o F8 — é proposital, para essas ferramentas nunca existirem em produção.
 
 **Frontend**
 
