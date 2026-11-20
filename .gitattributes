@@ -1,3 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 *.sh text eol=lf
+# cmd.exe exige CRLF: batch com LF quebra `call :label`/`goto :label`.
+*.bat text eol=crlf
+*.cmd text eol=crlf

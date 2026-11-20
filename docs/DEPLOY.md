@@ -44,6 +44,23 @@ PROMPT_LEDGER_POSTGRES_URL=postgresql://promptwarfare:<senha>@postgres:5432/prom
 
 A stack `memetrigger` já contém Prometheus, Grafana e Uptime Kuma. O scrape `pw_api:3000/metrics`, o dashboard `Prompt Warfare` e as regras do grupo `promptwarfare` estão em `monitoring/` do projeto principal. No Uptime Kuma, crie um monitor HTTP de 60s para `http://pw_api:3000/api/health` (interno) ou para a URL pública `/api/health`.
 
+### Ambiente local (Docker = referência, local = testes)
+
+O `docker-compose.yml` da raiz sobe a mesma imagem de produção na porta 3000 e é o servidor de referência para testes da equipe:
+
+```bash
+docker compose up -d --build
+curl http://localhost:3000/api/health
+```
+
+No Windows, os scripts separam as responsabilidades:
+
+- `api-docker.bat` (menu interativo ou `up`, `start`, `restart`, `rebuild`, `status`, `health`, `logs`, `urls`, `stop`, `down`) sobe a API no container. É o caminho de aceite: valida handshake estrito, CORS, assets e o bundle real de produção.
+- `api-local.bat` sobe `node server.ts` sem Docker na porta 3100, com `NODE_ENV=production`/`SERVE_CLIENT=false` e ledger em `data/local/prompt-ledger.db`. Serve para a equipe testar gameplay; **não** é referência de aceite. `MODE=dev` roda `npm run dev` (handshake afrouxado).
+- `frontend.bat` sobe o Vite em 5173 apontando para `API_URL` (padrão `http://localhost:3000`; se `API_URL` não for definido, detecta 3000 ou 3100) e não sobe quando health ou CORS falham.
+
+Cada membro roda o próprio par API+frontend: as salas são em memória, então não há partida compartilhada. O `CORS_ORIGINS` do container é fixado na criação; para outra porta de frontend, defina `FRONTEND_PORT=5174` e recrie com `api-docker.bat up`. Opções: `API_PORT`, `FRONTEND_PORT`, `NO_OPEN=1`, `NO_PAUSE=1`, `LOG_LINES`, `FORCE=1`.
+
 ## 1. VPS (API + WebSocket)
 
 ### Requisitos
@@ -267,9 +284,22 @@ Nunca publique `0.0.0.0:3000`; o WebSocket e a API devem passar pelo proxy com T
 
 Se preferir Bun na Vercel, troque o `installCommand` para `bun install` e configure o runtime/versão do Bun no projeto. O caminho com npm acima é o que está validado neste repositório.
 
+### Ordem de deploy (handshake de protocolo)
+
+Cliente e API comparam `PROTOCOL_VERSION` (`src/shared/protocol.ts`) por igualdade exata. Ao mudar qualquer mensagem WS/HTTP:
+
+1. Suba `PROTOCOL_VERSION` no mesmo commit.
+2. Publique a VPS primeiro (se possível) e a Vercel em seguida, ou aceite uma janela curta de bloqueio.
+3. Clientes com a versão anterior ficam no overlay "Versão desatualizada" até recarregar; isso é esperado e evita estado corrompido.
+4. Confira `GET /api/health` na VPS: deve conter `protocol: "prompt-warfare"` e o `protocolVersion` novo.
+
+Não há tolerância N-1: durante a troca, clientes antigos são recusados no WS com `CLIENT_OUTDATED`/`SERVER_OUTDATED`. Faça o rollout dos dois lados na mesma janela.
+
 ## 3. Checklist
 
+- [ ] O fluxo foi validado no container local (`api-docker.bat up` ou `docker compose up -d --build`), não apenas em `api-local.bat`/`npm run dev`.
 - [ ] `https://api.<domínio>/api/health` responde sem erro de TLS.
+- [ ] `GET /api/health` devolve `protocol: "prompt-warfare"` e o `protocolVersion` esperado pelo build da Vercel.
 - [ ] `GET /api/rooms` com `Origin: https://<frontend>` devolve `Access-Control-Allow-Origin` correto.
 - [ ] O navegador abre `wss://api.<domínio>/ws` (sem erro de mixed content).
 - [ ] `CORS_ORIGINS` contém o domínio de produção e os previews necessários.
@@ -282,7 +312,7 @@ Se preferir Bun na Vercel, troque o `installCommand` para `bun install` e config
 
 ## Limites atuais
 
-- Não há autenticação nem rate limiting. CORS e a checagem de origem do WebSocket não são barreiras de segurança contra clientes que não sejam navegadores.
+- Não há autenticação nem rate limiting. CORS e a checagem de origem do WebSocket não são barreiras de segurança contra clientes que não sejam navegadores; o `client:hello` só garante compatibilidade de protocolo.
 - Salas são perdidas ao reiniciar a VPS.
 - O estado em memória assume uma única instância; não escale horizontalmente sem repensar salas e WebSocket.
 - O jogo não depende de IA nem de rede externa: o catálogo versionado é a fonte de conteúdo.

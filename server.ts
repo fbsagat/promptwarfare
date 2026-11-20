@@ -27,6 +27,12 @@ import { buildMetricsSnapshot, type MetricsSnapshot } from './server/metrics.ts'
 import { renderPrometheusMetrics } from './server/prometheus.ts';
 import { aggregateUsageWeights } from './server/contentPool.ts';
 import { RoomManager } from './server/roomManager.ts';
+import {
+  HANDSHAKE_TIMEOUT_MS,
+  PROTOCOL_NAME,
+  PROTOCOL_VERSION,
+  evaluateHello,
+} from './src/shared/protocol.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +44,9 @@ async function startServer() {
   const HOST = process.env.HOST?.trim() || '0.0.0.0';
   const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGINS);
   const serveClient = process.env.SERVE_CLIENT !== 'false';
+  // Em produção o handshake é obrigatório e a versão precisa bater exatamente.
+  // Em dev aceitamos divergência com aviso para não travar iteração local.
+  const strictHandshake = process.env.NODE_ENV === 'production';
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -152,6 +161,8 @@ async function startServer() {
     const stats = roomManager.getRuntimeStats();
     res.json({
       ok: true,
+      protocol: PROTOCOL_NAME,
+      protocolVersion: PROTOCOL_VERSION,
       rooms: stats.rooms,
       playing: stats.playing,
       lobby: stats.lobby,
@@ -308,6 +319,38 @@ async function startServer() {
 
     let boundRoomId: string | null = null;
     let boundPlayerId: string | null = null;
+    let handshakeOk = false;
+
+    const sendProtocolAck = () => {
+      ws.send(
+        JSON.stringify({
+          type: 'client:hello_ack',
+          payload: { protocol: PROTOCOL_NAME, protocolVersion: PROTOCOL_VERSION },
+        }),
+      );
+    };
+
+    const helloTimeout = setTimeout(() => {
+      if (handshakeOk) return;
+      try {
+        ws.send(
+          JSON.stringify({
+            type: 'room:error',
+            payload: {
+              code: 'HELLO_TIMEOUT',
+              message: 'Verificação de protocolo não concluída. Recarregue a página.',
+              protocol: PROTOCOL_NAME,
+              protocolVersion: PROTOCOL_VERSION,
+            },
+          }),
+        );
+      } catch {
+        // socket já fechando: o close handler limpa o timeout
+      } finally {
+        ws.close(1008, 'Handshake timeout');
+      }
+    }, HANDSHAKE_TIMEOUT_MS);
+    helloTimeout.unref?.();
 
     const releaseCurrentBinding = () => {
       if (boundRoomId && boundPlayerId) {
@@ -320,6 +363,56 @@ async function startServer() {
     ws.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
+
+        // Handshake: primeira mensagem obrigatória em produção.
+        if (msg?.type === 'client:hello') {
+          const check = evaluateHello(msg.payload);
+          if (check.ok || !strictHandshake) {
+            if (!check.ok) {
+              console.warn('[Handshake] protocolo divergente em dev; aceitando cliente.', {
+                clientVersion: check.remoteVersion,
+                serverVersion: PROTOCOL_VERSION,
+              });
+            }
+            handshakeOk = true;
+            clearTimeout(helloTimeout);
+            sendProtocolAck();
+            return;
+          }
+          ws.send(
+            JSON.stringify({
+              type: 'room:error',
+              payload: {
+                code: check.code ?? 'PROTOCOL_MISMATCH',
+                message:
+                  'Cliente e servidor estão em versões diferentes. Recarregue o jogo para atualizar.',
+                clientVersion: check.remoteVersion,
+                serverVersion: PROTOCOL_VERSION,
+              },
+            }),
+          );
+          ws.close(1008, 'Protocol mismatch');
+          return;
+        }
+
+        if (!handshakeOk) {
+          if (strictHandshake) {
+            ws.send(
+              JSON.stringify({
+                type: 'room:error',
+                payload: {
+                  code: 'HANDSHAKE_REQUIRED',
+                  message: 'Verificação de protocolo pendente. Recarregue a página.',
+                  protocolVersion: PROTOCOL_VERSION,
+                },
+              }),
+            );
+            return;
+          }
+          handshakeOk = true;
+          clearTimeout(helloTimeout);
+        }
+
         if (msg?.type === 'rooms:list') {
           ws.send(JSON.stringify({ type: 'rooms:list', payload: { rooms: roomManager.getRoomList() } }));
           return;
@@ -393,6 +486,7 @@ async function startServer() {
     });
 
     ws.on('close', () => {
+      clearTimeout(helloTimeout);
       releaseCurrentBinding();
     });
   });

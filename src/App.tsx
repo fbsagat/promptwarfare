@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { BootGate } from './components/BootGate.tsx';
+import { ConnectionBanner } from './components/ConnectionBanner.tsx';
 import { DevPanel } from './components/DevPanel.tsx';
 import { GameHud } from './components/GameHud.tsx';
 import { LobbyOverlay } from './components/LobbyOverlay.tsx';
@@ -28,6 +30,13 @@ import {
 } from './shared/contentHydration.ts';
 import { isClientDevEnabled } from './shared/devMode.ts';
 import { buildHttpUrl, buildWsUrl } from './shared/endpoints.ts';
+import {
+  buildClientHello,
+  checkHealthPayload,
+  evaluateHelloAck,
+  isBootFailureCode,
+  type ProtocolFailureCode,
+} from './shared/protocol.ts';
 import {
   VOXEL_SIZE,
   type ContentItemsPayload,
@@ -120,6 +129,20 @@ export default function App() {
   const [loadingRooms, setLoadingRooms] = useState(false);
 
   const [connecting, setConnecting] = useState(false);
+
+  // Handshake cliente <-> API: nada é renderizado/jogado antes de `ready`.
+  const [bootPhase, setBootPhase] = useState<'checking' | 'ready' | 'unreachable' | 'incompatible'>(
+    'checking',
+  );
+  const [bootCode, setBootCode] = useState<ProtocolFailureCode | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const [bootRetryInSec, setBootRetryInSec] = useState<number | null>(null);
+  const bootAttemptRef = useRef(0);
+  const bootAbortRef = useRef<AbortController | null>(null);
+
+  const [connectionLost, setConnectionLost] = useState(false);
+  const [connectionChecking, setConnectionChecking] = useState(false);
+  const [connectionServerBack, setConnectionServerBack] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [errorRoomId, setErrorRoomId] = useState<string | null>(null);
@@ -216,6 +239,108 @@ export default function App() {
     arenaRef.current?.setMode(gameState === 'waiting' ? 'title' : gameState);
   }, [gameState]);
 
+  /**
+   * Handshake de boot: confirma que a API responde e fala o mesmo protocolo.
+   * Só então o app inteiro (menu, assets, WS) é liberado.
+   */
+  const verifyServer = useCallback(async () => {
+    bootAttemptRef.current += 1;
+    setBootAttempt(bootAttemptRef.current);
+    setBootPhase('checking');
+    setBootCode(null);
+    setBootRetryInSec(null);
+
+    bootAbortRef.current?.abort();
+    const controller = new AbortController();
+    bootAbortRef.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 8000);
+
+    try {
+      const res = await fetch(buildHttpUrl('/api/health', API_URL), {
+        signal: controller.signal,
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload: unknown = await res.json();
+      const check = checkHealthPayload(payload);
+      if (check.ok) {
+        setBootCode(null);
+        setBootPhase('ready');
+        return;
+      }
+      if (import.meta.env.DEV) {
+        // Em dev o processo é o mesmo; divergência fica como aviso, não bloqueio.
+        console.warn('[Handshake] protocolo divergente em dev; seguindo sem bloquear.', check);
+        setBootCode(null);
+        setBootPhase('ready');
+        return;
+      }
+      setBootCode(check.code);
+      setBootPhase('incompatible');
+    } catch (err) {
+      if (controller.signal.aborted && !timedOut) return;
+      console.warn('[Handshake] /api/health inacessível:', err);
+      setBootCode('PROTOCOL_UNREACHABLE');
+      setBootPhase('unreachable');
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }, []);
+
+  useEffect(() => {
+    void verifyServer();
+    return () => bootAbortRef.current?.abort();
+  }, [verifyServer]);
+
+  useEffect(() => {
+    if (bootPhase !== 'unreachable' && bootPhase !== 'incompatible') return;
+    // Cliente desatualizado exige recarregar a página; retry não resolve.
+    if (bootPhase === 'incompatible' && bootCode === 'CLIENT_OUTDATED') return;
+    // Backoff curto: reiniciar a API não pode deixar o overlay parado por 20 s.
+    const delaySec = Math.min(3 * 2 ** Math.min(Math.max(bootAttempt - 1, 0), 2), 10);
+    setBootRetryInSec(delaySec);
+    const countdown = window.setInterval(() => {
+      setBootRetryInSec((sec) => (sec === null ? null : Math.max(0, sec - 1)));
+    }, 1000);
+    const retry = window.setTimeout(() => {
+      setBootRetryInSec(null);
+      void verifyServer();
+    }, delaySec * 1000);
+    // Voltar para a aba (ou recuperar a rede) revalida na hora, sem esperar o timer.
+    let probed = false;
+    const probeNow = () => {
+      if (probed || document.visibilityState === 'hidden') return;
+      probed = true;
+      void verifyServer();
+    };
+    window.addEventListener('online', probeNow);
+    window.addEventListener('focus', probeNow);
+    document.addEventListener('visibilitychange', probeNow);
+    return () => {
+      window.clearInterval(countdown);
+      window.clearTimeout(retry);
+      window.removeEventListener('online', probeNow);
+      window.removeEventListener('focus', probeNow);
+      document.removeEventListener('visibilitychange', probeNow);
+    };
+  }, [bootAttempt, bootCode, bootPhase, verifyServer]);
+
+  const handleRetryBoot = useCallback(() => {
+    bootAttemptRef.current = 0;
+    void verifyServer();
+  }, [verifyServer]);
+
+  const handleReloadPage = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('_v', String(Date.now()));
+    window.location.replace(url.toString());
+  }, []);
+
   const fetchRooms = useCallback(async () => {
     setLoadingRooms(true);
     try {
@@ -234,13 +359,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (gameState !== 'title') return;
+    if (bootPhase !== 'ready' || gameState !== 'title') return;
     void fetchRooms();
     const timer = window.setInterval(() => {
       void fetchRooms();
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [fetchRooms, gameState]);
+  }, [bootPhase, fetchRooms, gameState]);
 
   const applyAssetManifest = useCallback((incoming: AssetManifest | null) => {
     if (
@@ -328,6 +453,7 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (bootPhase !== 'ready') return;
     let cancelled = false;
     const load = async () => {
       let data: AssetManifest | null = null;
@@ -357,7 +483,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyAssetManifest]);
+  }, [applyAssetManifest, bootPhase]);
 
   useEffect(() => {
     promptModeRef.current = promptMode;
@@ -434,8 +560,9 @@ export default function App() {
     openWeaponPrompt();
   }, [openEventPrompt, openWeaponPrompt]);
 
-  // Mount Babylon.js engine once
+  // Mount Babylon.js engine once, after the boot handshake releases the app.
   useEffect(() => {
+    if (bootPhase !== 'ready') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -478,10 +605,10 @@ export default function App() {
       arena.dispose();
       arenaRef.current = null;
     };
-  }, [openEventPrompt, openPromptByPriority, openWeaponPrompt, sendWs]);
+  }, [bootPhase, openEventPrompt, openPromptByPriority, openWeaponPrompt, sendWs]);
 
   const openSocketAndSend = useCallback((initialMessage: unknown) => {
-    if (connecting) return;
+    if (connecting || bootPhase !== 'ready') return;
     setConnecting(true);
     setErrorMessage(null);
     setErrorCode(null);
@@ -506,6 +633,11 @@ export default function App() {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      setConnectionLost(false);
+      setConnectionServerBack(false);
+      setConnectionChecking(false);
+      // Primeira mensagem do contrato: sem isto o servidor recusa o socket.
+      ws.send(JSON.stringify({ type: 'client:hello', payload: buildClientHello('web') }));
       ws.send(JSON.stringify(initialMessage));
     };
 
@@ -514,13 +646,49 @@ export default function App() {
       setErrorMessage('Falha ao conectar ao servidor da partida.');
     };
 
+    ws.onclose = () => {
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      setConnecting(false);
+      setConnectionChecking(false);
+      if (gameStateRef.current !== 'title') {
+        setConnectionLost(true);
+        setConnectionServerBack(false);
+      }
+    };
+
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
 
+        if (msg.type === 'client:hello_ack') {
+          const check = evaluateHelloAck(msg.payload);
+          if (!check.ok && !import.meta.env.DEV) {
+            if (wsRef.current === ws) wsRef.current = null;
+            ws.close();
+            setConnecting(false);
+            setBootCode(check.code);
+            setBootPhase('incompatible');
+          }
+          return;
+        }
+
         if (msg.type === 'room:error') {
-          setConnecting(false);
           const code = String(msg.payload?.code ?? '');
+          if (isBootFailureCode(code)) {
+            setConnecting(false);
+            if (wsRef.current === ws) wsRef.current = null;
+            ws.close();
+            if (code === 'HELLO_TIMEOUT') {
+              // O servidor fechou por falta de hello: revalida a API do zero.
+              void verifyServer();
+            } else {
+              setBootCode(code === 'HANDSHAKE_REQUIRED' ? 'PROTOCOL_MISMATCH' : code);
+              setBootPhase('incompatible');
+            }
+            return;
+          }
+          setConnecting(false);
           const message = String(msg.payload?.message ?? 'Erro na sala.');
           setErrorCode(code);
           setErrorRoomId(msg.payload?.roomId ?? null);
@@ -892,7 +1060,7 @@ export default function App() {
         console.error('[WS Parse Error]', err);
       }
     };
-  }, [connecting, fetchRooms]);
+  }, [bootPhase, connecting, fetchRooms, verifyServer]);
 
   const handleCreateRoom = useCallback(
     (opts: {
@@ -947,14 +1115,16 @@ export default function App() {
     });
   }, [initialRoomCode, openSocketAndSend, playerName]);
 
-  // Support ?autostart=1
+  // Support ?autostart=1 (somente depois do handshake de boot)
+  const autostartDoneRef = useRef(false);
   useEffect(() => {
+    if (bootPhase !== 'ready' || autostartDoneRef.current) return;
+    autostartDoneRef.current = true;
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1') {
       handleQuickPlay();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootPhase, handleQuickPlay]);
 
   const toggleFullscreen = useCallback(async () => {
     const doc = document as Document & {
@@ -1139,6 +1309,67 @@ export default function App() {
     arenaRef.current?.requestPointerLock();
   }, [sendWs]);
 
+  const probeServerHealth = useCallback(async (showChecking: boolean) => {
+    if (showChecking) {
+      setConnectionChecking(true);
+      setConnectionServerBack(false);
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 6000);
+    try {
+      const res = await fetch(buildHttpUrl('/api/health', API_URL), {
+        signal: controller.signal,
+        cache: 'no-store',
+        headers: { accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const check = checkHealthPayload(await res.json());
+      setConnectionServerBack(check.ok);
+      if (!check.ok && !import.meta.env.DEV) {
+        setBootCode(check.code);
+        setBootPhase('incompatible');
+      }
+    } catch {
+      setConnectionServerBack(false);
+    } finally {
+      window.clearTimeout(timeout);
+      if (showChecking) setConnectionChecking(false);
+    }
+  }, []);
+
+  const handleConnectionRetry = useCallback(() => {
+    void probeServerHealth(true);
+  }, [probeServerHealth]);
+
+  const handleConnectionRetrySilently = useCallback(() => {
+    void probeServerHealth(false);
+  }, [probeServerHealth]);
+
+  // Com o banner de conexão aberto, revalida a API sozinho até o servidor voltar.
+  // Não depende do usuário clicar e não pisca o estado "verificando".
+  useEffect(() => {
+    if (!connectionLost || connectionServerBack) return;
+    let cancelled = false;
+    const probe = () => {
+      if (cancelled || document.visibilityState === 'hidden') return;
+      handleConnectionRetrySilently();
+    };
+    const initial = window.setTimeout(probe, 800);
+    const timer = window.setInterval(probe, 4000);
+    const onVisible = () => probe();
+    window.addEventListener('online', onVisible);
+    window.addEventListener('focus', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+      window.removeEventListener('online', onVisible);
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [connectionLost, connectionServerBack, handleConnectionRetrySilently]);
+
   const handleBackToTitle = () => {
     sendWs({ type: 'room:leave' });
     wsRef.current?.close();
@@ -1148,6 +1379,9 @@ export default function App() {
     setDevPanelOpen(false);
     setSummary(null);
     setErrorMessage(null);
+    setConnectionLost(false);
+    setConnectionChecking(false);
+    setConnectionServerBack(false);
     setGameState('title');
     void fetchRooms();
   };
@@ -1172,6 +1406,21 @@ export default function App() {
 
   const localPlayer = players.find((p) => p.id === localPlayerId) ?? null;
 
+  // Bloqueio de boot: nada do jogo é montado antes do handshake.
+  if (bootPhase !== 'ready') {
+    return (
+      <BootGate
+        phase={bootPhase}
+        code={bootCode}
+        attempt={bootAttempt}
+        autoRetryInSec={bootRetryInSec}
+        apiBase={API_URL}
+        onRetry={handleRetryBoot}
+        onReload={handleReloadPage}
+      />
+    );
+  }
+
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#0b101b]">
       {/* Isolated Babylon.js 3D Viewport */}
@@ -1181,6 +1430,16 @@ export default function App() {
         data-testid="voxel-canvas"
         className="block w-full h-full outline-none"
       />
+
+      {connectionLost && (
+        <ConnectionBanner
+          checking={connectionChecking}
+          reconnected={connectionServerBack}
+          onRetry={() => void handleConnectionRetry()}
+          onBackToMenu={handleBackToTitle}
+          onReload={handleReloadPage}
+        />
+      )}
 
       {contextLost && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0b101b] text-white">

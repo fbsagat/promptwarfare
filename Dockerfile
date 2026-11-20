@@ -1,34 +1,32 @@
-FROM node:24-alpine AS build
+FROM node:22.18.0-slim
+
+# Install dependencies for building (node-gyp etc if needed) and for assets (ffmpeg)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-COPY package.json ./
+
+# Copy package files first for caching
+COPY package*.json ./
+
+# Install dependencies
 RUN npm install --legacy-peer-deps
+
+# Copy the rest of the application
 COPY . .
+
+# Build the frontend assets
 RUN npm run build
 
-FROM node:24-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production \
-    SERVE_CLIENT=false \
-    HOST=0.0.0.0 \
-    PORT=3000
+# Set production environment
+ENV NODE_ENV=production
 
-RUN apk add --no-cache su-exec
-COPY package.json ./
-RUN npm install --omit=dev --legacy-peer-deps --no-package-lock \
-    && npm install pg@^8.16.3 --no-save --no-package-lock --legacy-peer-deps
-COPY --from=build /app/dist ./dist
-COPY server.ts ./
-COPY server ./server
-COPY src/shared ./src/shared
-COPY content ./content
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
-    && mkdir -p /app/data \
-    && chown -R node:node /app
-
+# Expose the default port
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["node", "server.ts"]
+# Start the server
+CMD ["npm", "start"]

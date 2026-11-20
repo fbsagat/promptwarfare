@@ -88,24 +88,61 @@ As variáveis `VITE_*` são embutidas no bundle pelo Vite: altere-as no projeto 
 
 ## Desenvolvimento
 
-```bash
-bun run dev
-# ou
-npm run dev
+Cada membro roda o próprio ambiente: **uma API** (Docker ou local) **e o Vite**. O servidor de referência é **sempre o container Docker**; o modo local serve para a equipe testar o jogo sem Docker e **não** vale como aceite.
+
+| Script | O que sobe | Porta padrão |
+| --- | --- | --- |
+| `api-docker.bat` | API/WebSocket no container (`NODE_ENV=production`, `SERVE_CLIENT=false`) | 3000 |
+| `api-local.bat` | API/WebSocket a partir do código, sem Docker | 3100 |
+| `frontend.bat` | Vite isolado | 5173 |
+
+Ordem: suba a API e depois o frontend.
+
+**API no Docker (referência)**
+
+```bat
+api-docker.bat
 ```
 
-No Windows, também é possível dar um duplo clique em `dev.bat` na raiz do projeto: ele instala as dependências se faltarem, cria o `.env` a partir de `.env.example` quando necessário, abre o navegador e sobe o servidor. Use `NO_OPEN=1` para não abrir o navegador, `NO_PAUSE=1` para não pausar ao final e `PORT` para escolher outra porta. Se a porta padrão já estiver ocupada, ele avisa e usa a próxima livre.
+Sem argumento abre o menu interativo. Também aceita `up` (build + subir), `start`, `restart`, `rebuild`, `status`, `health`, `logs`, `urls`, `stop` e `down`. Exemplos: `api-docker.bat up`, `api-docker.bat logs`, `api-docker.bat down`. Opções: `API_PORT`, `LOG_LINES`, `FORCE=1` (down sem confirmar) e `NO_PAUSE=1`. Ele espera `/api/health` e reaproveita a porta já publicada pelo container.
 
-O comando inicia **um único processo** em <http://localhost:3000>: o `server.ts` sobe a API, o WebSocket em `/ws` e o middleware do Vite com HMR. Localmente, frontend e API compartilham a mesma origem, então `VITE_API_URL` pode ficar vazio.
+**API local (somente testes)**
 
-Em produção, o frontend fica na Vercel e a API/WebSocket na VPS. Nesse modo, o cliente usa `VITE_API_URL`/`VITE_WS_URL` e a VPS precisa liberar a origem da Vercel em `CORS_ORIGINS`. Veja [Deploy](docs/DEPLOY.md). Para rodar o frontend em outra porta local, defina `VITE_API_URL` e inclua a origem em `CORS_ORIGINS` (por exemplo, `http://localhost:5173`).
+```bat
+api-local.bat
+```
+
+Sobe `node server.ts` em segundo plano na porta 3100, com `NODE_ENV=production` e `SERVE_CLIENT=false` (mesmo contrato de handshake do Docker). Usa `data/local/prompt-ledger.db`, separado do ledger do container, e imprime um aviso de que não é referência. Comandos: `start`, `stop`, `status`, `logs`, `help`. Use `MODE=dev` para rodar `npm run dev` (API + Vite no mesmo processo, handshake afrouxado). Opções: `API_PORT` (3100), `HOST` (127.0.0.1), `FRONTEND_PORT` (5173), `CORS_ORIGINS`, `ASSET_BASE_URL`, `PROMPT_LEDGER_DB_PATH`, `FORCE=1`, `NO_PAUSE=1`.
+
+**Frontend**
+
+```bat
+frontend.bat
+```
+
+Sobe o Vite em <http://localhost:5173> apontando para `API_URL` (padrão `http://localhost:3000`). Para a API local:
+
+```bat
+set API_URL=http://localhost:3100
+frontend.bat
+```
+
+Se `API_URL` não for definido, o script detecta a API no ar: 3000 (Docker) ou 3100 (local), nessa ordem.
+
+O script não sobe o Vite se a API não responder em `API_URL` ou se ela não liberar a origem do frontend no CORS — assim o jogo nunca abre preso em "Servidor indisponível" (`NO_OPEN=1` não abre o navegador). A porta do Vite é fixa: o `CORS_ORIGINS` do container é definido na criação, então trocar `FRONTEND_PORT` exige recriar o container (`set FRONTEND_PORT=5174` e `api-docker.bat up`) ou reiniciar `api-local.bat` com a mesma variável.
+
+Em produção, o frontend fica na Vercel e a API/WebSocket na VPS. Nesse modo, o cliente usa `VITE_API_URL`/`VITE_WS_URL` e a VPS precisa liberar a origem da Vercel em `CORS_ORIGINS`. Veja [Deploy](docs/DEPLOY.md).
+
+Para depurar o servidor com restart rápido, `npm run dev` sobe **um único processo** em <http://localhost:3000>: `tsx server.ts` inicia a API, o WebSocket em `/ws` e o middleware do Vite com HMR. Ele roda em modo desenvolvimento e afrouxa o handshake, então **não** use como referência de aceite.
 
 ## Scripts
 
 | Comando | O que faz |
 | --- | --- |
-| `npm run dev` | Inicia servidor + cliente em modo desenvolvimento. |
-| `dev.bat` | Atalho Windows: instala dependências, cria `.env` se preciso, evita porta ocupada, abre o navegador e roda `npm run dev`. |
+| `npm run dev` | Processo único (API + Vite) na porta 3000. Apenas para depurar o servidor: roda em modo desenvolvimento, sem paridade com produção. |
+| `api-docker.bat` | API/WebSocket no container Docker (referência de aceite). Menu interativo sem argumento, ou `up`, `start`, `restart`, `rebuild`, `status`, `health`, `logs`, `urls`, `stop`, `down`. |
+| `api-local.bat` | API/WebSocket a partir do código, sem Docker (somente testes, porta 3100). Comandos `start`, `stop`, `status`, `logs`; `MODE=dev` para o modo desenvolvimento. |
+| `frontend.bat` | Vite isolado contra uma API já em execução: usa `API_URL` (ou detecta 3000/3100 quando não definido) e não sobe se health ou CORS falharem. |
 | `npm run build` | Gera o build do cliente em `dist/`. |
 | `npm start` | Inicia o servidor; em produção, serve `dist/` se `SERVE_CLIENT` não for `false`. |
 | `npm run preview` | Apenas pré-visualiza o build do Vite, **sem** API/WebSocket. |
@@ -113,7 +150,7 @@ Em produção, o frontend fica na Vercel e a API/WebSocket na VPS. Nesse modo, o
 | `npm test` | Executa todos os testes com o runner nativo do Node. |
 | `npm run clean` | Remove `dist/` e `server.js`. |
 
-Para testar produção no PowerShell:
+O caminho canônico de produção é o container (`docker compose -f docker-compose.prod.yml up -d --build` na VPS). Para uma checagem rápida all-in-one no PowerShell (sem paridade de container):
 
 ```powershell
 npm run build

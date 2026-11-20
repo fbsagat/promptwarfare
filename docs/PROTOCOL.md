@@ -15,6 +15,17 @@ A fonte de verdade dos campos é `src/shared/types.ts`. `room:tick` é enviado a
 
 Slots e loot **não carregam o blueprint da arma** no estado de 20 Hz. Eles trafegam apenas `{ weaponId }`; o blueprint completo chega uma única vez por instância em `room:init.contentItems` ou na mensagem `content:items`. O cliente hidrata o slot com `src/shared/contentHydration.ts` antes de entregar o estado ao HUD e ao renderizador. Os tipos `RoomInitWirePayload`/`RoomTickWirePayload` descrevem o fio; `RoomInitPayload`/`RoomTickPayload` descrevem a visão hidratada.
 
+## Handshake de protocolo
+
+Cliente e servidor precisam se reconhecer **antes de qualquer coisa**. O contrato vive em `src/shared/protocol.ts` (`PROTOCOL_NAME`, `PROTOCOL_VERSION`) e é comparado por igualdade exata: um cliente novo contra um servidor antigo (ou vice-versa) é recusado, não degradado.
+
+1. O cliente faz `GET /api/health` com `cache: no-store`. A resposta inclui `{ protocol, protocolVersion }`. Se a chamada falhar (rede, timeout de 8 s, CORS) ou a versão não bater, o app inteiro fica bloqueado no overlay de boot e tenta de novo com backoff (3 s → 10 s); voltar para a aba, recuperar a rede ou clicar em "Tentar novamente" revalida na hora. `CLIENT_OUTDATED` exige recarregar a página; os demais casos têm retry automático.
+2. Ao abrir o WebSocket, a primeira mensagem do cliente é `client:hello` com `{ protocol, protocolVersion, client }`. Em produção (`NODE_ENV=production`) o servidor responde `client:hello_ack` e libera o socket apenas se versão e protocolo baterem; caso contrário envia `room:error` (`PROTOCOL_MISMATCH`, `CLIENT_OUTDATED` ou `SERVER_OUTDATED`) e fecha com 1008. Sem `client:hello`, qualquer outra mensagem recebe `HANDSHAKE_REQUIRED`; após 10 s o socket é fechado com `HELLO_TIMEOUT`.
+3. Em desenvolvimento (`npm run dev`, `NODE_ENV` diferente de `production` e `import.meta.env.DEV`) a divergência de versão não bloqueia: cliente e servidor seguem com um aviso no console. Falha de rede continua bloqueando. O container local (`api-docker.bat`/`docker compose`) roda com `NODE_ENV=production`, então é ele que valida o handshake estrito — `api-local.bat` (modo strict) replica o contrato na porta 3100, mas não substitui o aceite no Docker, e `npm run dev` não serve para aceite de protocolo.
+4. Se a conexão cair depois do boot, o cliente mostra um banner persistente. Ele revalida `/api/health` sozinho (a cada 4 s, ao voltar o foco e ao recuperar a rede) e avisa quando o servidor volta; a partir daí o jogador escolhe voltar ao menu. A partida não é retomada: o servidor remove o jogador quando o socket fecha.
+
+Subir `PROTOCOL_VERSION` sempre que o formato de uma mensagem WS/HTTP mudar. O deploy da Vercel e da VPS deve ser coordenado; não há janela de compatibilidade N-1.
+
 ## Cliente → servidor
 
 ### Antes de entrar em uma sala
@@ -23,6 +34,7 @@ Tratadas em `server.ts`:
 
 | Tipo | Payload | Efeito |
 | --- | --- | --- |
+| `client:hello` | `{ protocol, protocolVersion, client }` | Handshake obrigatório em produção; precisa ser a primeira mensagem do socket. Responde `client:hello_ack`. |
 | `rooms:list` | — | Responde com a lista de salas públicas. |
 | `room:create` | `roomId?`, `roomName?`, `playerName?`, `accessMode?`, `password?`, `targetPlayers?`, `fillWithBots?`, `startImmediately?` | Cria a sala, entra como Master e pode iniciar imediatamente. |
 | `room:join` | `roomId`, `playerName?`, `password?` | Entra em uma sala existente. |
@@ -65,6 +77,7 @@ O servidor é dono dos prazos. O evento global tem 10s para o sorteado reivindic
 
 | Tipo | Conteúdo |
 | --- | --- |
+| `client:hello_ack` | `{ protocol, protocolVersion }` confirma o handshake depois de `client:hello`. |
 | `rooms:list` | `{ rooms: RoomPublicSummary[] }` |
 | `room:error` | `{ code, message, roomId?, ... }` |
 | `room:lobby_state` | `LobbyStatePayload` (membros, Master, configurações e fase). |
@@ -94,9 +107,11 @@ Cada jogador também traz `stamina`, `sprinting`, `crouching`, `sliding`, `slide
 
 `ROOM_NOT_FOUND`, `ROOM_EXISTS`, `ROOM_FULL`, `ROOM_CLOSED`, `INVALID_PASSWORD`, `PASSWORD_REQUIRED`, `PASSWORD_REQUIRED_ON_CREATE`, `NEED_PLAYERS`, `NOT_HOST`, `KICKED` e `DEV_DISABLED`.
 
+Falhas de handshake (socket recusado/fechado): `PROTOCOL_MISMATCH`, `CLIENT_OUTDATED`, `SERVER_OUTDATED`, `HANDSHAKE_REQUIRED` e `HELLO_TIMEOUT`. O cliente trata esses códigos como bloqueio de boot (overlay com explicação e retry), não como erro de sala.
+
 ## Observações
 
-- Não há autenticação: a identidade é a conexão WebSocket e o `playerId` gerado pelo servidor.
+- Não há autenticação: a identidade é a conexão WebSocket e o `playerId` gerado pelo servidor. O `client:hello` verifica compatibilidade de protocolo, não identidade nem autorização.
 - Salas, partidas e sockets vivem em memória; o servidor não retoma uma partida após reiniciar.
 - `devState` só aparece em `room:tick` quando o servidor está com dev mode habilitado.
 - Como o WebSocket vai direto do navegador para a VPS, a página HTTPS exige `wss://`. A Vercel não faz proxy desse tráfego.

@@ -19,9 +19,11 @@ Em desenvolvimento, o `server.ts` monta o Vite em modo middleware e serve o fron
 ### Separação de origens
 
 - O cliente resolve a API com `VITE_API_URL` e o WebSocket com `VITE_WS_URL` (ou deriva de `VITE_API_URL`); sem essas variáveis, usa a mesma origem. A lógica fica em `src/shared/endpoints.ts`.
+- Antes de montar o jogo, o cliente confirma `protocol`/`protocolVersion` em `GET /api/health`; falha, timeout ou divergência mantêm o app no overlay `BootGate`. Ao abrir o WebSocket, a primeira mensagem é `client:hello` e o servidor recusa o socket sem ela (`HANDSHAKE_REQUIRED`/`HELLO_TIMEOUT`). O contrato fica em `src/shared/protocol.ts` e é comparado por igualdade exata; detalhes em [PROTOCOL.md](PROTOCOL.md).
 - A VPS libera CORS e, opcionalmente, valida a origem do handshake WebSocket com `CORS_ORIGINS` (`server/httpCors.ts`). A lista aceita `*` e curingas como `https://*.vercel.app`.
 - `HOST` controla a interface de escuta; atrás de proxy reverso, use `127.0.0.1`.
 - `SERVE_CLIENT=false` desliga o middleware Vite e os arquivos estáticos na VPS.
+- Localmente, `api-docker.bat` reproduz a separação da VPS: API/WebSocket no container Docker (`NODE_ENV=production`, porta 3000) e `frontend.bat` em 5173. `api-local.bat` sobe a API a partir do código na porta 3100, sem Docker, apenas para testes da equipe. `npm run dev` continua existindo como processo único para depurar o servidor, mas não tem paridade com produção.
 - O passo a passo de infraestrutura está em [DEPLOY.md](DEPLOY.md).
 
 ## Autoridade e loop
@@ -47,9 +49,9 @@ Em desenvolvimento, o `server.ts` monta o Vite em modo middleware e serve o fron
 
 Entrada única da aplicação:
 
-- `GET /api/health`, `/api/rooms`, `/api/catalog`, `POST /api/ai/preview-weapon`.
+- `GET /api/health` (inclui `protocol`/`protocolVersion`), `/api/rooms`, `/api/catalog`, `POST /api/ai/preview-weapon`.
 - Middleware de CORS/preflight baseado em `CORS_ORIGINS`; a mesma lista valida o `Origin` do WebSocket quando não está vazia.
-- WebSocket em `/ws`; mensagens de criação/entrada em sala são tratadas antes de delegar ao `RoomManager`.
+- WebSocket em `/ws`; `client:hello` é tratado ali mesmo (não no `RoomManager`), seguido das mensagens de criação/entrada em sala.
 - Em desenvolvimento, importa o Vite dinamicamente e usa `appType: 'spa'`; em produção, serve `dist/` quando `SERVE_CLIENT` não é `false`. A escolha é feita por `NODE_ENV` e `SERVE_CLIENT`.
 - `HOST` define a interface de escuta (padrão `0.0.0.0`; use `127.0.0.1` na VPS com proxy reverso).
 
@@ -192,13 +194,14 @@ Ledger append-only de prompts em SQLite (`node:sqlite`) por padrão, com backend
 | `controls.ts` | Cálculo de look/edge turn compartilhado com o cliente. |
 | `devMode.ts` | Gating de desenvolvimento no servidor e no cliente. |
 | `endpoints.ts` | Resolve URLs HTTP/WebSocket para mesma origem ou Vercel + VPS. |
+| `protocol.ts` | Contrato de handshake (`PROTOCOL_NAME`/`PROTOCOL_VERSION`), validação de `/api/health`, `client:hello`/`client:hello_ack` e mensagens de bloqueio em pt-BR. |
 
 Esses módulos não devem depender de DOM nem de APIs exclusivas do Node.
 
 ## Cliente (`src`)
 
-- `App.tsx` mantém o WebSocket, o estado da UI, o roteamento das mensagens e os overlays.
-- `components/` contém lobby, sala de espera, HUD, barra mínima de prompt (`PromptBar`), pausa e fim de partida.
+- `App.tsx` mantém o WebSocket, o estado da UI, o roteamento das mensagens e os overlays. O boot fica bloqueado no `BootGate` até o handshake com a API passar.
+- `components/` contém lobby, sala de espera, HUD, barra mínima de prompt (`PromptBar`), pausa, fim de partida, bloqueio de boot (`BootGate`) e banner de conexão perdida (`ConnectionBanner`).
 - `engine/babylonArena.ts` monta a cena, câmera, iluminação, projéteis, avatares e aplica deltas de voxels.
 - `engine/chunkDetailPlugin.ts` usa `matId` (enviado pelo mesher) para detalhe procedural, brilho de lava/cristal e borda Fresnel por material, sem texturas.
 - Água tem normal map procedural animado, espuma de costa gerada da heightmap e névoa submersa; o bloom fica atrás do preset de qualidade e só pega emissivos (threshold 1.0).
