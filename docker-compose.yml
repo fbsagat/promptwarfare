@@ -1,23 +1,28 @@
-version: '3.8'
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
-      - CORS_ORIGINS=http://localhost:3000
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:${API_PORT:-3000},http://localhost:${FRONTEND_PORT:-5173},http://127.0.0.1:${FRONTEND_PORT:-5173}}
       - PROMPT_LEDGER_DB_PATH=./data/prompt-ledger.db
       - SERVE_CLIENT=false
+      - ASSET_BASE_URL=${ASSET_BASE_URL:-http://localhost:${API_PORT:-3000}/assets/files}
     volumes:
       - ./data:/app/data
       - ./content:/app/content
       - ./dist:/app/dist
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   # Optional: Add a database if you want to switch from SQLite to Postgres in production
   # db:
